@@ -1,70 +1,92 @@
-# Getting Started with Create React App
+# Inventory Management Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A comprehensive garment inventory management system for tracking stock, managing credit sales, and monitoring production.
 
-## Available Scripts
+## Features
 
-In the project directory, you can run:
+- **Inventory Management**: Track stock with brand, category, size, and quantity details
+- **Brand & Category Management**: Organize products efficiently
+- **Customer & Credit Sales**: Manage walk-in and credit-based transactions
+- **Production Module**: Track in-house production from order to completion
+- **Sales & Payment Summary**: Financial analytics with visual reports
+- **Dashboard Overview**: Real-time insights and key metrics
 
-### `npm start`
+## Technology Stack
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- **Frontend**: React.js + Vite + TailwindCSS
+- **Backend**: Node.js + Express
+- **Database**: MongoDB
+- **Charts**: Recharts
+- **UI Components**: Custom components with modern design
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Installation
 
-### `npm test`
+1. Install all dependencies:
+```bash
+npm run install-all
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+2. Create `.env` file in root directory:
+```bash
+cp .env.example .env
+```
 
-### `npm run build`
+3. Update MongoDB URI in `.env` file
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+4. Start development servers:
+```bash
+npm run dev
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+The application will run on:
+- Frontend: http://localhost:5173
+- Backend: http://localhost:5000
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Project Structure
 
-### `npm run eject`
+```
+inventory-dashboard/
+├── client/                 # React frontend
+│   ├── src/
+│   │   ├── components/    # Reusable components
+│   │   ├── pages/         # Page components
+│   │   ├── services/      # API services
+│   │   └── App.jsx        # Main app component
+├── server/                # Express backend
+│   ├── models/            # MongoDB models
+│   ├── routes/            # API routes
+│   └── index.js           # Server entry point
+└── package.json
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Usage
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Adding Stock
+1. Navigate to Inventory module
+2. Click "Add Stock" button
+3. Fill in product details (brand, category, sizes, cost)
+4. Submit to add to inventory
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### Managing Credit Sales
+1. Go to Credit Sales module
+2. Register customer if new
+3. Create sale transaction
+4. Record partial or full payments
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### Production Tracking
+1. Access Production module
+2. Create new production batch
+3. Track progress through stages
+4. Move completed items to inventory
 
-## Learn More
+## Future Enhancements
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+- Barcode scanning
+- SMS reminders for credit payments
+- Expense & profit analytics
+- Vendor management
+- Multi-location support
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+## License
 
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+ISC

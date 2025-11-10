@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read/write for now (Development)
+    // TODO: Add authentication for production
+    match /{document=**} {
+      allow read, write: if true;
+    }
+    
+    // For production, use this instead:
+    // match /{document=**} {
+    //   allow read, write: if request.auth != null;
+    // }
+  }
+}
