@@ -4,13 +4,12 @@
   "description": "Garment Inventory Management Dashboard",
   "main": "server/index.js",
   "scripts": {
-    "start": "npm run dev",
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "start": "npm run client",
+    "dev": "npm run client",
     "firebase:emulators": "firebase emulators:start",
     "firebase:deploy": "npm run build && firebase deploy",
     "firebase:deploy:functions": "firebase deploy --only functions",
     "firebase:deploy:hosting": "npm run build && firebase deploy --only hosting",
-    "server": "nodemon server/index.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "install-all": "npm install && cd client && npm install && cd functions && npm install"

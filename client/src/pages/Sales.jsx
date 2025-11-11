@@ -7,8 +7,10 @@ const Sales = () => {
   const [customers, setCustomers] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showSaleModal, setShowSaleModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSaleDetailsModal, setShowSaleDetailsModal] = useState(false);
   const [selectedSale, setSelectedSale] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -16,13 +18,13 @@ const Sales = () => {
   const [saleFormData, setSaleFormData] = useState({
     customer: '',
     items: [],
-    paidAmount: 0,
+    paidAmount: '', // Empty for free typing
     saleType: 'Cash',
     notes: ''
   });
 
   const [paymentFormData, setPaymentFormData] = useState({
-    amount: 0,
+    amount: '', // Empty for free typing
     paymentMethod: 'Cash',
     notes: ''
   });
@@ -30,8 +32,8 @@ const Sales = () => {
   const [currentItem, setCurrentItem] = useState({
     inventory: '',
     size: '',
-    quantity: 1,
-    unitPrice: 0
+    quantity: '', // Empty for free typing
+    unitPrice: '' // Empty for free typing
   });
 
   useEffect(() => {
@@ -41,45 +43,124 @@ const Sales = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      console.log('=== FETCHING DATA ===');
       const [salesRes, customersRes, inventoryRes] = await Promise.all([
         getSales({ status: filterStatus }),
         getCustomers(),
         getInventory()
       ]);
+      console.log('Sales Response:', salesRes);
+      console.log('Customers Response:', customersRes);
+      console.log('Inventory Response:', inventoryRes);
+      console.log('Inventory Items:', inventoryRes.data);
+
       setSales(salesRes.data);
       setCustomers(customersRes.data);
       setInventory(inventoryRes.data);
+      console.log('=== DATA FETCHED SUCCESSFULLY ===');
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('=== ERROR FETCHING DATA ===');
+      console.error('Error:', error);
+      console.error('Error Message:', error.message);
+      console.error('Error Stack:', error.stack);
+      if (error.response) {
+        console.error('Error Response:', error.response);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddItem = () => {
-    if (!currentItem.inventory || !currentItem.size || currentItem.quantity <= 0) {
-      alert('Please fill all item details');
+    console.log('=== ADDING ITEM TO SALE ===');
+    console.log('1. Current Item:', currentItem);
+    console.log('2. Inventory List:', inventory);
+
+    // Convert empty string to 0 for validation
+    const qtyToCheck = currentItem.quantity === '' ? 0 : currentItem.quantity;
+    if (!currentItem.inventory || qtyToCheck <= 0) {
+      console.log('ERROR: Missing inventory or quantity');
+      alert('Please select product and enter quantity');
       return;
     }
 
-    const inventoryItem = inventory.find(i => i._id === currentItem.inventory);
-    const sizeStock = inventoryItem.sizes.find(s => s.size === currentItem.size);
-
-    if (!sizeStock || sizeStock.quantity < currentItem.quantity) {
-      alert('Insufficient stock!');
+    // Convert empty string to 0 for validation
+    const priceToCheck = currentItem.unitPrice === '' ? 0 : currentItem.unitPrice;
+    if (!priceToCheck || priceToCheck <= 0) {
+      console.log('ERROR: Invalid price');
+      alert('Please enter a valid selling price');
       return;
     }
+
+    const inventoryItem = inventory.find(i => (i.id || i._id) === currentItem.inventory);
+    console.log('3. Found Inventory Item:', inventoryItem);
+
+    if (!inventoryItem) {
+      console.log('ERROR: Inventory item not found');
+      alert('Product not found');
+      return;
+    }
+
+    // Check if item has sizes
+    const hasSizes = inventoryItem.sizes && inventoryItem.sizes.length > 0;
+    console.log('4. Has Sizes:', hasSizes);
+    console.log('5. Sizes Array:', inventoryItem.sizes);
+
+    if (hasSizes && !currentItem.size) {
+      console.log('ERROR: Size required but not selected');
+      alert('Please select a size');
+      return;
+    }
+
+    // If no sizes, use "One Size" or first available
+    const selectedSize = currentItem.size || (hasSizes ? inventoryItem.sizes[0].size : 'One Size');
+    console.log('6. Selected Size:', selectedSize);
+
+    const sizeStock = hasSizes
+      ? inventoryItem.sizes.find(s => s.size === selectedSize)
+      : inventoryItem.sizes && inventoryItem.sizes.length > 0
+        ? inventoryItem.sizes[0]
+        : null;
+
+    console.log('7. Size Stock:', sizeStock);
+
+    if (hasSizes && (!sizeStock || sizeStock.quantity < currentItem.quantity)) {
+      console.log('ERROR: Insufficient stock');
+      alert(`Insufficient stock! Available: ${sizeStock?.quantity || 0}`);
+      return;
+    }
+
+    // Ensure quantity and price are numbers
+    const finalQty = typeof currentItem.quantity === 'string' && currentItem.quantity === '' ? 1 : currentItem.quantity;
+    const finalPrice = typeof currentItem.unitPrice === 'string' && currentItem.unitPrice === '' ? 0 : currentItem.unitPrice;
 
     const newItem = {
       ...currentItem,
+      quantity: finalQty,
+      unitPrice: finalPrice,
+      size: selectedSize,
       productName: inventoryItem.productName,
-      totalPrice: currentItem.quantity * currentItem.unitPrice
+      totalPrice: finalQty * finalPrice,
+      inventorySellingPrice: inventoryItem.sellingPrice || 0, // Actual price from inventory
+      inventoryCostPrice: inventoryItem.costPerUnit || 0, // Cost price
+      profitPerUnit: finalPrice - (inventoryItem.sellingPrice || 0), // Profit per unit
+      totalProfit: (finalPrice - (inventoryItem.sellingPrice || 0)) * finalQty // Total profit
     };
+
+    console.log('8. New Item Created:', newItem);
+    console.log('   Custom Price:', currentItem.unitPrice);
+    console.log('   Inventory Suggested Price:', inventoryItem.sellingPrice);
 
     setSaleFormData({
       ...saleFormData,
       items: [...saleFormData.items, newItem]
     });
+
+    console.log('9. Updated Sale Form Data:', {
+      ...saleFormData,
+      items: [...saleFormData.items, newItem]
+    });
+    console.log('=== ITEM ADDED SUCCESSFULLY ===');
 
     setCurrentItem({
       inventory: '',
@@ -100,28 +181,76 @@ const Sales = () => {
 
   const handleSubmitSale = async (e) => {
     e.preventDefault();
+    console.log('=== SALE CREATION START ===');
+    console.log('1. Form Data:', saleFormData);
+    console.log('2. Items Count:', saleFormData.items.length);
+
     if (saleFormData.items.length === 0) {
+      console.log('ERROR: No items in sale');
       alert('Please add at least one item');
       return;
     }
 
+    // Validate items
+    console.log('3. Validating Items:');
+    saleFormData.items.forEach((item, index) => {
+      console.log(`   Item ${index + 1}:`, {
+        inventory: item.inventory,
+        productName: item.productName,
+        size: item.size,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice
+      });
+    });
+
+    setSaving(true);
     try {
-      await createSale(saleFormData);
+      console.log('4. Calling createSale API...');
+      // Ensure paidAmount is a number before submitting
+      const saleDataToSubmit = {
+        ...saleFormData,
+        paidAmount: saleFormData.paidAmount === '' ? 0 : saleFormData.paidAmount
+      };
+      console.log('5. Sale Data Being Sent:', JSON.stringify(saleDataToSubmit, null, 2));
+
+      const result = await createSale(saleDataToSubmit);
+      console.log('6. Sale Created Successfully!');
+      console.log('7. Response:', result);
+
       setShowSaleModal(false);
       resetSaleForm();
       fetchData();
+      console.log('=== SALE CREATION SUCCESS ===');
     } catch (error) {
-      console.error('Error creating sale:', error);
-      alert(error.response?.data?.error || 'Error creating sale');
+      console.error('=== SALE CREATION ERROR ===');
+      console.error('Error Object:', error);
+      console.error('Error Message:', error.message);
+      console.error('Error Stack:', error.stack);
+      if (error.response) {
+        console.error('Error Response:', error.response);
+        console.error('Error Response Data:', error.response.data);
+        console.error('Error Response Status:', error.response.status);
+      }
+      console.error('Full Error Details:', JSON.stringify(error, null, 2));
+      alert(error.message || error.response?.data?.error || 'Error creating sale');
+      console.log('=== SALE CREATION FAILED ===');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleSubmitPayment = async (e) => {
     e.preventDefault();
     try {
-      await addPayment(selectedSale._id, paymentFormData);
+      // Ensure amount is a number before submitting
+      const paymentData = {
+        ...paymentFormData,
+        amount: paymentFormData.amount === '' ? 0 : paymentFormData.amount
+      };
+      await addPayment(selectedSale.id || selectedSale._id, paymentData);
       setShowPaymentModal(false);
-      setPaymentFormData({ amount: 0, paymentMethod: 'Cash', notes: '' });
+      setPaymentFormData({ amount: '', paymentMethod: 'Cash', notes: '' });
       fetchData();
     } catch (error) {
       console.error('Error adding payment:', error);
@@ -144,32 +273,40 @@ const Sales = () => {
     setSaleFormData({
       customer: '',
       items: [],
-      paidAmount: 0,
+      paidAmount: '', // Empty for free typing
       saleType: 'Cash',
       notes: ''
     });
     setCurrentItem({
       inventory: '',
       size: '',
-      quantity: 1,
-      unitPrice: 0
+      quantity: '', // Empty for free typing
+      unitPrice: '' // Empty for free typing
     });
   };
 
   const handleInventoryChange = (inventoryId) => {
-    const item = inventory.find(i => i._id === inventoryId);
+    const item = inventory.find(i => (i.id || i._id) === inventoryId);
+    if (!item) return;
+
+    // Auto-select first size if only one size available
+    const hasSizes = item.sizes && item.sizes.length > 0;
+    const firstSize = hasSizes ? item.sizes[0].size : '';
+
+    // Don't auto-fill price - let user enter freely
+    // Only show suggested price as hint
     setCurrentItem({
       ...currentItem,
       inventory: inventoryId,
-      unitPrice: item?.sellingPrice || 0,
-      size: '',
-      quantity: 1
+      unitPrice: '', // Empty so user can type freely
+      size: (hasSizes && item.sizes.length === 1) ? firstSize : '',
+      quantity: '' // Empty for free typing
     });
   };
 
   const filteredSales = sales.filter(sale => {
     const matchesSearch = sale.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         sale.customer?.name.toLowerCase().includes(searchTerm.toLowerCase());
+      sale.customer?.name.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
 
@@ -247,7 +384,7 @@ const Sales = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredSales.map((sale) => (
-                  <tr key={sale._id} className="hover:bg-gray-50">
+                  <tr key={sale.id || sale._id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
                       {sale.invoiceNumber}
                     </td>
@@ -260,7 +397,11 @@ const Sales = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {new Date(sale.saleDate).toLocaleDateString()}
+                      {sale.saleDate ? (
+                        sale.saleDate.toDate ?
+                          sale.saleDate.toDate().toLocaleDateString() :
+                          new Date(sale.saleDate.seconds * 1000).toLocaleDateString()
+                      ) : 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap font-semibold text-gray-900">
                       Rs. {sale.totalAmount.toLocaleString()}
@@ -272,24 +413,33 @@ const Sales = () => {
                       Rs. {sale.remainingAmount.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        sale.paymentStatus === 'Paid' 
-                          ? 'bg-green-100 text-green-700'
-                          : sale.paymentStatus === 'Partial'
+                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${sale.paymentStatus === 'Paid'
+                        ? 'bg-green-100 text-green-700'
+                        : sale.paymentStatus === 'Partial'
                           ? 'bg-orange-100 text-orange-700'
                           : 'bg-red-100 text-red-700'
-                      }`}>
+                        }`}>
                         {sale.paymentStatus}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedSale(sale);
+                            setShowSaleDetailsModal(true);
+                          }}
+                          className="text-blue-600 hover:text-blue-800"
+                          title="View Details"
+                        >
+                          <Eye size={18} />
+                        </button>
                         {sale.remainingAmount > 0 && (
                           <button
                             onClick={() => {
                               setSelectedSale(sale);
                               setPaymentFormData({
-                                amount: sale.remainingAmount,
+                                amount: '', // Empty for free typing
                                 paymentMethod: 'Cash',
                                 notes: ''
                               });
@@ -302,7 +452,7 @@ const Sales = () => {
                           </button>
                         )}
                         <button
-                          onClick={() => handleDeleteSale(sale._id)}
+                          onClick={() => handleDeleteSale(sale.id || sale._id)}
                           className="text-red-600 hover:text-red-800"
                           title="Delete"
                         >
@@ -337,7 +487,7 @@ const Sales = () => {
                 >
                   <option value="">Select Customer</option>
                   {customers.map(customer => (
-                    <option key={customer._id} value={customer._id}>
+                    <option key={customer.id || customer._id} value={customer.id || customer._id}>
                       {customer.name} {customer.market ? `- ${customer.market}` : ''}
                     </option>
                   ))}
@@ -347,7 +497,7 @@ const Sales = () => {
               {/* Add Items */}
               <div className="border border-gray-200 rounded-lg p-4">
                 <h4 className="font-semibold text-gray-800 mb-4">Add Items</h4>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-4">
                   <select
                     value={currentItem.inventory}
                     onChange={(e) => handleInventoryChange(e.target.value)}
@@ -355,8 +505,8 @@ const Sales = () => {
                   >
                     <option value="">Select Product</option>
                     {inventory.map(item => (
-                      <option key={item._id} value={item._id}>
-                        {item.productName} - {item.brand?.name}
+                      <option key={item.id || item._id} value={item.id || item._id}>
+                        {item.productName} - {item.brand?.name || 'N/A'}
                       </option>
                     ))}
                   </select>
@@ -366,25 +516,95 @@ const Sales = () => {
                     className="input-field"
                     disabled={!currentItem.inventory}
                   >
-                    <option value="">Size</option>
-                    {currentItem.inventory && inventory.find(i => i._id === currentItem.inventory)?.sizes.map(s => (
-                      <option key={s.size} value={s.size}>
-                        {s.size} ({s.quantity} available)
-                      </option>
-                    ))}
+                    <option value="">Select Size</option>
+                    {currentItem.inventory && (() => {
+                      const selectedItem = inventory.find(i => (i.id || i._id) === currentItem.inventory);
+                      if (!selectedItem || !selectedItem.sizes || selectedItem.sizes.length === 0) {
+                        return <option value="One Size">One Size</option>;
+                      }
+                      return selectedItem.sizes.map(s => (
+                        <option key={s.size} value={s.size}>
+                          {s.size} ({s.quantity || 0} available)
+                        </option>
+                      ));
+                    })()}
                   </select>
                   <input
                     type="number"
                     min="1"
-                    value={currentItem.quantity}
-                    onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseInt(e.target.value) || 1 })}
+                    value={currentItem.quantity === '' || currentItem.quantity === 0 ? '' : currentItem.quantity}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '') {
+                        setCurrentItem({ ...currentItem, quantity: '' });
+                      } else {
+                        const numValue = parseInt(value);
+                        if (!isNaN(numValue)) {
+                          setCurrentItem({ ...currentItem, quantity: numValue });
+                        }
+                      }
+                    }}
+                    onBlur={(e) => {
+                      if (e.target.value === '') {
+                        setCurrentItem({ ...currentItem, quantity: 1 });
+                      }
+                    }}
                     className="input-field"
                     placeholder="Qty"
                   />
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={currentItem.unitPrice === 0 ? '' : currentItem.unitPrice}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        // Allow empty string for free typing
+                        if (value === '') {
+                          setCurrentItem({ ...currentItem, unitPrice: '' });
+                        } else {
+                          const numValue = parseFloat(value);
+                          if (!isNaN(numValue)) {
+                            setCurrentItem({ ...currentItem, unitPrice: numValue });
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        // Set to 0 if empty on blur
+                        if (e.target.value === '') {
+                          setCurrentItem({ ...currentItem, unitPrice: 0 });
+                        }
+                      }}
+                      className="input-field pr-16"
+                      placeholder="Enter price"
+                    />
+                    <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">Rs.</span>
+                    {currentItem.inventory && (() => {
+                      const selectedItem = inventory.find(i => (i.id || i._id) === currentItem.inventory);
+                      if (selectedItem?.sellingPrice) {
+                        return (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Suggested: Rs. {selectedItem.sellingPrice}
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                   <button
                     type="button"
                     onClick={handleAddItem}
                     className="btn-primary"
+                    disabled={
+                      !currentItem.inventory ||
+                      !currentItem.unitPrice ||
+                      currentItem.unitPrice === '' ||
+                      (typeof currentItem.unitPrice === 'number' && currentItem.unitPrice <= 0) ||
+                      !currentItem.quantity ||
+                      currentItem.quantity === '' ||
+                      (typeof currentItem.quantity === 'number' && currentItem.quantity <= 0)
+                    }
                   >
                     Add
                   </button>
@@ -397,16 +617,117 @@ const Sales = () => {
                       <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex-1">
                           <p className="font-medium text-gray-800">{item.productName}</p>
-                          <p className="text-sm text-gray-600">
-                            Size: {item.size} | Qty: {item.quantity} | Price: Rs. {item.unitPrice}
-                          </p>
+                          <div className="flex items-center gap-4 mt-1 flex-wrap">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Size:</span>
+                              <span className="text-sm text-gray-600">{item.size}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Qty:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.quantity === 0 ? '' : item.quantity}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  let newQty = 1;
+                                  if (value !== '') {
+                                    const numValue = parseInt(value);
+                                    if (!isNaN(numValue)) {
+                                      newQty = numValue;
+                                    }
+                                  }
+                                  const updatedItems = [...saleFormData.items];
+                                  const inventoryItem = inventory.find(i => (i.id || i._id) === item.inventory);
+                                  const actualPrice = inventoryItem?.sellingPrice || 0;
+                                  const soldPrice = item.unitPrice || 0;
+                                  updatedItems[index] = {
+                                    ...item,
+                                    quantity: newQty,
+                                    totalPrice: soldPrice * newQty,
+                                    profitPerUnit: soldPrice - actualPrice,
+                                    totalProfit: (soldPrice - actualPrice) * newQty
+                                  };
+                                  setSaleFormData({ ...saleFormData, items: updatedItems });
+                                }}
+                                onBlur={(e) => {
+                                  if (e.target.value === '') {
+                                    const updatedItems = [...saleFormData.items];
+                                    const inventoryItem = inventory.find(i => (i.id || i._id) === item.inventory);
+                                    const actualPrice = inventoryItem?.sellingPrice || 0;
+                                    const soldPrice = item.unitPrice || 0;
+                                    updatedItems[index] = {
+                                      ...item,
+                                      quantity: 1,
+                                      totalPrice: soldPrice * 1,
+                                      profitPerUnit: soldPrice - actualPrice,
+                                      totalProfit: (soldPrice - actualPrice) * 1
+                                    };
+                                    setSaleFormData({ ...saleFormData, items: updatedItems });
+                                  }
+                                }}
+                                className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Price:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  let newPrice = 0;
+                                  if (value !== '') {
+                                    const numValue = parseFloat(value);
+                                    if (!isNaN(numValue)) {
+                                      newPrice = numValue;
+                                    }
+                                  }
+                                  const updatedItems = [...saleFormData.items];
+                                  const inventoryItem = inventory.find(i => (i.id || i._id) === item.inventory);
+                                  const actualPrice = inventoryItem?.sellingPrice || 0;
+                                  updatedItems[index] = {
+                                    ...item,
+                                    unitPrice: newPrice,
+                                    totalPrice: newPrice * item.quantity,
+                                    profitPerUnit: newPrice - actualPrice,
+                                    totalProfit: (newPrice - actualPrice) * item.quantity
+                                  };
+                                  setSaleFormData({ ...saleFormData, items: updatedItems });
+                                }}
+                                onBlur={(e) => {
+                                  if (e.target.value === '') {
+                                    const updatedItems = [...saleFormData.items];
+                                    const inventoryItem = inventory.find(i => (i.id || i._id) === item.inventory);
+                                    const actualPrice = inventoryItem?.sellingPrice || 0;
+                                    updatedItems[index] = {
+                                      ...item,
+                                      unitPrice: 0,
+                                      totalPrice: 0,
+                                      profitPerUnit: 0 - actualPrice,
+                                      totalProfit: (0 - actualPrice) * item.quantity
+                                    };
+                                    setSaleFormData({ ...saleFormData, items: updatedItems });
+                                  }
+                                }}
+                                className="w-24 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                              />
+                              <span className="text-xs text-gray-500">Rs.</span>
+                            </div>
+                          </div>
                         </div>
                         <div className="flex items-center gap-4">
-                          <p className="font-bold text-gray-900">Rs. {item.totalPrice.toLocaleString()}</p>
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500">Total</p>
+                            <p className="font-bold text-gray-900">Rs. {item.totalPrice.toLocaleString()}</p>
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleRemoveItem(index)}
                             className="text-red-600 hover:text-red-800"
+                            title="Remove"
                           >
                             <Trash2 size={18} />
                           </button>
@@ -431,10 +752,25 @@ const Sales = () => {
                     type="number"
                     min="0"
                     max={getTotalAmount()}
-                    value={saleFormData.paidAmount}
-                    onChange={(e) => setSaleFormData({ ...saleFormData, paidAmount: parseFloat(e.target.value) || 0 })}
+                    value={saleFormData.paidAmount === 0 ? '' : saleFormData.paidAmount}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '') {
+                        setSaleFormData({ ...saleFormData, paidAmount: '' });
+                      } else {
+                        const numValue = parseFloat(value);
+                        if (!isNaN(numValue)) {
+                          setSaleFormData({ ...saleFormData, paidAmount: numValue });
+                        }
+                      }
+                    }}
+                    onBlur={(e) => {
+                      if (e.target.value === '') {
+                        setSaleFormData({ ...saleFormData, paidAmount: 0 });
+                      }
+                    }}
                     className="input-field"
-                    placeholder="0"
+                    placeholder="Enter amount"
                   />
                 </div>
                 <div>
@@ -469,14 +805,187 @@ const Sales = () => {
                     resetSaleForm();
                   }}
                   className="btn-secondary"
+                  disabled={saving}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
-                  Create Sale
+                <button
+                  type="submit"
+                  className="btn-primary flex items-center gap-2"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Creating Sale...</span>
+                    </>
+                  ) : (
+                    <span>Create Sale</span>
+                  )}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sale Details Modal */}
+      {showSaleDetailsModal && selectedSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-xl font-bold text-gray-800">Sale Details</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Invoice: {selectedSale.invoiceNumber} | Date: {selectedSale.saleDate ? (
+                  selectedSale.saleDate.toDate ?
+                    selectedSale.saleDate.toDate().toLocaleDateString() :
+                    new Date(selectedSale.saleDate.seconds * 1000).toLocaleDateString()
+                ) : 'N/A'}
+              </p>
+            </div>
+            <div className="p-6 space-y-6">
+              {/* Customer Info */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-gray-800 mb-2">Customer Information</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500">Name</p>
+                    <p className="font-medium text-gray-900">{selectedSale.customer?.name || 'N/A'}</p>
+                  </div>
+                  {selectedSale.customer?.market && (
+                    <div>
+                      <p className="text-xs text-gray-500">Market</p>
+                      <p className="font-medium text-gray-900">{selectedSale.customer.market}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Items List with Details */}
+              <div>
+                <h4 className="font-semibold text-gray-800 mb-4">Items Sold</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actual Price</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sold Price</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Profit/Unit</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Profit</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {selectedSale.items && selectedSale.items.map((item, index) => {
+                        // Try to get actual price from stored value, or fetch from current inventory
+                        let actualPrice = item.inventorySellingPrice || 0;
+                        if (actualPrice === 0 && item.inventoryId) {
+                          // Try to find in current inventory
+                          const currentInventoryItem = inventory.find(i => (i.id || i._id) === item.inventoryId);
+                          if (currentInventoryItem?.sellingPrice) {
+                            actualPrice = currentInventoryItem.sellingPrice;
+                          }
+                        }
+                        const soldPrice = item.unitPrice || 0;
+                        const profitPerUnit = item.profitPerUnit !== undefined ? item.profitPerUnit : (soldPrice - actualPrice);
+                        const totalProfit = item.totalProfit !== undefined ? item.totalProfit : (profitPerUnit * (item.quantity || 0));
+                        const totalPrice = item.totalPrice || (soldPrice * (item.quantity || 0));
+
+                        return (
+                          <tr key={index} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 font-medium text-gray-900">{item.productName}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{item.size}</td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">{item.quantity || 0}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              Rs. {actualPrice.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                              Rs. {soldPrice.toLocaleString()}
+                            </td>
+                            <td className={`px-4 py-3 text-sm font-medium ${profitPerUnit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              Rs. {profitPerUnit.toLocaleString()}
+                            </td>
+                            <td className={`px-4 py-3 text-sm font-bold ${totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              Rs. {totalProfit.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                              Rs. {totalPrice.toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                      {(() => {
+                        const calculatedTotalProfit = selectedSale.items?.reduce((sum, item) => {
+                          // Try to get actual price from stored value, or fetch from current inventory
+                          let actualPrice = item.inventorySellingPrice || 0;
+                          if (actualPrice === 0 && item.inventoryId) {
+                            // Try to find in current inventory
+                            const currentInventoryItem = inventory.find(i => (i.id || i._id) === item.inventoryId);
+                            if (currentInventoryItem?.sellingPrice) {
+                              actualPrice = currentInventoryItem.sellingPrice;
+                            }
+                          }
+                          const soldPrice = item.unitPrice || 0;
+                          const profitPerUnit = item.profitPerUnit !== undefined ? item.profitPerUnit : (soldPrice - actualPrice);
+                          const itemTotalProfit = item.totalProfit !== undefined ? item.totalProfit : (profitPerUnit * (item.quantity || 0));
+                          return sum + itemTotalProfit;
+                        }, 0) || 0;
+                        return (
+                          <tr>
+                            <td colSpan="6" className="px-4 py-3 text-right font-semibold text-gray-700">
+                              Total Profit:
+                            </td>
+                            <td className={`px-4 py-3 text-sm font-bold ${calculatedTotalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              Rs. {calculatedTotalProfit.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3 text-sm font-bold text-gray-900">
+                              Rs. {selectedSale.totalAmount.toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })()}
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Payment Summary */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <p className="text-xs text-gray-600 mb-1">Total Amount</p>
+                  <p className="text-xl font-bold text-gray-900">Rs. {selectedSale.totalAmount.toLocaleString()}</p>
+                </div>
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <p className="text-xs text-gray-600 mb-1">Paid Amount</p>
+                  <p className="text-xl font-bold text-green-600">Rs. {selectedSale.paidAmount.toLocaleString()}</p>
+                </div>
+                <div className="bg-orange-50 p-4 rounded-lg">
+                  <p className="text-xs text-gray-600 mb-1">Remaining</p>
+                  <p className="text-xl font-bold text-orange-600">Rs. {selectedSale.remainingAmount.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {selectedSale.notes && (
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <p className="text-xs text-gray-600 mb-1">Notes</p>
+                  <p className="text-sm text-gray-800">{selectedSale.notes}</p>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => setShowSaleDetailsModal(false)}
+                  className="btn-secondary"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -506,9 +1015,25 @@ const Sales = () => {
                   required
                   min="1"
                   max={selectedSale.remainingAmount}
-                  value={paymentFormData.amount}
-                  onChange={(e) => setPaymentFormData({ ...paymentFormData, amount: parseFloat(e.target.value) || 0 })}
+                  value={paymentFormData.amount === 0 ? '' : paymentFormData.amount}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === '') {
+                      setPaymentFormData({ ...paymentFormData, amount: '' });
+                    } else {
+                      const numValue = parseFloat(value);
+                      if (!isNaN(numValue)) {
+                        setPaymentFormData({ ...paymentFormData, amount: numValue });
+                      }
+                    }
+                  }}
+                  onBlur={(e) => {
+                    if (e.target.value === '') {
+                      setPaymentFormData({ ...paymentFormData, amount: 0 });
+                    }
+                  }}
                   className="input-field"
+                  placeholder="Enter amount"
                 />
               </div>
 

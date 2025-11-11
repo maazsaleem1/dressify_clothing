@@ -12,6 +12,7 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  Timestamp,
   increment
 } from 'firebase/firestore';
 
@@ -29,5 +30,5 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-export { db, collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp, increment };
+export { db, collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp, Timestamp, increment };
 

@@ -6,6 +6,7 @@ const BrandsCategories = () => {
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('brands');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -13,12 +14,22 @@ const BrandsCategories = () => {
 
   const [formData, setFormData] = useState({
     name: '',
-    description: ''
+    description: '',
+    brandId: '',
+    parentCategoryId: ''
   });
+  const [parentCategories, setParentCategories] = useState([]);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Auto-fetch parent categories when brand is selected in category modal
+  useEffect(() => {
+    if (showModal && modalType === 'category' && formData.brandId) {
+      fetchParentCategories(formData.brandId);
+    }
+  }, [formData.brandId, showModal, modalType]);
 
   const fetchData = async () => {
     try {
@@ -36,20 +47,53 @@ const BrandsCategories = () => {
     }
   };
 
+  const fetchParentCategories = async (brandId) => {
+    if (!brandId) {
+      setParentCategories([]);
+      return;
+    }
+    try {
+      console.log('Fetching parent categories for brandId:', brandId);
+      const res = await getCategories({ brandId, mainCategoriesOnly: true });
+      console.log('Parent categories received:', res.data);
+      setParentCategories(res.data);
+    } catch (error) {
+      console.error('Error fetching parent categories:', error);
+      setParentCategories([]);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    setSaving(true);
     try {
       if (modalType === 'brand') {
         if (editingItem) {
-          await updateBrand(editingItem._id, formData);
+          await updateBrand(editingItem.id || editingItem._id, formData);
         } else {
           await createBrand(formData);
         }
       } else {
+        const categoryData = {
+          name: formData.name,
+          description: formData.description,
+          brandId: formData.brandId || null,
+          parentCategoryId: formData.parentCategoryId || null
+        };
+
+        const isMainCategory = !formData.parentCategoryId;
+        const brandId = formData.brandId;
+
         if (editingItem) {
-          await updateCategory(editingItem._id, formData);
+          await updateCategory(editingItem.id || editingItem._id, categoryData);
         } else {
-          await createCategory(formData);
+          await createCategory(categoryData);
+        }
+
+        // Refresh parent categories if a main category was created/updated
+        if (isMainCategory && brandId) {
+          await fetchParentCategories(brandId);
         }
       }
       setShowModal(false);
@@ -57,7 +101,9 @@ const BrandsCategories = () => {
       fetchData();
     } catch (error) {
       console.error('Error saving:', error);
-      alert(error.response?.data?.error || 'Error saving item');
+      alert(error.message || error.response?.data?.error || 'Error saving item');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -66,8 +112,16 @@ const BrandsCategories = () => {
     setModalType(type);
     setFormData({
       name: item.name,
-      description: item.description || ''
+      description: item.description || '',
+      brandId: item.brandId || '',
+      parentCategoryId: item.parentCategoryId || ''
     });
+
+    // Fetch parent categories if editing a category
+    if (type === 'category' && item.brandId) {
+      fetchParentCategories(item.brandId);
+    }
+
     setShowModal(true);
   };
 
@@ -82,14 +136,20 @@ const BrandsCategories = () => {
         fetchData();
       } catch (error) {
         console.error('Error deleting:', error);
-        alert(error.response?.data?.error || 'Error deleting item');
+        alert(error.message || error.response?.data?.error || 'Error deleting item');
       }
     }
   };
 
   const resetForm = () => {
-    setFormData({ name: '', description: '' });
+    setFormData({
+      name: '',
+      description: '',
+      brandId: '',
+      parentCategoryId: ''
+    });
     setEditingItem(null);
+    setParentCategories([]);
   };
 
   const openAddModal = (type) => {
@@ -110,11 +170,10 @@ const BrandsCategories = () => {
       <div className="flex gap-2 border-b border-gray-200">
         <button
           onClick={() => setActiveTab('brands')}
-          className={`px-6 py-3 font-medium transition-colors ${
-            activeTab === 'brands'
-              ? 'text-primary-600 border-b-2 border-primary-600'
-              : 'text-gray-600 hover:text-gray-800'
-          }`}
+          className={`px-6 py-3 font-medium transition-colors ${activeTab === 'brands'
+            ? 'text-primary-600 border-b-2 border-primary-600'
+            : 'text-gray-600 hover:text-gray-800'
+            }`}
         >
           <div className="flex items-center gap-2">
             <Tag size={20} />
@@ -123,11 +182,10 @@ const BrandsCategories = () => {
         </button>
         <button
           onClick={() => setActiveTab('categories')}
-          className={`px-6 py-3 font-medium transition-colors ${
-            activeTab === 'categories'
-              ? 'text-primary-600 border-b-2 border-primary-600'
-              : 'text-gray-600 hover:text-gray-800'
-          }`}
+          className={`px-6 py-3 font-medium transition-colors ${activeTab === 'categories'
+            ? 'text-primary-600 border-b-2 border-primary-600'
+            : 'text-gray-600 hover:text-gray-800'
+            }`}
         >
           <div className="flex items-center gap-2">
             <Package size={20} />
@@ -161,7 +219,7 @@ const BrandsCategories = () => {
               </div>
             ) : (
               brands.map((brand) => (
-                <div key={brand._id} className="card hover:shadow-md transition-shadow">
+                <div key={brand.id || brand._id} className="card hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
@@ -169,9 +227,8 @@ const BrandsCategories = () => {
                       </div>
                       <div>
                         <h3 className="font-semibold text-gray-800 text-lg">{brand.name}</h3>
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          brand.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                        }`}>
+                        <span className={`text-xs px-2 py-1 rounded-full ${brand.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                          }`}>
                           {brand.isActive ? 'Active' : 'Inactive'}
                         </span>
                       </div>
@@ -189,7 +246,7 @@ const BrandsCategories = () => {
                       Edit
                     </button>
                     <button
-                      onClick={() => handleDelete(brand._id, 'brand')}
+                      onClick={() => handleDelete(brand.id || brand._id, 'brand')}
                       className="flex-1 btn-danger text-sm py-2"
                     >
                       <Trash2 size={16} className="inline mr-1" />
@@ -227,44 +284,62 @@ const BrandsCategories = () => {
                 <p className="text-gray-500">No categories found. Add your first category!</p>
               </div>
             ) : (
-              categories.map((category) => (
-                <div key={category._id} className="card hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                        {category.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-800 text-lg">{category.name}</h3>
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          category.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                        }`}>
-                          {category.isActive ? 'Active' : 'Inactive'}
-                        </span>
+              categories.map((category) => {
+                const brand = brands.find(b => (b.id || b._id) === category.brandId);
+                const parentCategory = category.parentCategoryId
+                  ? categories.find(c => (c.id || c._id) === category.parentCategoryId)
+                  : null;
+
+                return (
+                  <div key={category.id || category._id} className="card hover:shadow-md transition-shadow">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
+                          {category.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-gray-800 text-lg">{category.name}</h3>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {brand && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700">
+                                {brand.name}
+                              </span>
+                            )}
+                            {parentCategory && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-orange-100 text-orange-700">
+                                Sub: {parentCategory.name}
+                              </span>
+                            )}
+                            <span className={`text-xs px-2 py-1 rounded-full ${category.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                              {category.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                    {category.description && (
+                      <p className="text-sm text-gray-600 mb-4">{category.description}</p>
+                    )}
+                    <div className="flex gap-2 pt-3 border-t border-gray-100">
+                      <button
+                        onClick={() => handleEdit(category, 'category')}
+                        className="flex-1 btn-secondary text-sm py-2"
+                      >
+                        <Edit2 size={16} className="inline mr-1" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(category.id || category._id, 'category')}
+                        className="flex-1 btn-danger text-sm py-2"
+                      >
+                        <Trash2 size={16} className="inline mr-1" />
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  {category.description && (
-                    <p className="text-sm text-gray-600 mb-4">{category.description}</p>
-                  )}
-                  <div className="flex gap-2 pt-3 border-t border-gray-100">
-                    <button
-                      onClick={() => handleEdit(category, 'category')}
-                      className="flex-1 btn-secondary text-sm py-2"
-                    >
-                      <Edit2 size={16} className="inline mr-1" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(category._id, 'category')}
-                      className="flex-1 btn-danger text-sm py-2"
-                    >
-                      <Trash2 size={16} className="inline mr-1" />
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -280,6 +355,32 @@ const BrandsCategories = () => {
               </h3>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              {/* Brand Selection - Only for Categories */}
+              {modalType === 'category' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Brand *</label>
+                  <select
+                    required
+                    value={formData.brandId}
+                    onChange={async (e) => {
+                      const brandId = e.target.value;
+                      setFormData({ ...formData, brandId, parentCategoryId: '' });
+                      await fetchParentCategories(brandId);
+                    }}
+                    className="input-field"
+                    disabled={saving}
+                  >
+                    <option value="">Select Brand</option>
+                    {brands.map(brand => (
+                      <option key={brand.id || brand._id} value={brand.id || brand._id}>
+                        {brand.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">Select the brand this category belongs to</p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
                 <input
@@ -289,8 +390,42 @@ const BrandsCategories = () => {
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="input-field"
                   placeholder={`e.g., ${modalType === 'brand' ? 'Icon' : 'Hoodies'}`}
+                  disabled={saving}
                 />
               </div>
+
+              {/* Parent Category - Optional, makes it a subcategory if selected */}
+              {modalType === 'category' && formData.brandId && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Parent Category <span className="text-gray-400">(Optional)</span>
+                  </label>
+                  <select
+                    value={formData.parentCategoryId}
+                    onChange={(e) => setFormData({ ...formData, parentCategoryId: e.target.value })}
+                    className="input-field"
+                    disabled={saving || !formData.brandId}
+                  >
+                    <option value="">None (Main Category)</option>
+                    {parentCategories.length === 0 ? (
+                      <option value="" disabled>No main categories available. Create a main category first.</option>
+                    ) : (
+                      parentCategories.map(cat => (
+                        <option key={cat.id || cat._id} value={cat.id || cat._id}>
+                          {cat.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {formData.parentCategoryId
+                      ? "This will be created as a subcategory"
+                      : parentCategories.length === 0
+                        ? "⚠️ No main categories found for this brand. Leave empty to create a main category."
+                        : "Leave empty to create a main category, or select a parent to create a subcategory"}
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -300,6 +435,7 @@ const BrandsCategories = () => {
                   className="input-field"
                   rows="3"
                   placeholder="Optional description..."
+                  disabled={saving}
                 />
               </div>
 
@@ -311,11 +447,23 @@ const BrandsCategories = () => {
                     resetForm();
                   }}
                   className="btn-secondary"
+                  disabled={saving}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
-                  {editingItem ? 'Update' : 'Create'}
+                <button
+                  type="submit"
+                  className="btn-primary flex items-center gap-2"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>{editingItem ? 'Updating...' : 'Creating...'}</span>
+                    </>
+                  ) : (
+                    <span>{editingItem ? 'Update' : 'Create'}</span>
+                  )}
                 </button>
               </div>
             </form>
