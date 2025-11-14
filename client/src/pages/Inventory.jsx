@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle } from 'lucide-react';
-import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem } from '../services/api';
+import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales } from '../services/api';
 
 const Inventory = () => {
   const [inventory, setInventory] = useState([]);
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -78,19 +79,39 @@ const Inventory = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [invRes, brandsRes, catsRes] = await Promise.all([
+      const [invRes, brandsRes, catsRes, salesRes] = await Promise.all([
         getInventory({ brand: filterBrand, category: filterCategory, lowStock: showLowStock }),
         getBrands(),
-        getCategories()
+        getCategories(),
+        getSales()
       ]);
       setInventory(invRes.data);
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
+      setSales(salesRes.data);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Calculate total earned amount for an inventory item
+  const calculateTotalEarned = (inventoryItemId) => {
+    let totalEarned = 0;
+
+    sales.forEach(sale => {
+      if (sale.items && Array.isArray(sale.items)) {
+        sale.items.forEach(item => {
+          if (item.inventoryId === inventoryItemId) {
+            // Use the actual sold price (unitPrice) × quantity
+            totalEarned += (item.unitPrice || 0) * (item.quantity || 0);
+          }
+        });
+      }
+    });
+
+    return totalEarned;
   };
 
   const handleSubmit = async (e) => {
@@ -339,6 +360,7 @@ const Inventory = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Value</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Earned</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -417,6 +439,23 @@ const Inventory = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         Rs. {(totalQty * item.costPerUnit).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {(() => {
+                          const totalEarned = calculateTotalEarned(item.id || item._id);
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                Rs. {totalEarned.toLocaleString()}
+                              </span>
+                              {totalEarned > 0 && soldQty > 0 && (
+                                <span className="text-xs text-gray-500">
+                                  ({soldQty} sold)
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <div className="flex gap-2">

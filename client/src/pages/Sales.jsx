@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2 } from 'lucide-react';
-import { getSales, getCustomers, getInventory, createSale, addPayment, deleteSale } from '../services/api';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart } from 'lucide-react';
+import { getSales, getCustomers, getInventory, createSale, addItemsToSale, addPayment, deleteSale } from '../services/api';
 
 const Sales = () => {
   const [sales, setSales] = useState([]);
@@ -11,6 +11,7 @@ const Sales = () => {
   const [showSaleModal, setShowSaleModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSaleDetailsModal, setShowSaleDetailsModal] = useState(false);
+  const [showAddItemsModal, setShowAddItemsModal] = useState(false);
   const [selectedSale, setSelectedSale] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -34,6 +35,17 @@ const Sales = () => {
     size: '',
     quantity: '', // Empty for free typing
     unitPrice: '' // Empty for free typing
+  });
+
+  const [addItemsFormData, setAddItemsFormData] = useState({
+    items: []
+  });
+
+  const [currentNewItem, setCurrentNewItem] = useState({
+    inventory: '',
+    size: '',
+    quantity: '',
+    unitPrice: ''
   });
 
   useEffect(() => {
@@ -242,6 +254,7 @@ const Sales = () => {
 
   const handleSubmitPayment = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       // Ensure amount is a number before submitting
       const paymentData = {
@@ -255,6 +268,8 @@ const Sales = () => {
     } catch (error) {
       console.error('Error adding payment:', error);
       alert(error.response?.data?.error || 'Error adding payment');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -267,6 +282,102 @@ const Sales = () => {
         console.error('Error deleting sale:', error);
       }
     }
+  };
+
+  const handleAddNewItem = () => {
+    const qtyToCheck = currentNewItem.quantity === '' ? 0 : currentNewItem.quantity;
+    if (!currentNewItem.inventory || qtyToCheck <= 0) {
+      alert('Please select product and enter quantity');
+      return;
+    }
+
+    const priceToCheck = currentNewItem.unitPrice === '' ? 0 : currentNewItem.unitPrice;
+    if (!priceToCheck || priceToCheck <= 0) {
+      alert('Please enter a valid selling price');
+      return;
+    }
+
+    const inventoryItem = inventory.find(i => (i.id || i._id) === currentNewItem.inventory);
+    if (!inventoryItem) {
+      alert('Product not found');
+      return;
+    }
+
+    const sizeObj = inventoryItem.sizes.find(s => s.size === currentNewItem.size);
+    if (!sizeObj) {
+      alert('Please select a size');
+      return;
+    }
+
+    if (sizeObj.quantity < currentNewItem.quantity) {
+      alert(`Insufficient stock! Available: ${sizeObj.quantity}`);
+      return;
+    }
+
+    const newItem = {
+      inventory: currentNewItem.inventory,
+      productName: inventoryItem.productName,
+      size: currentNewItem.size,
+      quantity: Number(currentNewItem.quantity),
+      unitPrice: Number(currentNewItem.unitPrice),
+      totalPrice: Number(currentNewItem.quantity) * Number(currentNewItem.unitPrice)
+    };
+
+    setAddItemsFormData({
+      items: [...addItemsFormData.items, newItem]
+    });
+
+    setCurrentNewItem({
+      inventory: '',
+      size: '',
+      quantity: '',
+      unitPrice: ''
+    });
+  };
+
+  const handleRemoveNewItem = (index) => {
+    setAddItemsFormData({
+      items: addItemsFormData.items.filter((_, i) => i !== index)
+    });
+  };
+
+  const handleSubmitAddItems = async (e) => {
+    e.preventDefault();
+    if (addItemsFormData.items.length === 0) {
+      alert('Please add at least one item');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await addItemsToSale(selectedSale.id || selectedSale._id, addItemsFormData.items);
+      setShowAddItemsModal(false);
+      setAddItemsFormData({ items: [] });
+      setCurrentNewItem({ inventory: '', size: '', quantity: '', unitPrice: '' });
+      fetchData();
+      alert('Items added successfully!');
+    } catch (error) {
+      console.error('Error adding items to sale:', error);
+      alert(error.message || 'Error adding items to sale');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleNewInventoryChange = (inventoryId) => {
+    const item = inventory.find(i => (i.id || i._id) === inventoryId);
+    if (!item) return;
+
+    const hasSizes = item.sizes && item.sizes.length > 0;
+    const firstSize = hasSizes ? item.sizes[0].size : '';
+
+    setCurrentNewItem({
+      ...currentNewItem,
+      inventory: inventoryId,
+      unitPrice: '',
+      size: (hasSizes && item.sizes.length === 1) ? firstSize : '',
+      quantity: ''
+    });
   };
 
   const resetSaleForm = () => {
@@ -433,6 +544,18 @@ const Sales = () => {
                           title="View Details"
                         >
                           <Eye size={18} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedSale(sale);
+                            setAddItemsFormData({ items: [] });
+                            setCurrentNewItem({ inventory: '', size: '', quantity: '', unitPrice: '' });
+                            setShowAddItemsModal(true);
+                          }}
+                          className="text-purple-600 hover:text-purple-800"
+                          title="Add More Items"
+                        >
+                          <ShoppingCart size={18} />
                         </button>
                         {sale.remainingAmount > 0 && (
                           <button
@@ -1066,11 +1189,200 @@ const Sales = () => {
                   type="button"
                   onClick={() => setShowPaymentModal(false)}
                   className="btn-secondary"
+                  disabled={saving}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
-                  Add Payment
+                <button
+                  type="submit"
+                  className="btn-primary flex items-center gap-2"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Adding Payment...</span>
+                    </>
+                  ) : (
+                    <span>Add Payment</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Items to Sale Modal */}
+      {showAddItemsModal && selectedSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-xl font-bold text-gray-800">Add Items to Sale</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Invoice: {selectedSale.invoiceNumber} | Customer: {selectedSale.customer?.name}
+              </p>
+            </div>
+            <form onSubmit={handleSubmitAddItems} className="p-6 space-y-6">
+              {/* Add Item Form */}
+              <div className="bg-gray-50 p-4 rounded-lg space-y-4">
+                <h4 className="font-semibold text-gray-800">Add New Item</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                  <div className="lg:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
+                    <select
+                      value={currentNewItem.inventory}
+                      onChange={(e) => handleNewInventoryChange(e.target.value)}
+                      className="input-field"
+                    >
+                      <option value="">Select Product</option>
+                      {inventory.map(item => (
+                        <option key={item.id || item._id} value={item.id || item._id}>
+                          {item.productName} - Rs. {item.sellingPrice}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                    <select
+                      value={currentNewItem.size}
+                      onChange={(e) => setCurrentNewItem({ ...currentNewItem, size: e.target.value })}
+                      className="input-field"
+                      disabled={!currentNewItem.inventory}
+                    >
+                      <option value="">Select Size</option>
+                      {currentNewItem.inventory && inventory.find(i => (i.id || i._id) === currentNewItem.inventory)?.sizes.map(size => (
+                        <option key={size.size} value={size.size}>
+                          {size.size} (Avail: {size.quantity})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={currentNewItem.quantity === 0 ? '' : currentNewItem.quantity}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setCurrentNewItem({ ...currentNewItem, quantity: '' });
+                        } else {
+                          const numValue = parseInt(value);
+                          if (!isNaN(numValue)) {
+                            setCurrentNewItem({ ...currentNewItem, quantity: numValue });
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (e.target.value === '') {
+                          setCurrentNewItem({ ...currentNewItem, quantity: 0 });
+                        }
+                      }}
+                      className="input-field"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={currentNewItem.unitPrice === 0 ? '' : currentNewItem.unitPrice}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setCurrentNewItem({ ...currentNewItem, unitPrice: '' });
+                        } else {
+                          const numValue = parseFloat(value);
+                          if (!isNaN(numValue)) {
+                            setCurrentNewItem({ ...currentNewItem, unitPrice: numValue });
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (e.target.value === '') {
+                          setCurrentNewItem({ ...currentNewItem, unitPrice: 0 });
+                        }
+                      }}
+                      className="input-field"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddNewItem}
+                  className="btn-secondary w-full"
+                >
+                  <Plus size={16} className="inline mr-2" />
+                  Add Item
+                </button>
+              </div>
+
+              {/* Items List */}
+              {addItemsFormData.items.length > 0 && (
+                <div>
+                  <h4 className="font-semibold text-gray-800 mb-3">Items to Add ({addItemsFormData.items.length})</h4>
+                  <div className="space-y-2">
+                    {addItemsFormData.items.map((item, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{item.productName}</p>
+                          <p className="text-sm text-gray-600">
+                            Size: {item.size} | Qty: {item.quantity} | Price: Rs. {item.unitPrice}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold text-gray-900">
+                            Rs. {item.totalPrice.toLocaleString()}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveNewItem(index)}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-gray-700">Additional Amount:</span>
+                      <span className="text-xl font-bold text-blue-600">
+                        Rs. {addItemsFormData.items.reduce((sum, item) => sum + item.totalPrice, 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddItemsModal(false)}
+                  className="btn-secondary"
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary flex items-center gap-2"
+                  disabled={saving || addItemsFormData.items.length === 0}
+                >
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Adding Items...</span>
+                    </>
+                  ) : (
+                    <span>Add {addItemsFormData.items.length} Item(s) to Sale</span>
+                  )}
                 </button>
               </div>
             </form>

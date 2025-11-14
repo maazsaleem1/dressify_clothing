@@ -702,6 +702,110 @@ export const createSale = async (saleData) => {
   return { data: result };
 };
 
+export const addItemsToSale = async (saleId, newItems) => {
+  console.log('=== API: addItemsToSale START ===');
+  console.log('1. Sale ID:', saleId);
+  console.log('2. New Items:', newItems);
+
+  const saleRef = doc(db, 'sales', saleId);
+  const saleSnap = await getDoc(saleRef);
+
+  if (!saleSnap.exists()) {
+    throw new Error('Sale not found');
+  }
+
+  const saleData = saleSnap.data();
+  console.log('3. Existing Sale Data:', saleData);
+
+  const processedNewItems = [];
+  let additionalAmount = 0;
+
+  // Process new items and update inventory
+  for (let i = 0; i < newItems.length; i++) {
+    const item = newItems[i];
+    console.log(`   Processing New Item ${i + 1}:`, item);
+
+    const inventoryDoc = await getDoc(doc(db, 'inventory', item.inventory));
+    if (!inventoryDoc.exists()) {
+      throw new Error(`Inventory item not found: ${item.inventory}`);
+    }
+
+    const inventoryData = inventoryDoc.data();
+    const sizeObj = inventoryData.sizes.find(s => s.size === item.size);
+
+    if (!sizeObj) {
+      throw new Error(`Size ${item.size} not found for ${inventoryData.productName}`);
+    }
+
+    if (sizeObj.quantity < item.quantity) {
+      throw new Error(`Insufficient stock for ${inventoryData.productName} - Size ${item.size}. Available: ${sizeObj.quantity}`);
+    }
+
+    const itemTotal = item.quantity * item.unitPrice;
+    additionalAmount += itemTotal;
+
+    processedNewItems.push({
+      inventoryId: item.inventory,
+      productName: inventoryData.productName,
+      size: item.size,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      totalPrice: itemTotal,
+      inventorySellingPrice: inventoryData.sellingPrice || 0,
+      inventoryCostPrice: inventoryData.costPerUnit || 0,
+      profitPerUnit: item.unitPrice - (inventoryData.sellingPrice || 0),
+      totalProfit: (item.unitPrice - (inventoryData.sellingPrice || 0)) * item.quantity
+    });
+
+    // Update inventory
+    const oldQuantity = sizeObj.quantity;
+    const newQuantity = oldQuantity - item.quantity;
+
+    const updatedSizes = inventoryData.sizes.map(s =>
+      s.size === item.size ? { ...s, quantity: newQuantity } : s
+    );
+
+    const stockHistoryEntry = {
+      type: 'sale',
+      date: Timestamp.now(),
+      size: item.size,
+      oldQuantity: oldQuantity,
+      newQuantity: newQuantity,
+      change: -item.quantity,
+      saleId: saleId,
+      invoiceNumber: saleData.invoiceNumber,
+      description: `Sold ${item.quantity} units (added to existing sale)`
+    };
+
+    const existingHistory = inventoryData.stockHistory || [];
+
+    await updateDoc(doc(db, 'inventory', item.inventory), {
+      sizes: updatedSizes,
+      stockHistory: [...existingHistory, stockHistoryEntry]
+    });
+  }
+
+  // Update sale with new items and recalculate totals
+  const updatedItems = [...saleData.items, ...processedNewItems];
+  const newTotalAmount = saleData.totalAmount + additionalAmount;
+  const newRemainingAmount = saleData.remainingAmount + additionalAmount;
+
+  let paymentStatus = 'Unpaid';
+  if (saleData.paidAmount >= newTotalAmount) paymentStatus = 'Paid';
+  else if (saleData.paidAmount > 0) paymentStatus = 'Partial';
+
+  await updateDoc(saleRef, {
+    items: updatedItems,
+    totalAmount: newTotalAmount,
+    remainingAmount: newRemainingAmount,
+    paymentStatus
+  });
+
+  const updatedSnap = await getDoc(saleRef);
+  console.log('=== API: addItemsToSale SUCCESS ===');
+  return { data: docToObject(updatedSnap) };
+};
+
 export const addPayment = async (id, paymentData) => {
   const { amount, paymentMethod, notes } = paymentData;
 
@@ -996,7 +1100,7 @@ export default {
   getCategories, getCategory, createCategory, updateCategory, deleteCategory,
   getInventory, getInventoryItem, createInventoryItem, updateInventoryItem, deleteInventoryItem, getInventoryStats,
   getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer,
-  getSales, getSale, createSale, addPayment, deleteSale, getSalesStats,
+  getSales, getSale, createSale, addItemsToSale, addPayment, deleteSale, getSalesStats,
   getProductions, getProduction, createProduction, updateProduction, moveToInventory, deleteProduction,
   getDashboardStats
 };

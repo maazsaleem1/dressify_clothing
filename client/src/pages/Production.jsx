@@ -7,6 +7,9 @@ const Production = () => {
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [moving, setMoving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingProduction, setEditingProduction] = useState(null);
   const [showMoveModal, setShowMoveModal] = useState(false);
@@ -55,10 +58,11 @@ const Production = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       const filteredSizes = formData.sizeBreakdown.filter(s => s.quantity > 0);
       const totalQty = filteredSizes.reduce((sum, s) => sum + s.quantity, 0);
-      
+
       const dataToSubmit = {
         ...formData,
         totalQuantity: totalQty,
@@ -76,6 +80,8 @@ const Production = () => {
     } catch (error) {
       console.error('Error saving production:', error);
       alert(error.response?.data?.error || 'Error saving production batch');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -84,6 +90,7 @@ const Production = () => {
       alert('Please select a brand');
       return;
     }
+    setMoving(true);
     try {
       await moveToInventory(selectedProduction._id, { brandId: selectedBrand });
       setShowMoveModal(false);
@@ -93,6 +100,8 @@ const Production = () => {
     } catch (error) {
       console.error('Error moving to inventory:', error);
       alert(error.response?.data?.error || 'Error moving to inventory');
+    } finally {
+      setMoving(false);
     }
   };
 
@@ -112,7 +121,7 @@ const Production = () => {
       costPerUnit: production.costPerUnit,
       sellingPrice: production.sellingPrice,
       status: production.status,
-      expectedCompletionDate: production.expectedCompletionDate ? 
+      expectedCompletionDate: production.expectedCompletionDate ?
         new Date(production.expectedCompletionDate).toISOString().split('T')[0] : '',
       notes: production.notes || ''
     });
@@ -121,11 +130,15 @@ const Production = () => {
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this production batch?')) {
+      setDeleting(id);
       try {
         await deleteProduction(id);
         fetchData();
       } catch (error) {
         console.error('Error deleting production:', error);
+        alert(error.message || 'Error deleting production batch');
+      } finally {
+        setDeleting(null);
       }
     }
   };
@@ -262,7 +275,7 @@ const Production = () => {
                     <span>{getProgressPercentage(production.status)}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div 
+                    <div
                       className="bg-primary-600 h-2 rounded-full transition-all"
                       style={{ width: `${getProgressPercentage(production.status)}%` }}
                     ></div>

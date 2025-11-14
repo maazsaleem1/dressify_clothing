@@ -7,6 +7,7 @@ const BrandsCategories = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
   const [activeTab, setActiveTab] = useState('brands');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -127,6 +128,7 @@ const BrandsCategories = () => {
 
   const handleDelete = async (id, type) => {
     if (window.confirm(`Are you sure you want to delete this ${type}?`)) {
+      setDeleting(id);
       try {
         if (type === 'brand') {
           await deleteBrand(id);
@@ -137,6 +139,8 @@ const BrandsCategories = () => {
       } catch (error) {
         console.error('Error deleting:', error);
         alert(error.message || error.response?.data?.error || 'Error deleting item');
+      } finally {
+        setDeleting(null);
       }
     }
   };
@@ -241,16 +245,27 @@ const BrandsCategories = () => {
                     <button
                       onClick={() => handleEdit(brand, 'brand')}
                       className="flex-1 btn-secondary text-sm py-2"
+                      disabled={deleting === (brand.id || brand._id)}
                     >
                       <Edit2 size={16} className="inline mr-1" />
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(brand.id || brand._id, 'brand')}
-                      className="flex-1 btn-danger text-sm py-2"
+                      className="flex-1 btn-danger text-sm py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                      disabled={deleting === (brand.id || brand._id)}
                     >
-                      <Trash2 size={16} className="inline mr-1" />
-                      Delete
+                      {deleting === (brand.id || brand._id) ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          <span className="text-xs">Deleting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={16} className="inline mr-1" />
+                          Delete
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -325,16 +340,27 @@ const BrandsCategories = () => {
                       <button
                         onClick={() => handleEdit(category, 'category')}
                         className="flex-1 btn-secondary text-sm py-2"
+                        disabled={deleting === (category.id || category._id)}
                       >
                         <Edit2 size={16} className="inline mr-1" />
                         Edit
                       </button>
                       <button
                         onClick={() => handleDelete(category.id || category._id, 'category')}
-                        className="flex-1 btn-danger text-sm py-2"
+                        className="flex-1 btn-danger text-sm py-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                        disabled={deleting === (category.id || category._id)}
                       >
-                        <Trash2 size={16} className="inline mr-1" />
-                        Delete
+                        {deleting === (category.id || category._id) ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                            <span className="text-xs">Deleting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 size={16} className="inline mr-1" />
+                            Delete
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

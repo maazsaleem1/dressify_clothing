@@ -5,6 +5,7 @@ import { getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustom
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
@@ -43,7 +44,7 @@ const Customers = () => {
     e.preventDefault();
     try {
       if (editingCustomer) {
-        await updateCustomer(editingCustomer._id, formData);
+        await updateCustomer(editingCustomer.id || editingCustomer._id, formData);
       } else {
         await createCustomer(formData);
       }
@@ -73,11 +74,15 @@ const Customers = () => {
 
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this customer?')) {
+      setDeleting(id);
       try {
         await deleteCustomer(id);
         fetchCustomers();
       } catch (error) {
         console.error('Error deleting customer:', error);
+        alert(error.response?.data?.error || 'Error deleting customer');
+      } finally {
+        setDeleting(null);
       }
     }
   };
@@ -108,8 +113,8 @@ const Customers = () => {
 
   const filteredCustomers = customers.filter(customer => {
     const matchesSearch = customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         customer.shopName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         customer.market?.toLowerCase().includes(searchTerm.toLowerCase());
+      customer.shopName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      customer.market?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
 
@@ -172,7 +177,7 @@ const Customers = () => {
           </div>
         ) : (
           filteredCustomers.map((customer) => (
-            <div key={customer._id} className="card hover:shadow-lg transition-shadow">
+            <div key={customer.id || customer._id} className="card hover:shadow-lg transition-shadow">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
@@ -185,13 +190,12 @@ const Customers = () => {
                     )}
                   </div>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  customer.customerType === 'Credit' 
-                    ? 'bg-orange-100 text-orange-700'
-                    : customer.customerType === 'Regular'
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${customer.customerType === 'Credit'
+                  ? 'bg-orange-100 text-orange-700'
+                  : customer.customerType === 'Regular'
                     ? 'bg-blue-100 text-blue-700'
                     : 'bg-gray-100 text-gray-700'
-                }`}>
+                  }`}>
                   {customer.customerType}
                 </span>
               </div>
@@ -221,8 +225,9 @@ const Customers = () => {
 
               <div className="flex gap-2 pt-3 border-t border-gray-100">
                 <button
-                  onClick={() => handleViewDetails(customer._id)}
+                  onClick={() => handleViewDetails(customer.id || customer._id)}
                   className="flex-1 btn-secondary text-sm py-2"
+                  disabled={deleting === (customer.id || customer._id)}
                 >
                   <Eye size={16} className="inline mr-1" />
                   View
@@ -230,15 +235,24 @@ const Customers = () => {
                 <button
                   onClick={() => handleEdit(customer)}
                   className="flex-1 btn-secondary text-sm py-2"
+                  disabled={deleting === (customer.id || customer._id)}
                 >
                   <Edit2 size={16} className="inline mr-1" />
                   Edit
                 </button>
                 <button
-                  onClick={() => handleDelete(customer._id)}
-                  className="btn-danger text-sm py-2 px-3"
+                  onClick={() => handleDelete(customer.id || customer._id)}
+                  className="btn-danger text-sm py-2 px-3 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+                  disabled={deleting === (customer.id || customer._id)}
                 >
-                  <Trash2 size={16} />
+                  {deleting === (customer.id || customer._id) ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span className="text-xs">Deleting...</span>
+                    </>
+                  ) : (
+                    <Trash2 size={16} />
+                  )}
                 </button>
               </div>
             </div>
@@ -445,13 +459,12 @@ const Customers = () => {
                           <p className="font-semibold text-gray-900">
                             Rs. {sale.totalAmount.toLocaleString()}
                           </p>
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            sale.paymentStatus === 'Paid' 
-                              ? 'bg-green-100 text-green-700'
-                              : sale.paymentStatus === 'Partial'
+                          <span className={`text-xs px-2 py-1 rounded-full ${sale.paymentStatus === 'Paid'
+                            ? 'bg-green-100 text-green-700'
+                            : sale.paymentStatus === 'Partial'
                               ? 'bg-orange-100 text-orange-700'
                               : 'bg-red-100 text-red-700'
-                          }`}>
+                            }`}>
                             {sale.paymentStatus}
                           </span>
                         </div>
