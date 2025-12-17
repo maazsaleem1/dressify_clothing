@@ -29,7 +29,6 @@ const Reports = () => {
       setSalesStats(salesRes.data);
       setInventoryStats(invRes.data);
     } catch (error) {
-      console.error('Error fetching stats:', error);
     } finally {
       setLoading(false);
     }
@@ -164,18 +163,18 @@ const Reports = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#fff', 
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}
               />
               <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="sales" 
-                stroke="#0ea5e9" 
+              <Line
+                type="monotone"
+                dataKey="sales"
+                stroke="#0ea5e9"
                 strokeWidth={2}
                 name="Sales (Rs.)"
               />
@@ -215,10 +214,10 @@ const Reports = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip 
+              <Tooltip
                 formatter={(value) => `Rs. ${value.toLocaleString()}`}
-                contentStyle={{ 
-                  backgroundColor: '#fff', 
+                contentStyle={{
+                  backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}

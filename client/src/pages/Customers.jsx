@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit2, Trash2, Users, Eye, Phone, MapPin } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Users, Eye, Phone, MapPin, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer } from '../services/api';
 
 const Customers = () => {
@@ -13,6 +13,8 @@ const Customers = () => {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const [formData, setFormData] = useState({
     name: '',
@@ -35,7 +37,6 @@ const Customers = () => {
       const response = await getCustomers({ type: filterType });
       setCustomers(response.data);
     } catch (error) {
-      console.error('Error fetching customers:', error);
     } finally {
       setLoading(false);
     }
@@ -54,7 +55,6 @@ const Customers = () => {
       resetForm();
       fetchCustomers();
     } catch (error) {
-      console.error('Error saving customer:', error);
       alert(error.response?.data?.error || 'Error saving customer');
     } finally {
       setSaving(false);
@@ -83,7 +83,6 @@ const Customers = () => {
         await deleteCustomer(id);
         fetchCustomers();
       } catch (error) {
-        console.error('Error deleting customer:', error);
         alert(error.response?.data?.error || 'Error deleting customer');
       } finally {
         setDeleting(null);
@@ -97,7 +96,6 @@ const Customers = () => {
       setSelectedCustomer(response.data);
       setShowDetailsModal(true);
     } catch (error) {
-      console.error('Error fetching customer details:', error);
     }
   };
 
@@ -121,6 +119,17 @@ const Customers = () => {
       customer.market?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredCustomers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedCustomers = filteredCustomers.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterType]);
 
   return (
     <div className="space-y-6">
@@ -180,7 +189,7 @@ const Customers = () => {
             <p className="text-gray-500">No customers found</p>
           </div>
         ) : (
-          filteredCustomers.map((customer) => (
+          paginatedCustomers.map((customer) => (
             <div key={customer.id || customer._id} className="card hover:shadow-lg transition-shadow">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -261,6 +270,61 @@ const Customers = () => {
               </div>
             </div>
           ))
+        )}
+
+        {/* Pagination */}
+        {!loading && filteredCustomers.length > itemsPerPage && (
+          <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-sm text-gray-700">
+              Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+              <span className="font-medium">{Math.min(endIndex, filteredCustomers.length)}</span> of{' '}
+              <span className="font-medium">{filteredCustomers.length}</span> customers
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                <ChevronLeft size={16} />
+                Previous
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
+                        ? 'bg-primary-600 text-white'
+                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                        }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

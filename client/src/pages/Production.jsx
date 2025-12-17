@@ -50,7 +50,6 @@ const Production = () => {
       setCategories(catsRes.data);
       setBrands(brandsRes.data);
     } catch (error) {
-      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
@@ -78,7 +77,6 @@ const Production = () => {
       resetForm();
       fetchData();
     } catch (error) {
-      console.error('Error saving production:', error);
       alert(error.response?.data?.error || 'Error saving production batch');
     } finally {
       setSaving(false);
@@ -98,7 +96,6 @@ const Production = () => {
       setSelectedBrand('');
       fetchData();
     } catch (error) {
-      console.error('Error moving to inventory:', error);
       alert(error.response?.data?.error || 'Error moving to inventory');
     } finally {
       setMoving(false);
@@ -135,7 +132,6 @@ const Production = () => {
         await deleteProduction(id);
         fetchData();
       } catch (error) {
-        console.error('Error deleting production:', error);
         alert(error.message || 'Error deleting production batch');
       } finally {
         setDeleting(null);

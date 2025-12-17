@@ -97,7 +97,6 @@ export const sendOrderConfirmationEmail = async (order) => {
       response
     };
   } catch (error) {
-    console.error('Error sending email:', error);
     throw {
       success: false,
       message: error.text || error.message || 'Failed to send email',
@@ -140,7 +139,6 @@ export const testEmailConfiguration = async () => {
       response
     };
   } catch (error) {
-    console.error('Error sending test email:', error);
     throw {
       success: false,
       message: error.text || error.message || 'Failed to send test email',

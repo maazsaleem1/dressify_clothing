@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, CheckCircle, XCircle, Trash2, Filter, Search, Clock, User, Package } from 'lucide-react';
+import { Star, CheckCircle, XCircle, Trash2, Filter, Search, Clock, User, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getReviews, updateReviewStatus, deleteReview } from '../services/api';
 
 const Reviews = () => {
@@ -9,6 +9,8 @@ const Reviews = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [updating, setUpdating] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   useEffect(() => {
     fetchReviews();
@@ -20,7 +22,6 @@ const Reviews = () => {
       const response = await getReviews(filterStatus ? { status: filterStatus } : {});
       setReviews(response.data);
     } catch (error) {
-      console.error('Error fetching reviews:', error);
       alert('Error fetching reviews');
     } finally {
       setLoading(false);
@@ -37,7 +38,6 @@ const Reviews = () => {
       await updateReviewStatus(reviewId, 'approved');
       fetchReviews();
     } catch (error) {
-      console.error('Error approving review:', error);
       alert('Error approving review');
     } finally {
       setUpdating(null);
@@ -54,7 +54,6 @@ const Reviews = () => {
       await updateReviewStatus(reviewId, 'rejected');
       fetchReviews();
     } catch (error) {
-      console.error('Error rejecting review:', error);
       alert('Error rejecting review');
     } finally {
       setUpdating(null);
@@ -71,7 +70,6 @@ const Reviews = () => {
       await deleteReview(reviewId);
       fetchReviews();
     } catch (error) {
-      console.error('Error deleting review:', error);
       alert('Error deleting review');
     } finally {
       setDeleting(null);
@@ -86,6 +84,17 @@ const Reviews = () => {
       review.reviewText?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredReviews.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedReviews = filteredReviews.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterStatus]);
 
   const renderStars = (rating) => {
     return Array.from({ length: 5 }, (_, i) => (
@@ -166,7 +175,7 @@ const Reviews = () => {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredReviews.map((review) => (
+          {paginatedReviews.map((review) => (
             <div key={review.id || review._id} className="card hover:shadow-lg transition-shadow">
               <div className="flex flex-col md:flex-row gap-4">
                 {/* Review Content */}
@@ -288,6 +297,61 @@ const Reviews = () => {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && filteredReviews.length > itemsPerPage && (
+        <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4 mt-6">
+          <div className="text-sm text-gray-700">
+            Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+            <span className="font-medium">{Math.min(endIndex, filteredReviews.length)}</span> of{' '}
+            <span className="font-medium">{filteredReviews.length}</span> reviews
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <ChevronLeft size={16} />
+              Previous
+            </button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = currentPage - 2 + i;
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
+                        ? 'bg-primary-600 text-white'
+                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                      }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              Next
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       )}
     </div>

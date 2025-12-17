@@ -40,7 +40,6 @@ export const uploadImageToCloudinary = async (file, folder = 'upload pics') => {
     const data = await response.json();
     return data.secure_url; // Return the secure URL
   } catch (error) {
-    console.error('Cloudinary upload error:', error);
     throw new Error(`Image upload failed: ${error.message}`);
   }
 };
@@ -51,7 +50,6 @@ export const uploadImageToCloudinary = async (file, folder = 'upload pics') => {
  */
 export const deleteImageFromCloudinary = async (publicId) => {
   // This would need to be implemented server-side for security
-  console.warn('Image deletion should be done server-side');
   return Promise.resolve();
 };
 

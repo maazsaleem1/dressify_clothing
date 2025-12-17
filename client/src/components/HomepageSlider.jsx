@@ -30,7 +30,6 @@ const HomepageSlider = () => {
       const activeSliders = response.data.filter(slider => slider.status === true);
       setSliders(activeSliders);
     } catch (error) {
-      console.error('Error fetching sliders:', error);
     } finally {
       setLoading(false);
     }
@@ -134,8 +133,8 @@ const HomepageSlider = () => {
               key={index}
               onClick={() => goToSlide(index)}
               className={`h-2 md:h-3 rounded-full transition-all ${index === currentIndex
-                  ? 'bg-white w-6 md:w-8'
-                  : 'bg-white bg-opacity-50 hover:bg-opacity-75 w-2 md:w-3'
+                ? 'bg-white w-6 md:w-8'
+                : 'bg-white bg-opacity-50 hover:bg-opacity-75 w-2 md:w-3'
                 }`}
               aria-label={`Go to slide ${index + 1}`}
             />

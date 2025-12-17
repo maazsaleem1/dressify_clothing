@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart } from 'lucide-react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getSales, getCustomers, getInventory, createSale, addItemsToSale, addPayment, deleteSale } from '../services/api';
 
 const Sales = () => {
@@ -15,6 +15,8 @@ const Sales = () => {
   const [selectedSale, setSelectedSale] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const [saleFormData, setSaleFormData] = useState({
     customer: '',
@@ -55,43 +57,26 @@ const Sales = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      console.log('=== FETCHING DATA ===');
       const [salesRes, customersRes, inventoryRes] = await Promise.all([
         getSales({ status: filterStatus }),
         getCustomers(),
         getInventory()
       ]);
-      console.log('Sales Response:', salesRes);
-      console.log('Customers Response:', customersRes);
-      console.log('Inventory Response:', inventoryRes);
-      console.log('Inventory Items:', inventoryRes.data);
 
       setSales(salesRes.data);
       setCustomers(customersRes.data);
       setInventory(inventoryRes.data);
-      console.log('=== DATA FETCHED SUCCESSFULLY ===');
     } catch (error) {
-      console.error('=== ERROR FETCHING DATA ===');
-      console.error('Error:', error);
-      console.error('Error Message:', error.message);
-      console.error('Error Stack:', error.stack);
-      if (error.response) {
-        console.error('Error Response:', error.response);
-      }
+      // Error fetching data
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddItem = () => {
-    console.log('=== ADDING ITEM TO SALE ===');
-    console.log('1. Current Item:', currentItem);
-    console.log('2. Inventory List:', inventory);
-
     // Convert empty string to 0 for validation
     const qtyToCheck = currentItem.quantity === '' ? 0 : currentItem.quantity;
     if (!currentItem.inventory || qtyToCheck <= 0) {
-      console.log('ERROR: Missing inventory or quantity');
       alert('Please select product and enter quantity');
       return;
     }
@@ -99,34 +84,27 @@ const Sales = () => {
     // Convert empty string to 0 for validation
     const priceToCheck = currentItem.unitPrice === '' ? 0 : currentItem.unitPrice;
     if (!priceToCheck || priceToCheck <= 0) {
-      console.log('ERROR: Invalid price');
       alert('Please enter a valid selling price');
       return;
     }
 
     const inventoryItem = inventory.find(i => (i.id || i._id) === currentItem.inventory);
-    console.log('3. Found Inventory Item:', inventoryItem);
 
     if (!inventoryItem) {
-      console.log('ERROR: Inventory item not found');
       alert('Product not found');
       return;
     }
 
     // Check if item has sizes
     const hasSizes = inventoryItem.sizes && inventoryItem.sizes.length > 0;
-    console.log('4. Has Sizes:', hasSizes);
-    console.log('5. Sizes Array:', inventoryItem.sizes);
 
     if (hasSizes && !currentItem.size) {
-      console.log('ERROR: Size required but not selected');
       alert('Please select a size');
       return;
     }
 
     // If no sizes, use "One Size" or first available
     const selectedSize = currentItem.size || (hasSizes ? inventoryItem.sizes[0].size : 'One Size');
-    console.log('6. Selected Size:', selectedSize);
 
     const sizeStock = hasSizes
       ? inventoryItem.sizes.find(s => s.size === selectedSize)
@@ -134,10 +112,7 @@ const Sales = () => {
         ? inventoryItem.sizes[0]
         : null;
 
-    console.log('7. Size Stock:', sizeStock);
-
     if (hasSizes && (!sizeStock || sizeStock.quantity < currentItem.quantity)) {
-      console.log('ERROR: Insufficient stock');
       alert(`Insufficient stock! Available: ${sizeStock?.quantity || 0}`);
       return;
     }
@@ -153,26 +128,16 @@ const Sales = () => {
       size: selectedSize,
       productName: inventoryItem.productName,
       totalPrice: finalQty * finalPrice,
-      inventorySellingPrice: inventoryItem.sellingPrice || 0, // Actual price from inventory
-      inventoryCostPrice: inventoryItem.costPerUnit || 0, // Cost price
-      profitPerUnit: finalPrice - (inventoryItem.sellingPrice || 0), // Profit per unit
-      totalProfit: (finalPrice - (inventoryItem.sellingPrice || 0)) * finalQty // Total profit
+      inventorySellingPrice: inventoryItem.sellingPrice || 0,
+      inventoryCostPrice: inventoryItem.costPerUnit || 0,
+      profitPerUnit: finalPrice - (inventoryItem.sellingPrice || 0),
+      totalProfit: (finalPrice - (inventoryItem.sellingPrice || 0)) * finalQty
     };
-
-    console.log('8. New Item Created:', newItem);
-    console.log('   Custom Price:', currentItem.unitPrice);
-    console.log('   Inventory Suggested Price:', inventoryItem.sellingPrice);
 
     setSaleFormData({
       ...saleFormData,
       items: [...saleFormData.items, newItem]
     });
-
-    console.log('9. Updated Sale Form Data:', {
-      ...saleFormData,
-      items: [...saleFormData.items, newItem]
-    });
-    console.log('=== ITEM ADDED SUCCESSFULLY ===');
 
     setCurrentItem({
       inventory: '',
@@ -193,60 +158,26 @@ const Sales = () => {
 
   const handleSubmitSale = async (e) => {
     e.preventDefault();
-    console.log('=== SALE CREATION START ===');
-    console.log('1. Form Data:', saleFormData);
-    console.log('2. Items Count:', saleFormData.items.length);
 
     if (saleFormData.items.length === 0) {
-      console.log('ERROR: No items in sale');
       alert('Please add at least one item');
       return;
     }
 
-    // Validate items
-    console.log('3. Validating Items:');
-    saleFormData.items.forEach((item, index) => {
-      console.log(`   Item ${index + 1}:`, {
-        inventory: item.inventory,
-        productName: item.productName,
-        size: item.size,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice
-      });
-    });
-
     setSaving(true);
     try {
-      console.log('4. Calling createSale API...');
-      // Ensure paidAmount is a number before submitting
       const saleDataToSubmit = {
         ...saleFormData,
         paidAmount: saleFormData.paidAmount === '' ? 0 : saleFormData.paidAmount
       };
-      console.log('5. Sale Data Being Sent:', JSON.stringify(saleDataToSubmit, null, 2));
 
-      const result = await createSale(saleDataToSubmit);
-      console.log('6. Sale Created Successfully!');
-      console.log('7. Response:', result);
+      await createSale(saleDataToSubmit);
 
       setShowSaleModal(false);
       resetSaleForm();
       fetchData();
-      console.log('=== SALE CREATION SUCCESS ===');
     } catch (error) {
-      console.error('=== SALE CREATION ERROR ===');
-      console.error('Error Object:', error);
-      console.error('Error Message:', error.message);
-      console.error('Error Stack:', error.stack);
-      if (error.response) {
-        console.error('Error Response:', error.response);
-        console.error('Error Response Data:', error.response.data);
-        console.error('Error Response Status:', error.response.status);
-      }
-      console.error('Full Error Details:', JSON.stringify(error, null, 2));
       alert(error.message || error.response?.data?.error || 'Error creating sale');
-      console.log('=== SALE CREATION FAILED ===');
     } finally {
       setSaving(false);
     }
@@ -266,7 +197,6 @@ const Sales = () => {
       setPaymentFormData({ amount: '', paymentMethod: 'Cash', notes: '' });
       fetchData();
     } catch (error) {
-      console.error('Error adding payment:', error);
       alert(error.response?.data?.error || 'Error adding payment');
     } finally {
       setSaving(false);
@@ -279,7 +209,6 @@ const Sales = () => {
         await deleteSale(id);
         fetchData();
       } catch (error) {
-        console.error('Error deleting sale:', error);
       }
     }
   };
@@ -357,7 +286,6 @@ const Sales = () => {
       fetchData();
       alert('Items added successfully!');
     } catch (error) {
-      console.error('Error adding items to sale:', error);
       alert(error.message || 'Error adding items to sale');
     } finally {
       setSaving(false);
@@ -420,6 +348,17 @@ const Sales = () => {
       sale.customer?.name.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedSales = filteredSales.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterStatus]);
 
   return (
     <div className="space-y-6">
@@ -494,7 +433,7 @@ const Sales = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredSales.map((sale) => (
+                {paginatedSales.map((sale) => (
                   <tr key={sale.id || sale._id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
                       {sale.invoiceNumber}
@@ -587,6 +526,61 @@ const Sales = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!loading && filteredSales.length > itemsPerPage && (
+          <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-sm text-gray-700">
+              Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+              <span className="font-medium">{Math.min(endIndex, filteredSales.length)}</span> of{' '}
+              <span className="font-medium">{filteredSales.length}</span> sales
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                <ChevronLeft size={16} />
+                Previous
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
+                          ? 'bg-primary-600 text-white'
+                          : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                        }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
         )}
       </div>

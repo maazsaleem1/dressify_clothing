@@ -63,7 +63,6 @@ export const getBrands = async () => {
     const brands = snapshot.docs.map(docToObject);
     return { data: brands };
   } catch (error) {
-    console.error('Error fetching brands:', error);
     throw error;
   }
 };
@@ -79,7 +78,6 @@ export const createBrand = async (brandData) => {
     const docRef = await addDoc(collection(db, 'brands'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating brand:', error);
     throw error;
   }
 };
@@ -93,7 +91,6 @@ export const updateBrand = async (id, brandData) => {
     await updateDoc(doc(db, 'brands', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating brand:', error);
     throw error;
   }
 };
@@ -103,7 +100,6 @@ export const deleteBrand = async (id) => {
     await deleteDoc(doc(db, 'brands', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting brand:', error);
     throw error;
   }
 };
@@ -130,7 +126,7 @@ export const getCategories = async (filters = {}) => {
     const categories = snapshot.docs.map(docToObject);
     return { data: categories };
   } catch (error) {
-    console.error('Error fetching categories:', error);
+
     throw error;
   }
 };
@@ -147,7 +143,7 @@ export const createCategory = async (categoryData) => {
     const docRef = await addDoc(collection(db, 'categories'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating category:', error);
+
     throw error;
   }
 };
@@ -162,7 +158,7 @@ export const updateCategory = async (id, categoryData) => {
     await updateDoc(doc(db, 'categories', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating category:', error);
+
     throw error;
   }
 };
@@ -172,7 +168,7 @@ export const deleteCategory = async (id) => {
     await deleteDoc(doc(db, 'categories', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting category:', error);
+
     throw error;
   }
 };
@@ -218,7 +214,7 @@ export const getInventory = async (filters = {}) => {
 
     return { data: inventory };
   } catch (error) {
-    console.error('Error fetching inventory:', error);
+
     throw error;
   }
 };
@@ -236,7 +232,7 @@ export const createInventoryItem = async (itemData) => {
     const docRef = await addDoc(collection(db, 'inventory'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating inventory item:', error);
+
     throw error;
   }
 };
@@ -252,7 +248,7 @@ export const updateInventoryItem = async (id, itemData) => {
     await updateDoc(doc(db, 'inventory', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating inventory item:', error);
+
     throw error;
   }
 };
@@ -262,7 +258,7 @@ export const deleteInventoryItem = async (id) => {
     await deleteDoc(doc(db, 'inventory', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting inventory item:', error);
+
     throw error;
   }
 };
@@ -281,7 +277,7 @@ export const getCustomers = async (filters = {}) => {
     const customers = snapshot.docs.map(docToObject);
     return { data: customers };
   } catch (error) {
-    console.error('Error fetching customers:', error);
+
     throw error;
   }
 };
@@ -319,7 +315,7 @@ export const getCustomer = async (id) => {
       }
     };
   } catch (error) {
-    console.error('Error fetching customer:', error);
+
     throw error;
   }
 };
@@ -334,7 +330,7 @@ export const createCustomer = async (customerData) => {
     const docRef = await addDoc(collection(db, 'customers'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating customer:', error);
+
     throw error;
   }
 };
@@ -348,7 +344,7 @@ export const updateCustomer = async (id, customerData) => {
     await updateDoc(doc(db, 'customers', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating customer:', error);
+
     throw error;
   }
 };
@@ -358,7 +354,7 @@ export const deleteCustomer = async (id) => {
     await deleteDoc(doc(db, 'customers', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting customer:', error);
+
     throw error;
   }
 };
@@ -387,7 +383,7 @@ export const getSales = async (filters = {}) => {
 
     return { data: sales };
   } catch (error) {
-    console.error('Error fetching sales:', error);
+
     throw error;
   }
 };
@@ -445,7 +441,7 @@ export const createSale = async (saleData) => {
 
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating sale:', error);
+
     throw error;
   }
 };
@@ -503,7 +499,7 @@ export const addItemsToSale = async (saleId, items) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Error adding items to sale:', error);
+
     throw error;
   }
 };
@@ -542,7 +538,7 @@ export const addPayment = async (saleId, paymentData) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Error adding payment:', error);
+
     throw error;
   }
 };
@@ -580,7 +576,7 @@ export const deleteSale = async (id) => {
     await deleteDoc(saleRef);
     return { success: true };
   } catch (error) {
-    console.error('Error deleting sale:', error);
+
     throw error;
   }
 };
@@ -603,7 +599,7 @@ export const getProductions = async () => {
 
     return { data: productions };
   } catch (error) {
-    console.error('Error fetching productions:', error);
+
     throw error;
   }
 };
@@ -622,7 +618,7 @@ export const createProduction = async (productionData) => {
     const docRef = await addDoc(collection(db, 'productions'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating production:', error);
+
     throw error;
   }
 };
@@ -636,7 +632,7 @@ export const updateProduction = async (id, productionData) => {
     await updateDoc(doc(db, 'productions', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating production:', error);
+
     throw error;
   }
 };
@@ -677,7 +673,7 @@ export const moveToInventory = async (productionId, { brandId }) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Error moving to inventory:', error);
+
     throw error;
   }
 };
@@ -687,7 +683,7 @@ export const deleteProduction = async (id) => {
     await deleteDoc(doc(db, 'productions', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting production:', error);
+
     throw error;
   }
 };
@@ -796,7 +792,7 @@ export const getDashboardStats = async () => {
       }
     };
   } catch (error) {
-    console.error('Error fetching dashboard stats:', error);
+
     throw error;
   }
 };
@@ -815,7 +811,7 @@ export const getSalesStats = async () => {
       }
     };
   } catch (error) {
-    console.error('Error fetching sales stats:', error);
+
     throw error;
   }
 };
@@ -842,7 +838,7 @@ export const getInventoryStats = async () => {
       }
     };
   } catch (error) {
-    console.error('Error fetching inventory stats:', error);
+
     throw error;
   }
 };
@@ -855,7 +851,7 @@ export const getSliders = async () => {
     const sliders = snapshot.docs.map(docToObject);
     return { data: sliders };
   } catch (error) {
-    console.error('Error fetching sliders:', error);
+
     throw error;
   }
 };
@@ -872,7 +868,7 @@ export const createSlider = async (sliderData) => {
     const docRef = await addDoc(collection(db, 'sliders'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating slider:', error);
+
     throw error;
   }
 };
@@ -886,7 +882,7 @@ export const updateSlider = async (id, sliderData) => {
     await updateDoc(doc(db, 'sliders', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating slider:', error);
+
     throw error;
   }
 };
@@ -896,7 +892,7 @@ export const deleteSlider = async (id) => {
     await deleteDoc(doc(db, 'sliders', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting slider:', error);
+
     throw error;
   }
 };
@@ -910,7 +906,7 @@ export const reorderSliders = async (updates) => {
     await Promise.all(updatePromises);
     return { success: true };
   } catch (error) {
-    console.error('Error reordering sliders:', error);
+
     throw error;
   }
 };
@@ -939,7 +935,7 @@ export const getOrders = async (filters = {}) => {
 
     return { data: orders };
   } catch (error) {
-    console.error('Error fetching orders:', error);
+
     throw error;
   }
 };
@@ -960,13 +956,13 @@ export const getOrder = async (id) => {
         const customers = customersRes.data;
         order.customer = customers.find(c => (c.id || c._id) === order.customerId);
       } catch (error) {
-        console.error('Error fetching customer:', error);
+
       }
     }
 
     return { data: order };
   } catch (error) {
-    console.error('Error fetching order:', error);
+
     throw error;
   }
 };
@@ -988,7 +984,7 @@ export const createOrder = async (orderData) => {
     const docRef = await addDoc(collection(db, 'orders'), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-    console.error('Error creating order:', error);
+
     throw error;
   }
 };
@@ -1030,7 +1026,6 @@ export const updateOrderStatus = async (id, newStatus) => {
           const inventorySnap = await transaction.get(inventoryRef);
 
           if (!inventorySnap.exists()) {
-            console.warn(`Inventory item ${item.inventoryId} not found`);
             continue;
           }
 
@@ -1091,7 +1086,7 @@ export const updateOrderStatus = async (id, newStatus) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Error updating order status:', error);
+
     throw error;
   }
 };
@@ -1105,7 +1100,7 @@ export const updateOrder = async (id, orderData) => {
     await updateDoc(doc(db, 'orders', id), data);
     return { data: { id, ...data } };
   } catch (error) {
-    console.error('Error updating order:', error);
+
     throw error;
   }
 };
@@ -1115,7 +1110,7 @@ export const deleteOrder = async (id) => {
     await deleteDoc(doc(db, 'orders', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting order:', error);
+
     throw error;
   }
 };
@@ -1178,7 +1173,7 @@ export const getOnlineSalesStats = async () => {
       }
     };
   } catch (error) {
-    console.error('Error fetching online sales stats:', error);
+
     throw error;
   }
 };
@@ -1207,7 +1202,7 @@ export const getProductOnlineSales = async (productId) => {
       }
     };
   } catch (error) {
-    console.error('Error fetching product online sales:', error);
+
     throw error;
   }
 };
@@ -1226,7 +1221,7 @@ export const getReviews = async (filters = {}) => {
     const reviews = snapshot.docs.map(docToObject);
     return { data: reviews };
   } catch (error) {
-    console.error('Error fetching reviews:', error);
+
     throw error;
   }
 };
@@ -1245,7 +1240,7 @@ export const updateReviewStatus = async (reviewId, status) => {
 
     return { success: true };
   } catch (error) {
-    console.error('Error updating review status:', error);
+
     throw error;
   }
 };
@@ -1255,7 +1250,7 @@ export const deleteReview = async (id) => {
     await deleteDoc(doc(db, 'reviews', id));
     return { success: true };
   } catch (error) {
-    console.error('Error deleting review:', error);
+
     throw error;
   }
 };

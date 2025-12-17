@@ -44,7 +44,6 @@ const BrandsCategories = () => {
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
     } catch (error) {
-      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
@@ -56,12 +55,9 @@ const BrandsCategories = () => {
       return;
     }
     try {
-      console.log('Fetching parent categories for brandId:', brandId);
       const res = await getCategories({ brandId, mainCategoriesOnly: true });
-      console.log('Parent categories received:', res.data);
       setParentCategories(res.data);
     } catch (error) {
-      console.error('Error fetching parent categories:', error);
       setParentCategories([]);
     }
   };
@@ -103,7 +99,6 @@ const BrandsCategories = () => {
       resetForm();
       fetchData();
     } catch (error) {
-      console.error('Error saving:', error);
       alert(error.message || error.response?.data?.error || 'Error saving item');
     } finally {
       setSaving(false);
@@ -140,7 +135,6 @@ const BrandsCategories = () => {
         }
         fetchData();
       } catch (error) {
-        console.error('Error deleting:', error);
         alert(error.message || error.response?.data?.error || 'Error deleting item');
       } finally {
         setDeleting(null);

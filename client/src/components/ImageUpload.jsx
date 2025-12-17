@@ -48,7 +48,6 @@ const ImageUpload = ({
       onImageChange(uploadedUrl);
       setPreview(uploadedUrl);
     } catch (err) {
-      console.error('Upload error:', err);
       setError(err.message || 'Failed to upload image');
       setPreview(null);
     } finally {

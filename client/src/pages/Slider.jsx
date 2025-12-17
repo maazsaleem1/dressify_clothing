@@ -47,7 +47,6 @@ const Slider = () => {
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
     } catch (error) {
-      console.error('Error fetching products/filters:', error);
     }
   };
 
@@ -57,7 +56,6 @@ const Slider = () => {
       const response = await getSliders();
       setSliders(response.data);
     } catch (error) {
-      console.error('Error fetching sliders:', error);
     } finally {
       setLoading(false);
     }
@@ -78,7 +76,6 @@ const Slider = () => {
       resetForm();
       fetchSliders();
     } catch (error) {
-      console.error('Error saving slider:', error);
       alert(error.message || 'Error saving slider');
     } finally {
       setSaving(false);
@@ -127,7 +124,6 @@ const Slider = () => {
       await deleteSlider(id);
       fetchSliders();
     } catch (error) {
-      console.error('Error deleting slider:', error);
       alert(error.message || 'Error deleting slider');
     } finally {
       setDeleting(null);
@@ -142,7 +138,6 @@ const Slider = () => {
       });
       fetchSliders();
     } catch (error) {
-      console.error('Error updating status:', error);
       alert(error.message || 'Error updating status');
     }
   };
@@ -167,7 +162,6 @@ const Slider = () => {
       await reorderSliders(updates);
       fetchSliders();
     } catch (error) {
-      console.error('Error reordering sliders:', error);
       alert(error.message || 'Error reordering sliders');
     }
   };

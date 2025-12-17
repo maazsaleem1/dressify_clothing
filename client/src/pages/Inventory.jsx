@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle } from 'lucide-react';
+import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
 
@@ -20,6 +20,8 @@ const Inventory = () => {
   const [useSizes, setUseSizes] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
   const [formData, setFormData] = useState({
     brand: '',
     category: '',
@@ -81,7 +83,6 @@ const Inventory = () => {
           const res = await getCategories({ parentCategoryId: formData.category });
           setSubcategories(res.data);
         } catch (error) {
-          console.error('Error fetching subcategories:', error);
           setSubcategories([]);
         }
       } else {
@@ -123,10 +124,10 @@ const Inventory = () => {
         });
         setOnlineSales(productSalesMap);
       } catch (error) {
-        console.error('Error fetching online sales:', error);
+        // Error fetching online sales - continue without it
       }
     } catch (error) {
-      console.error('Error fetching data:', error);
+      // Error fetching data
     } finally {
       setLoading(false);
     }
@@ -196,7 +197,6 @@ const Inventory = () => {
       resetForm();
       fetchData();
     } catch (error) {
-      console.error('Error saving item:', error);
       alert(error.message || 'Error saving item');
     } finally {
       setSaving(false);
@@ -261,7 +261,7 @@ const Inventory = () => {
         const res = await getCategories({ parentCategoryId: categoryId });
         setSubcategories(res.data);
       } catch (error) {
-        console.error('Error fetching subcategories:', error);
+        // Error fetching subcategories
       }
     }
 
@@ -273,21 +273,12 @@ const Inventory = () => {
       return;
     }
 
-    console.log('=== DELETING INVENTORY ITEM ===');
-    console.log('Item ID:', id);
     setDeleting(id);
 
     try {
-      console.log('Calling deleteInventoryItem API...');
       await deleteInventoryItem(id);
-      console.log('Item deleted successfully');
       await fetchData();
-      console.log('=== DELETE SUCCESS ===');
     } catch (error) {
-      console.error('=== DELETE ERROR ===');
-      console.error('Error:', error);
-      console.error('Error Message:', error.message);
-      console.error('Error Stack:', error.stack);
       alert(error.message || 'Error deleting item. Please try again.');
     } finally {
       setDeleting(null);
@@ -341,6 +332,17 @@ const Inventory = () => {
       item.brand?.name.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredInventory.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedInventory = filteredInventory.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterBrand, filterCategory, showLowStock]);
 
   const getTotalQuantity = (sizes) => {
     return sizes.reduce((sum, s) => sum + s.quantity, 0);
@@ -427,25 +429,25 @@ const Inventory = () => {
             <p className="text-gray-500">No inventory items found</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full min-w-[1200px]">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Online</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Value</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Revenue (In-store + Online)</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredInventory.map((item) => {
+                {paginatedInventory.map((item) => {
                   const totalQty = getTotalQuantity(item.sizes);
                   const initialQty = item.initialQuantity || totalQty; // Fallback to current if no initial
                   const soldQty = initialQty - totalQty;
@@ -453,7 +455,7 @@ const Inventory = () => {
 
                   return (
                     <tr key={item.id || item._id} className={lowStock ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-3 sm:px-6 py-4">
                         <div className="flex items-center gap-3">
                           {item.imageUrl ? (
                             <img
@@ -504,7 +506,7 @@ const Inventory = () => {
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-3 sm:px-6 py-4 text-sm hidden md:table-cell">
                         {item.brand?.name ? (
                           <span className="text-gray-800 font-medium">{item.brand.name}</span>
                         ) : item.brandId ? (
@@ -513,7 +515,7 @@ const Inventory = () => {
                           <span className="text-gray-400">—</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-3 sm:px-6 py-4 text-sm hidden lg:table-cell">
                         {item.category?.name ? (
                           <span className="text-gray-800 font-medium">{item.category.name}</span>
                         ) : item.categoryId ? (
@@ -522,7 +524,7 @@ const Inventory = () => {
                           <span className="text-gray-400">—</span>
                         )}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-3 sm:px-6 py-4">
                         <div className="flex flex-wrap gap-1">
                           {item.sizes.map((s, idx) => {
                             const sizeInitial = s.initialQuantity || s.quantity;
@@ -536,7 +538,7 @@ const Inventory = () => {
                           })}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-3 sm:px-6 py-4 hidden lg:table-cell">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500">Initial:</span>
@@ -556,10 +558,10 @@ const Inventory = () => {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden xl:table-cell">
                         Rs. {item.costPerUnit.toLocaleString()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-3 sm:px-6 py-4 text-sm">
                         {(() => {
                           const sellingPrice = item.sellingPrice || 0;
                           const onlinePrice = item.onlinePrice || sellingPrice;
@@ -594,7 +596,7 @@ const Inventory = () => {
                           }
                         })()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-3 sm:px-6 py-4 hidden md:table-cell">
                         <div className="flex flex-col gap-1">
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${item.onlineStatus
                             ? 'bg-green-100 text-green-700'
@@ -607,10 +609,10 @@ const Inventory = () => {
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <td className="px-3 sm:px-6 py-4 text-sm font-medium text-gray-900 hidden xl:table-cell">
                         Rs. {(totalQty * item.costPerUnit).toLocaleString()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
                         {(() => {
                           const totalEarned = calculateTotalEarned(item.id || item._id);
                           const onlineSalesData = onlineSales[item.id || item._id];
@@ -646,7 +648,7 @@ const Inventory = () => {
                           );
                         })()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <td className="px-3 sm:px-6 py-4 text-sm">
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleEdit(item)}
@@ -678,6 +680,61 @@ const Inventory = () => {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!loading && filteredInventory.length > itemsPerPage && (
+          <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-sm text-gray-700">
+              Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+              <span className="font-medium">{Math.min(endIndex, filteredInventory.length)}</span> of{' '}
+              <span className="font-medium">{filteredInventory.length}</span> items
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                <ChevronLeft size={16} />
+                Previous
+              </button>
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
+                        ? 'bg-primary-600 text-white'
+                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                        }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </div>
         )}
       </div>
