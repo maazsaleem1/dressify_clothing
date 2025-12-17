@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Tag, Package } from 'lucide-react';
 import { getBrands, getCategories, createBrand, createCategory, updateBrand, updateCategory, deleteBrand, deleteCategory } from '../services/api';
+import ImageUpload from '../components/ImageUpload';
 
 const BrandsCategories = () => {
   const [brands, setBrands] = useState([]);
@@ -17,7 +18,8 @@ const BrandsCategories = () => {
     name: '',
     description: '',
     brandId: '',
-    parentCategoryId: ''
+    parentCategoryId: '',
+    imageUrl: ''
   });
   const [parentCategories, setParentCategories] = useState([]);
 
@@ -115,7 +117,8 @@ const BrandsCategories = () => {
       name: item.name,
       description: item.description || '',
       brandId: item.brandId || '',
-      parentCategoryId: item.parentCategoryId || ''
+      parentCategoryId: item.parentCategoryId || '',
+      imageUrl: item.imageUrl || ''
     });
 
     // Fetch parent categories if editing a category
@@ -150,7 +153,8 @@ const BrandsCategories = () => {
       name: '',
       description: '',
       brandId: '',
-      parentCategoryId: ''
+      parentCategoryId: '',
+      imageUrl: ''
     });
     setEditingItem(null);
     setParentCategories([]);
@@ -226,7 +230,21 @@ const BrandsCategories = () => {
                 <div key={brand.id || brand._id} className="card hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
+                      {brand.imageUrl ? (
+                        <img
+                          src={brand.imageUrl}
+                          alt={brand.name}
+                          className="w-12 h-12 object-cover rounded-lg"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            const fallback = e.target.nextElementSibling;
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className={`w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center text-white font-bold text-lg ${brand.imageUrl ? 'hidden' : 'flex'}`}
+                      >
                         {brand.name.charAt(0).toUpperCase()}
                       </div>
                       <div>
@@ -309,7 +327,21 @@ const BrandsCategories = () => {
                   <div key={category.id || category._id} className="card hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
+                        {category.imageUrl ? (
+                          <img
+                            src={category.imageUrl}
+                            alt={category.name}
+                            className="w-12 h-12 object-cover rounded-lg"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              const fallback = e.target.nextElementSibling;
+                              if (fallback) fallback.style.display = 'flex';
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg ${category.imageUrl ? 'hidden' : 'flex'}`}
+                        >
                           {category.name.charAt(0).toUpperCase()}
                         </div>
                         <div>
@@ -419,6 +451,15 @@ const BrandsCategories = () => {
                   disabled={saving}
                 />
               </div>
+
+              {/* Image Upload */}
+              <ImageUpload
+                imageUrl={formData.imageUrl}
+                onImageChange={(url) => setFormData({ ...formData, imageUrl: url })}
+                label={modalType === 'brand' ? 'Brand Image' : 'Category Image'}
+                folder={modalType === 'brand' ? 'upload pics/brands' : 'upload pics/categories'}
+                disabled={saving}
+              />
 
               {/* Parent Category - Optional, makes it a subcategory if selected */}
               {modalType === 'category' && formData.brandId && (

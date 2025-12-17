@@ -1,1106 +1,1261 @@
+// Firestore API Service
 import {
-  db,
   collection,
   doc,
-  getDocs,
   getDoc,
+  getDocs,
   addDoc,
   updateDoc,
   deleteDoc,
   query,
   where,
   orderBy,
-  serverTimestamp,
-  Timestamp
-} from './firestore';
+  Timestamp,
+  increment,
+  arrayUnion,
+  arrayRemove,
+  runTransaction
+} from 'firebase/firestore';
+import { db } from '../firebase-config';
 
-// Helper function to convert Firestore doc to object
+// Helper function to convert Firestore document to plain object
 const docToObject = (doc) => {
-  return { id: doc.id, ...doc.data() };
+  const data = doc.data();
+  return {
+    id: doc.id,
+    _id: doc.id, // Support both id and _id for compatibility
+    ...data,
+    // Convert Firestore Timestamps to Date objects
+    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
+    updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
+    saleDate: data.saleDate?.toDate ? data.saleDate.toDate() : data.saleDate,
+    expectedCompletionDate: data.expectedCompletionDate?.toDate ? data.expectedCompletionDate.toDate() : data.expectedCompletionDate,
+  };
+};
+
+// Helper function to prepare data for Firestore
+const prepareData = (data) => {
+  const prepared = { ...data };
+  // Remove id/_id fields as they're document IDs, not data
+  delete prepared.id;
+  delete prepared._id;
+  // Convert Date objects to Firestore Timestamps
+  if (prepared.createdAt && prepared.createdAt instanceof Date) {
+    prepared.createdAt = Timestamp.fromDate(prepared.createdAt);
+  }
+  if (prepared.updatedAt && prepared.updatedAt instanceof Date) {
+    prepared.updatedAt = Timestamp.fromDate(prepared.updatedAt);
+  }
+  if (prepared.saleDate && prepared.saleDate instanceof Date) {
+    prepared.saleDate = Timestamp.fromDate(prepared.saleDate);
+  }
+  if (prepared.expectedCompletionDate && prepared.expectedCompletionDate instanceof Date) {
+    prepared.expectedCompletionDate = Timestamp.fromDate(prepared.expectedCompletionDate);
+  }
+  return prepared;
 };
 
 // ==================== BRANDS ====================
 export const getBrands = async () => {
-  const q = query(collection(db, 'brands'), orderBy('name'));
-  const snapshot = await getDocs(q);
-  return { data: snapshot.docs.map(docToObject) };
+  try {
+    const q = query(collection(db, 'brands'), orderBy('name'));
+    const snapshot = await getDocs(q);
+    const brands = snapshot.docs.map(docToObject);
+    return { data: brands };
+  } catch (error) {
+    console.error('Error fetching brands:', error);
+    throw error;
+  }
 };
 
-export const getBrand = async (id) => {
-  const docRef = doc(db, 'brands', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Brand not found');
-  return { data: docToObject(docSnap) };
+export const createBrand = async (brandData) => {
+  try {
+    const data = {
+      ...prepareData(brandData),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      isActive: brandData.isActive !== undefined ? brandData.isActive : true
+    };
+    const docRef = await addDoc(collection(db, 'brands'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating brand:', error);
+    throw error;
+  }
 };
 
-export const createBrand = async (data) => {
-  const docRef = await addDoc(collection(db, 'brands'), {
-    ...data,
-    isActive: true,
-    createdAt: serverTimestamp()
-  });
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateBrand = async (id, data) => {
-  const docRef = doc(db, 'brands', id);
-  await updateDoc(docRef, data);
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
+export const updateBrand = async (id, brandData) => {
+  try {
+    const data = {
+      ...prepareData(brandData),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'brands', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating brand:', error);
+    throw error;
+  }
 };
 
 export const deleteBrand = async (id) => {
-  await deleteDoc(doc(db, 'brands', id));
-  return { data: { message: 'Brand deleted successfully' } };
+  try {
+    await deleteDoc(doc(db, 'brands', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting brand:', error);
+    throw error;
+  }
 };
 
 // ==================== CATEGORIES ====================
-export const getCategories = async (params = {}) => {
-  let q = collection(db, 'categories');
-  const constraints = [];
-
-  // Filter by brand if provided
-  if (params.brandId) {
-    constraints.push(where('brandId', '==', params.brandId));
-  }
-
-  // Filter by parent category (for subcategories)
-  if (params.parentCategoryId) {
-    constraints.push(where('parentCategoryId', '==', params.parentCategoryId));
-  } else if (params.mainCategoriesOnly) {
-    // Only get main categories (no parent) - Firestore doesn't support null directly, so we'll filter in code
-    // We'll fetch all and filter in the result
-  }
-
-  // Filter by category type
-  if (params.type) {
-    constraints.push(where('categoryType', '==', params.type));
-  }
-
-  if (constraints.length > 0) {
-    constraints.push(orderBy('name'));
-    q = query(q, ...constraints);
-  } else {
-    q = query(q, orderBy('name'));
-  }
-
-  let snapshot;
-  let usedOrderBy = true; // Track if we used orderBy
+export const getCategories = async (filters = {}) => {
   try {
-    snapshot = await getDocs(q);
-  } catch (error) {
-    // If orderBy fails due to missing index, try without it
-    if ((error.code === 'failed-precondition' || error.message?.includes('index')) && constraints.length > 1) {
-      console.log('Index missing, fetching without orderBy');
-      usedOrderBy = false;
-      // Remove orderBy and retry
-      const constraintsWithoutOrder = constraints.slice(0, -1); // Remove last (orderBy)
-      q = constraintsWithoutOrder.length > 0
-        ? query(collection(db, 'categories'), ...constraintsWithoutOrder)
-        : collection(db, 'categories');
-      snapshot = await getDocs(q);
-    } else {
-      throw error;
+    let q = collection(db, 'categories');
+
+    if (filters.brandId) {
+      q = query(q, where('brandId', '==', filters.brandId));
     }
+
+    if (filters.parentCategoryId) {
+      q = query(q, where('parentCategoryId', '==', filters.parentCategoryId));
+    }
+
+    if (filters.mainCategoriesOnly) {
+      q = query(q, where('parentCategoryId', '==', null));
+    }
+
+    q = query(q, orderBy('name'));
+    const snapshot = await getDocs(q);
+    const categories = snapshot.docs.map(docToObject);
+    return { data: categories };
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    throw error;
   }
-
-  let result = snapshot.docs.map(docToObject);
-
-  // Sort manually if we couldn't use orderBy
-  if (!usedOrderBy) {
-    result.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  }
-
-  console.log('=== getCategories DEBUG ===');
-  console.log('Params:', params);
-  console.log('Total categories fetched:', result.length);
-  console.log('All categories before filtering:', result.map(c => ({
-    name: c.name,
-    brandId: c.brandId,
-    parentCategoryId: c.parentCategoryId,
-    categoryType: c.categoryType
-  })));
-
-  // Filter main categories only if requested (since Firestore doesn't support null comparison well)
-  if (params.mainCategoriesOnly) {
-    const beforeFilter = result.length;
-    result = result.filter(cat => {
-      // Main category: parentCategoryId should be null, undefined, empty string, or not exist
-      // Also exclude if categoryType is explicitly 'subcategory'
-      const hasNoParent = !cat.parentCategoryId || cat.parentCategoryId === null || cat.parentCategoryId === '';
-      const isNotSubcategory = cat.categoryType !== 'subcategory';
-
-      const isMainCategory = hasNoParent && isNotSubcategory;
-
-      // Debug log for each category
-      console.log('Category filter check:', {
-        name: cat.name,
-        brandId: cat.brandId,
-        requestedBrandId: params.brandId,
-        parentCategoryId: cat.parentCategoryId,
-        categoryType: cat.categoryType,
-        hasNoParent,
-        isNotSubcategory,
-        isMainCategory,
-        willInclude: isMainCategory
-      });
-
-      return isMainCategory;
-    });
-    console.log('Main categories filtered:', {
-      before: beforeFilter,
-      after: result.length,
-      categories: result.map(c => ({
-        name: c.name,
-        parentCategoryId: c.parentCategoryId,
-        categoryType: c.categoryType,
-        brandId: c.brandId
-      }))
-    });
-  }
-
-  return { data: result };
 };
 
-export const getCategory = async (id) => {
-  const docRef = doc(db, 'categories', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Category not found');
-  return { data: docToObject(docSnap) };
+export const createCategory = async (categoryData) => {
+  try {
+    const data = {
+      ...prepareData(categoryData),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      isActive: categoryData.isActive !== undefined ? categoryData.isActive : true,
+      parentCategoryId: categoryData.parentCategoryId || null
+    };
+    const docRef = await addDoc(collection(db, 'categories'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating category:', error);
+    throw error;
+  }
 };
 
-export const createCategory = async (data) => {
-  const categoryData = {
-    name: data.name,
-    description: data.description || '',
-    brandId: data.brandId || null,
-    parentCategoryId: data.parentCategoryId || null,
-    categoryType: data.parentCategoryId ? 'subcategory' : 'category',
-    isActive: true,
-    createdAt: serverTimestamp()
-  };
-
-  const docRef = await addDoc(collection(db, 'categories'), categoryData);
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateCategory = async (id, data) => {
-  const categoryData = {
-    name: data.name,
-    description: data.description || '',
-    brandId: data.brandId || null,
-    parentCategoryId: data.parentCategoryId || null,
-    categoryType: data.parentCategoryId ? 'subcategory' : 'category'
-  };
-
-  const docRef = doc(db, 'categories', id);
-  await updateDoc(docRef, categoryData);
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
+export const updateCategory = async (id, categoryData) => {
+  try {
+    const data = {
+      ...prepareData(categoryData),
+      updatedAt: Timestamp.now(),
+      parentCategoryId: categoryData.parentCategoryId || null
+    };
+    await updateDoc(doc(db, 'categories', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating category:', error);
+    throw error;
+  }
 };
 
 export const deleteCategory = async (id) => {
-  await deleteDoc(doc(db, 'categories', id));
-  return { data: { message: 'Category deleted successfully' } };
+  try {
+    await deleteDoc(doc(db, 'categories', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting category:', error);
+    throw error;
+  }
 };
 
 // ==================== INVENTORY ====================
-export const getInventory = async (params = {}) => {
-  console.log('=== API: getInventory START ===');
-  console.log('Params:', params);
-
-  let q = collection(db, 'inventory');
-  const constraints = [];
-
-  if (params.brand) constraints.push(where('brandId', '==', params.brand));
-  if (params.category) constraints.push(where('categoryId', '==', params.category));
-
-  // Add orderBy if no filters (to avoid index issues)
-  let useOrderBy = constraints.length === 0;
-
-  if (useOrderBy) {
-    constraints.push(orderBy('createdAt', 'desc'));
-  }
-
-  q = constraints.length > 0 ? query(q, ...constraints) : q;
-
-  let snapshot;
+export const getInventory = async (filters = {}) => {
   try {
-    snapshot = await getDocs(q);
+    let q = collection(db, 'inventory');
+
+    if (filters.brand) {
+      q = query(q, where('brandId', '==', filters.brand));
+    }
+
+    if (filters.category) {
+      q = query(q, where('categoryId', '==', filters.category));
+    }
+
+    q = query(q, orderBy('productName'));
+    const snapshot = await getDocs(q);
+    let inventory = snapshot.docs.map(docToObject);
+
+    // Filter low stock items if needed
+    if (filters.lowStock) {
+      inventory = inventory.filter(item => {
+        const totalQty = item.sizes?.reduce((sum, s) => sum + (s.quantity || 0), 0) || 0;
+        return totalQty <= (item.lowStockThreshold || 10);
+      });
+    }
+
+    // Populate brand and category references
+    const [brandsRes, categoriesRes] = await Promise.all([
+      getBrands(),
+      getCategories()
+    ]);
+    const brands = brandsRes.data;
+    const categories = categoriesRes.data;
+
+    inventory = inventory.map(item => ({
+      ...item,
+      brand: brands.find(b => (b.id || b._id) === item.brandId),
+      category: categories.find(c => (c.id || c._id) === item.categoryId)
+    }));
+
+    return { data: inventory };
   } catch (error) {
-    // If orderBy fails due to missing index, try without it
-    if ((error.code === 'failed-precondition' || error.message?.includes('index')) && useOrderBy) {
-      console.log('Index missing, fetching without orderBy');
-      // Remove orderBy and retry
-      const constraintsWithoutOrder = constraints.slice(0, -1); // Remove last (orderBy)
-      q = constraintsWithoutOrder.length > 0
-        ? query(collection(db, 'inventory'), ...constraintsWithoutOrder)
-        : collection(db, 'inventory');
-      snapshot = await getDocs(q);
-    } else {
-      throw error;
-    }
+    console.error('Error fetching inventory:', error);
+    throw error;
   }
-  console.log('Inventory items found:', snapshot.size);
+};
 
-  const items = [];
-
-  for (const docSnap of snapshot.docs) {
-    const data = docSnap.data();
-    console.log('Processing item:', docSnap.id, 'BrandId:', data.brandId, 'CategoryId:', data.categoryId);
-
-    let brandData = null;
-    let categoryData = null;
-
-    // Fetch brand
-    if (data.brandId) {
-      try {
-        const brandDoc = await getDoc(doc(db, 'brands', data.brandId));
-        if (brandDoc.exists()) {
-          brandData = docToObject(brandDoc);
-          console.log('Brand found:', brandData.name);
-        } else {
-          console.log('Brand not found for ID:', data.brandId);
-        }
-      } catch (error) {
-        console.error('Error fetching brand:', error);
-      }
-    }
-
-    // Fetch category
-    if (data.categoryId) {
-      try {
-        const categoryDoc = await getDoc(doc(db, 'categories', data.categoryId));
-        if (categoryDoc.exists()) {
-          categoryData = docToObject(categoryDoc);
-          console.log('Category found:', categoryData.name);
-        } else {
-          console.log('Category not found for ID:', data.categoryId);
-        }
-      } catch (error) {
-        console.error('Error fetching category:', error);
-      }
-    }
-
-    items.push({
-      id: docSnap.id,
-      ...data,
-      brand: brandData,
-      category: categoryData,
-      brandId: data.brandId, // Keep original ID for reference
-      categoryId: data.categoryId // Keep original ID for reference
-    });
+export const createInventoryItem = async (itemData) => {
+  try {
+    const data = {
+      ...prepareData(itemData),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      brandId: itemData.brand,
+      categoryId: itemData.category,
+      sizes: itemData.sizes || []
+    };
+    const docRef = await addDoc(collection(db, 'inventory'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating inventory item:', error);
+    throw error;
   }
-
-  console.log('Items processed:', items.length);
-  console.log('=== API: getInventory SUCCESS ===');
-
-  return { data: items };
 };
 
-export const getInventoryItem = async (id) => {
-  const docRef = doc(db, 'inventory', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Inventory item not found');
-  return { data: docToObject(docSnap) };
-};
-
-export const createInventoryItem = async (data) => {
-  // Calculate initial total quantity
-  const initialQuantity = data.sizes && data.sizes.length > 0
-    ? data.sizes.reduce((sum, size) => sum + (size.quantity || 0), 0)
-    : (data.quantity || 0);
-
-  // Store initial sizes for tracking
-  const initialSizes = data.sizes && data.sizes.length > 0
-    ? data.sizes.map(s => ({ ...s, initialQuantity: s.quantity || 0 }))
-    : [{ size: 'One Size', quantity: initialQuantity, initialQuantity: initialQuantity }];
-
-  const docRef = await addDoc(collection(db, 'inventory'), {
-    brandId: data.brand,
-    categoryId: data.category,
-    productName: data.productName,
-    sizes: initialSizes,
-    initialQuantity: initialQuantity, // Track initial stock
-    costPerUnit: data.costPerUnit,
-    sellingPrice: data.sellingPrice,
-    lowStockThreshold: data.lowStockThreshold || 10,
-    notes: data.notes || '',
-    stockHistory: [], // Track stock changes
-    createdAt: serverTimestamp()
-  });
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateInventoryItem = async (id, data) => {
-  const docRef = doc(db, 'inventory', id);
-  await updateDoc(docRef, {
-    brandId: data.brand,
-    categoryId: data.category,
-    productName: data.productName,
-    sizes: data.sizes,
-    costPerUnit: data.costPerUnit,
-    sellingPrice: data.sellingPrice,
-    lowStockThreshold: data.lowStockThreshold,
-    notes: data.notes
-  });
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateStock = async (id, data) => {
-  return updateInventoryItem(id, data);
+export const updateInventoryItem = async (id, itemData) => {
+  try {
+    const data = {
+      ...prepareData(itemData),
+      updatedAt: Timestamp.now(),
+      brandId: itemData.brand || itemData.brandId,
+      categoryId: itemData.category || itemData.categoryId
+    };
+    await updateDoc(doc(db, 'inventory', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating inventory item:', error);
+    throw error;
+  }
 };
 
 export const deleteInventoryItem = async (id) => {
-  console.log('=== API: deleteInventoryItem START ===');
-  console.log('1. Item ID to delete:', id);
-
-  if (!id) {
-    console.error('ERROR: No ID provided');
-    throw new Error('Item ID is required');
-  }
-
   try {
-    const docRef = doc(db, 'inventory', id);
-    console.log('2. Document reference created');
+    await deleteDoc(doc(db, 'inventory', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting inventory item:', error);
+    throw error;
+  }
+};
 
-    // Check if document exists before deleting
-    const docSnap = await getDoc(docRef);
-    console.log('3. Document exists:', docSnap.exists());
+// ==================== CUSTOMERS ====================
+export const getCustomers = async (filters = {}) => {
+  try {
+    let q = collection(db, 'customers');
 
-    if (!docSnap.exists()) {
-      console.error('ERROR: Document does not exist');
-      throw new Error('Inventory item not found');
+    if (filters.type) {
+      q = query(q, where('customerType', '==', filters.type));
     }
 
-    console.log('4. Deleting document...');
-    await deleteDoc(docRef);
-    console.log('5. Document deleted successfully');
-    console.log('=== API: deleteInventoryItem SUCCESS ===');
-
-    return { data: { message: 'Inventory item deleted successfully' } };
+    q = query(q, orderBy('name'));
+    const snapshot = await getDocs(q);
+    const customers = snapshot.docs.map(docToObject);
+    return { data: customers };
   } catch (error) {
-    console.error('=== API: deleteInventoryItem ERROR ===');
-    console.error('Error:', error);
-    console.error('Error Message:', error.message);
-    console.error('Error Code:', error.code);
+    console.error('Error fetching customers:', error);
+    throw error;
+  }
+};
+
+export const getCustomer = async (id) => {
+  try {
+    const docSnap = await getDoc(doc(db, 'customers', id));
+    if (!docSnap.exists()) {
+      throw new Error('Customer not found');
+    }
+
+    const customer = docToObject(docSnap);
+
+    // Get customer's sales
+    const salesQuery = query(
+      collection(db, 'sales'),
+      where('customerId', '==', id),
+      orderBy('saleDate', 'desc')
+    );
+    const salesSnapshot = await getDocs(salesQuery);
+    const recentSales = salesSnapshot.docs.map(docToObject).slice(0, 10);
+
+    // Calculate summary
+    const summary = {
+      totalPurchases: recentSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0),
+      totalPaid: recentSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0),
+      totalOutstanding: recentSales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0)
+    };
+
+    return {
+      data: {
+        customer,
+        recentSales,
+        summary
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching customer:', error);
+    throw error;
+  }
+};
+
+export const createCustomer = async (customerData) => {
+  try {
+    const data = {
+      ...prepareData(customerData),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, 'customers'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating customer:', error);
+    throw error;
+  }
+};
+
+export const updateCustomer = async (id, customerData) => {
+  try {
+    const data = {
+      ...prepareData(customerData),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'customers', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating customer:', error);
+    throw error;
+  }
+};
+
+export const deleteCustomer = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'customers', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting customer:', error);
+    throw error;
+  }
+};
+
+// ==================== SALES ====================
+export const getSales = async (filters = {}) => {
+  try {
+    let q = collection(db, 'sales');
+
+    if (filters.status) {
+      q = query(q, where('paymentStatus', '==', filters.status));
+    }
+
+    q = query(q, orderBy('saleDate', 'desc'));
+    const snapshot = await getDocs(q);
+    let sales = snapshot.docs.map(docToObject);
+
+    // Populate customer references
+    const customersRes = await getCustomers();
+    const customers = customersRes.data;
+
+    sales = sales.map(sale => ({
+      ...sale,
+      customer: customers.find(c => (c.id || c._id) === sale.customerId)
+    }));
+
+    return { data: sales };
+  } catch (error) {
+    console.error('Error fetching sales:', error);
+    throw error;
+  }
+};
+
+export const createSale = async (saleData) => {
+  try {
+    // Generate invoice number
+    const invoiceNumber = `INV-${Date.now()}`;
+
+    // Calculate totals
+    const totalAmount = saleData.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const paidAmount = saleData.paidAmount || 0;
+    const remainingAmount = totalAmount - paidAmount;
+    const paymentStatus = remainingAmount === 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+
+    const data = {
+      ...prepareData(saleData),
+      invoiceNumber,
+      customerId: saleData.customer,
+      totalAmount,
+      paidAmount,
+      remainingAmount,
+      paymentStatus,
+      saleDate: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      items: saleData.items.map(item => ({
+        ...item,
+        inventoryId: item.inventory
+      }))
+    };
+
+    const docRef = await addDoc(collection(db, 'sales'), data);
+
+    // Update inventory quantities
+    for (const item of saleData.items) {
+      const inventoryRef = doc(db, 'inventory', item.inventory);
+      const inventoryDoc = await getDoc(inventoryRef);
+
+      if (inventoryDoc.exists()) {
+        const inventoryData = inventoryDoc.data();
+        const sizes = inventoryData.sizes || [];
+        const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+        if (sizeIndex >= 0) {
+          const newSizes = [...sizes];
+          newSizes[sizeIndex] = {
+            ...newSizes[sizeIndex],
+            quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
+          };
+          await updateDoc(inventoryRef, { sizes: newSizes });
+        }
+      }
+    }
+
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating sale:', error);
+    throw error;
+  }
+};
+
+export const addItemsToSale = async (saleId, items) => {
+  try {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleDoc = await getDoc(saleRef);
+
+    if (!saleDoc.exists()) {
+      throw new Error('Sale not found');
+    }
+
+    const saleData = saleDoc.data();
+    const existingItems = saleData.items || [];
+    const newItems = items.map(item => ({
+      ...item,
+      inventoryId: item.inventory
+    }));
+
+    const updatedItems = [...existingItems, ...newItems];
+    const additionalAmount = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const newTotalAmount = (saleData.totalAmount || 0) + additionalAmount;
+    const newRemainingAmount = newTotalAmount - (saleData.paidAmount || 0);
+    const newPaymentStatus = newRemainingAmount === 0 ? 'Paid' : saleData.paidAmount > 0 ? 'Partial' : 'Unpaid';
+
+    await updateDoc(saleRef, {
+      items: updatedItems,
+      totalAmount: newTotalAmount,
+      remainingAmount: newRemainingAmount,
+      paymentStatus: newPaymentStatus,
+      updatedAt: Timestamp.now()
+    });
+
+    // Update inventory
+    for (const item of items) {
+      const inventoryRef = doc(db, 'inventory', item.inventory);
+      const inventoryDoc = await getDoc(inventoryRef);
+
+      if (inventoryDoc.exists()) {
+        const inventoryData = inventoryDoc.data();
+        const sizes = inventoryData.sizes || [];
+        const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+        if (sizeIndex >= 0) {
+          const newSizes = [...sizes];
+          newSizes[sizeIndex] = {
+            ...newSizes[sizeIndex],
+            quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
+          };
+          await updateDoc(inventoryRef, { sizes: newSizes });
+        }
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error adding items to sale:', error);
+    throw error;
+  }
+};
+
+export const addPayment = async (saleId, paymentData) => {
+  try {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleDoc = await getDoc(saleRef);
+
+    if (!saleDoc.exists()) {
+      throw new Error('Sale not found');
+    }
+
+    const saleData = saleDoc.data();
+    const paymentAmount = paymentData.amount || 0;
+    const newPaidAmount = (saleData.paidAmount || 0) + paymentAmount;
+    const newRemainingAmount = (saleData.totalAmount || 0) - newPaidAmount;
+    const newPaymentStatus = newRemainingAmount === 0 ? 'Paid' : newPaidAmount > 0 ? 'Partial' : 'Unpaid';
+
+    // Add payment to payments array
+    const payments = saleData.payments || [];
+    payments.push({
+      amount: paymentAmount,
+      paymentMethod: paymentData.paymentMethod || 'Cash',
+      notes: paymentData.notes || '',
+      date: Timestamp.now()
+    });
+
+    await updateDoc(saleRef, {
+      paidAmount: newPaidAmount,
+      remainingAmount: newRemainingAmount,
+      paymentStatus: newPaymentStatus,
+      payments,
+      updatedAt: Timestamp.now()
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error adding payment:', error);
+    throw error;
+  }
+};
+
+export const deleteSale = async (id) => {
+  try {
+    const saleRef = doc(db, 'sales', id);
+    const saleDoc = await getDoc(saleRef);
+
+    if (saleDoc.exists()) {
+      const saleData = saleDoc.data();
+
+      // Restore inventory
+      for (const item of saleData.items || []) {
+        const inventoryRef = doc(db, 'inventory', item.inventoryId);
+        const inventoryDoc = await getDoc(inventoryRef);
+
+        if (inventoryDoc.exists()) {
+          const inventoryData = inventoryDoc.data();
+          const sizes = inventoryData.sizes || [];
+          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+          if (sizeIndex >= 0) {
+            const newSizes = [...sizes];
+            newSizes[sizeIndex] = {
+              ...newSizes[sizeIndex],
+              quantity: (newSizes[sizeIndex].quantity || 0) + (item.quantity || 0)
+            };
+            await updateDoc(inventoryRef, { sizes: newSizes });
+          }
+        }
+      }
+    }
+
+    await deleteDoc(saleRef);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting sale:', error);
+    throw error;
+  }
+};
+
+// ==================== PRODUCTION ====================
+export const getProductions = async () => {
+  try {
+    const q = query(collection(db, 'productions'), orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    let productions = snapshot.docs.map(docToObject);
+
+    // Populate category references
+    const categoriesRes = await getCategories();
+    const categories = categoriesRes.data;
+
+    productions = productions.map(prod => ({
+      ...prod,
+      category: categories.find(c => (c.id || c._id) === prod.category)
+    }));
+
+    return { data: productions };
+  } catch (error) {
+    console.error('Error fetching productions:', error);
+    throw error;
+  }
+};
+
+export const createProduction = async (productionData) => {
+  try {
+    const batchNumber = `BATCH-${Date.now()}`;
+    const data = {
+      ...prepareData(productionData),
+      batchNumber,
+      category: productionData.category,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      addedToInventory: false
+    };
+    const docRef = await addDoc(collection(db, 'productions'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating production:', error);
+    throw error;
+  }
+};
+
+export const updateProduction = async (id, productionData) => {
+  try {
+    const data = {
+      ...prepareData(productionData),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'productions', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating production:', error);
+    throw error;
+  }
+};
+
+export const moveToInventory = async (productionId, { brandId }) => {
+  try {
+    const prodRef = doc(db, 'productions', productionId);
+    const prodDoc = await getDoc(prodRef);
+
+    if (!prodDoc.exists()) {
+      throw new Error('Production batch not found');
+    }
+
+    const prodData = prodDoc.data();
+
+    // Create inventory item
+    const inventoryData = {
+      brandId,
+      categoryId: prodData.category,
+      productName: prodData.productName,
+      sizes: prodData.sizeBreakdown || [],
+      costPerUnit: prodData.costPerUnit,
+      sellingPrice: prodData.sellingPrice,
+      lowStockThreshold: 10,
+      notes: `From production batch: ${prodData.batchName}`,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+
+    await addDoc(collection(db, 'inventory'), inventoryData);
+
+    // Update production status
+    await updateDoc(prodRef, {
+      status: 'Added to Stock',
+      addedToInventory: true,
+      updatedAt: Timestamp.now()
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error moving to inventory:', error);
+    throw error;
+  }
+};
+
+export const deleteProduction = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'productions', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting production:', error);
+    throw error;
+  }
+};
+
+// ==================== STATS ====================
+export const getDashboardStats = async () => {
+  try {
+    const [inventoryRes, salesRes, customersRes, productionsRes] = await Promise.all([
+      getInventory(),
+      getSales(),
+      getCustomers(),
+      getProductions()
+    ]);
+
+    const inventory = inventoryRes.data;
+    const sales = salesRes.data;
+    const customers = customersRes.data;
+    const productions = productionsRes.data;
+
+    // Calculate inventory stats
+    const totalStock = inventory.reduce((sum, item) => {
+      return sum + (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0);
+    }, 0);
+
+    const totalValue = inventory.reduce((sum, item) => {
+      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+      return sum + (qty * (item.costPerUnit || 0));
+    }, 0);
+
+    const lowStockItems = inventory.filter(item => {
+      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+      return qty <= (item.lowStockThreshold || 10);
+    });
+
+    // Calculate sales stats
+    const totalSales = sales.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+    const totalPaid = sales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
+    const totalCredit = sales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0);
+
+    // Sales by date (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentSales = sales.filter(s => {
+      const saleDate = s.saleDate?.toDate ? s.saleDate.toDate() : new Date(s.saleDate);
+      return saleDate >= thirtyDaysAgo;
+    });
+
+    const salesByDate = {};
+    recentSales.forEach(sale => {
+      const date = sale.saleDate?.toDate ? sale.saleDate.toDate() : new Date(sale.saleDate);
+      const dateKey = date.toISOString().split('T')[0];
+      if (!salesByDate[dateKey]) {
+        salesByDate[dateKey] = { totalSales: 0, count: 0 };
+      }
+      salesByDate[dateKey].totalSales += sale.totalAmount || 0;
+      salesByDate[dateKey].count += 1;
+    });
+
+    // Top products
+    const productSales = {};
+    sales.forEach(sale => {
+      sale.items?.forEach(item => {
+        if (!productSales[item.productName]) {
+          productSales[item.productName] = { totalQuantity: 0, totalRevenue: 0 };
+        }
+        productSales[item.productName].totalQuantity += item.quantity || 0;
+        productSales[item.productName].totalRevenue += item.totalPrice || 0;
+      });
+    });
+
+    const topProducts = Object.entries(productSales)
+      .map(([name, stats]) => ({ _id: name, ...stats }))
+      .sort((a, b) => b.totalRevenue - a.totalRevenue)
+      .slice(0, 5);
+
+    return {
+      data: {
+        inventory: {
+          totalStock,
+          totalValue,
+          totalProducts: inventory.length,
+          lowStockItems: lowStockItems.map(item => ({
+            productName: item.productName,
+            brand: item.brand?.name || 'N/A',
+            category: item.category?.name || 'N/A',
+            quantity: item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0
+          }))
+        },
+        sales: {
+          totalSales,
+          totalPaid,
+          totalCredit,
+          totalTransactions: sales.length
+        },
+        customers: {
+          total: customers.length
+        },
+        production: {
+          inProcess: productions.filter(p => p.status === 'In Process').length
+        },
+        salesByDate: Object.entries(salesByDate).map(([date, stats]) => ({
+          _id: date,
+          ...stats
+        })),
+        topProducts
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    throw error;
+  }
+};
+
+export const getSalesStats = async () => {
+  try {
+    const salesRes = await getSales();
+    const sales = salesRes.data;
+
+    return {
+      data: {
+        totalSales: sales.reduce((sum, s) => sum + (s.totalAmount || 0), 0),
+        totalPaid: sales.reduce((sum, s) => sum + (s.paidAmount || 0), 0),
+        totalCredit: sales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0),
+        totalTransactions: sales.length
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching sales stats:', error);
     throw error;
   }
 };
 
 export const getInventoryStats = async () => {
-  const snapshot = await getDocs(collection(db, 'inventory'));
-  const items = snapshot.docs.map(docToObject);
+  try {
+    const inventoryRes = await getInventory();
+    const inventory = inventoryRes.data;
 
-  const totalItems = items.length;
-  const totalQuantity = items.reduce((sum, item) => {
-    return sum + (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-  }, 0);
+    const totalStock = inventory.reduce((sum, item) => {
+      return sum + (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0);
+    }, 0);
 
-  const totalValue = items.reduce((sum, item) => {
-    const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    return sum + (qty * (item.costPerUnit || 0));
-  }, 0);
+    const totalValue = inventory.reduce((sum, item) => {
+      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+      return sum + (qty * (item.costPerUnit || 0));
+    }, 0);
 
-  const lowStockItems = items.filter(item => {
-    const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    return qty <= (item.lowStockThreshold || 10);
-  });
-
-  return {
-    data: {
-      totalItems,
-      totalQuantity,
-      totalValue,
-      lowStockCount: lowStockItems.length,
-      lowStockItems: lowStockItems.map(item => ({
-        id: item.id,
-        productName: item.productName,
-        quantity: (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0)
-      }))
-    }
-  };
-};
-
-// ==================== CUSTOMERS ====================
-export const getCustomers = async (params = {}) => {
-  let q = collection(db, 'customers');
-  const constraints = [];
-
-  if (params.type) constraints.push(where('customerType', '==', params.type));
-  constraints.push(orderBy('name'));
-
-  q = query(q, ...constraints);
-  const snapshot = await getDocs(q);
-  return { data: snapshot.docs.map(docToObject) };
-};
-
-export const getCustomer = async (id) => {
-  const docRef = doc(db, 'customers', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Customer not found');
-
-  // Get customer's sales
-  const salesQuery = query(
-    collection(db, 'sales'),
-    where('customerId', '==', id),
-    orderBy('saleDate', 'desc')
-  );
-  const salesSnapshot = await getDocs(salesQuery);
-  const sales = salesSnapshot.docs.map(docToObject);
-
-  const totalPurchases = sales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-  const totalPaid = sales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-  const totalOutstanding = sales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-
-  return {
-    data: {
-      customer: docToObject(docSnap),
-      recentSales: sales.slice(0, 10),
-      summary: { totalPurchases, totalPaid, totalOutstanding }
-    }
-  };
-};
-
-export const createCustomer = async (data) => {
-  const docRef = await addDoc(collection(db, 'customers'), {
-    ...data,
-    createdAt: serverTimestamp()
-  });
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateCustomer = async (id, data) => {
-  const docRef = doc(db, 'customers', id);
-  await updateDoc(docRef, data);
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const deleteCustomer = async (id) => {
-  await deleteDoc(doc(db, 'customers', id));
-  return { data: { message: 'Customer deleted successfully' } };
-};
-
-// ==================== SALES ====================
-export const getSales = async (params = {}) => {
-  let q = collection(db, 'sales');
-  const constraints = [];
-
-  if (params.customer) constraints.push(where('customerId', '==', params.customer));
-  if (params.status) constraints.push(where('paymentStatus', '==', params.status));
-
-  constraints.push(orderBy('saleDate', 'desc'));
-  q = query(q, ...constraints);
-
-  const snapshot = await getDocs(q);
-  const sales = [];
-
-  for (const docSnap of snapshot.docs) {
-    const data = docSnap.data();
-    const customerDoc = await getDoc(doc(db, 'customers', data.customerId));
-
-    sales.push({
-      id: docSnap.id,
-      ...data,
-      customer: customerDoc.exists() ? docToObject(customerDoc) : null
-    });
-  }
-
-  return { data: sales };
-};
-
-export const getSale = async (id) => {
-  const docRef = doc(db, 'sales', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Sale not found');
-  return { data: docToObject(docSnap) };
-};
-
-export const createSale = async (saleData) => {
-  console.log('=== API: createSale START ===');
-  console.log('1. Received Sale Data:', saleData);
-  console.log('2. Customer ID:', saleData.customer);
-  console.log('3. Items:', saleData.items);
-  console.log('4. Paid Amount:', saleData.paidAmount);
-  console.log('5. Sale Type:', saleData.saleType);
-
-  const { customer, items, paidAmount, saleType, notes } = saleData;
-
-  if (!customer) {
-    console.error('ERROR: No customer ID provided');
-    throw new Error('Customer is required');
-  }
-
-  if (!items || items.length === 0) {
-    console.error('ERROR: No items provided');
-    throw new Error('At least one item is required');
-  }
-
-  // Generate invoice number
-  console.log('6. Generating invoice number...');
-  const salesSnapshot = await getDocs(collection(db, 'sales'));
-  const invoiceNumber = `INV-${String(salesSnapshot.size + 1).padStart(6, '0')}`;
-  console.log('7. Invoice Number:', invoiceNumber);
-
-  let totalAmount = 0;
-  const processedItems = [];
-
-  // Process items and update inventory
-  console.log('8. Processing items...');
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    console.log(`   Processing Item ${i + 1}:`, item);
-    console.log(`   Item Inventory ID:`, item.inventory);
-
-    if (!item.inventory) {
-      console.error(`ERROR: Item ${i + 1} missing inventory ID`);
-      throw new Error(`Item ${i + 1} is missing inventory ID`);
-    }
-
-    const inventoryDoc = await getDoc(doc(db, 'inventory', item.inventory));
-    console.log(`   Inventory Doc Exists:`, inventoryDoc.exists());
-
-    if (!inventoryDoc.exists()) {
-      console.error(`ERROR: Inventory item not found: ${item.inventory}`);
-      throw new Error(`Inventory item not found: ${item.inventory}`);
-    }
-
-    const inventoryData = inventoryDoc.data();
-    console.log(`   Inventory Data:`, inventoryData);
-    console.log(`   Inventory Sizes:`, inventoryData.sizes);
-    console.log(`   Looking for size:`, item.size);
-
-    const sizeObj = inventoryData.sizes.find(s => s.size === item.size);
-    console.log(`   Found Size Object:`, sizeObj);
-
-    if (!sizeObj) {
-      console.error(`ERROR: Size ${item.size} not found in inventory`);
-      throw new Error(`Size ${item.size} not found for ${inventoryData.productName}`);
-    }
-
-    if (sizeObj.quantity < item.quantity) {
-      console.error(`ERROR: Insufficient stock. Available: ${sizeObj.quantity}, Requested: ${item.quantity}`);
-      throw new Error(`Insufficient stock for ${inventoryData.productName} - Size ${item.size}. Available: ${sizeObj.quantity}, Requested: ${item.quantity}`);
-    }
-
-    const itemTotal = item.quantity * item.unitPrice;
-    totalAmount += itemTotal;
-    console.log(`   Item Total:`, itemTotal);
-    console.log(`   Running Total:`, totalAmount);
-
-    processedItems.push({
-      inventoryId: item.inventory,
-      productName: inventoryData.productName,
-      size: item.size,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice, // Price customer paid
-      totalPrice: itemTotal,
-      inventorySellingPrice: inventoryData.sellingPrice || 0, // Actual price from inventory
-      inventoryCostPrice: inventoryData.costPerUnit || 0, // Cost price from inventory
-      profitPerUnit: item.unitPrice - (inventoryData.sellingPrice || 0), // Profit per unit
-      totalProfit: (item.unitPrice - (inventoryData.sellingPrice || 0)) * item.quantity // Total profit
-    });
-
-    // Update inventory
-    console.log(`   Updating inventory...`);
-    const oldQuantity = sizeObj.quantity;
-    const newQuantity = oldQuantity - item.quantity;
-
-    const updatedSizes = inventoryData.sizes.map(s =>
-      s.size === item.size ? { ...s, quantity: newQuantity } : s
-    );
-    console.log(`   Updated Sizes:`, updatedSizes);
-
-    // Add stock history entry
-    const stockHistoryEntry = {
-      type: 'sale',
-      date: Timestamp.now(),
-      size: item.size,
-      oldQuantity: oldQuantity,
-      newQuantity: newQuantity,
-      change: -item.quantity,
-      saleId: null, // Will be set after sale is created
-      description: `Sold ${item.quantity} units`
+    return {
+      data: {
+        totalStock,
+        totalValue,
+        totalProducts: inventory.length
+      }
     };
-
-    // Get existing history or create new array
-    const existingHistory = inventoryData.stockHistory || [];
-
-    await updateDoc(doc(db, 'inventory', item.inventory), {
-      sizes: updatedSizes,
-      stockHistory: [...existingHistory, stockHistoryEntry]
-    });
-    console.log(`   Inventory updated successfully`);
+  } catch (error) {
+    console.error('Error fetching inventory stats:', error);
+    throw error;
   }
+};
 
-  console.log('9. All items processed. Total Amount:', totalAmount);
+// ==================== SLIDERS ====================
+export const getSliders = async () => {
+  try {
+    const q = query(collection(db, 'sliders'), orderBy('order', 'asc'));
+    const snapshot = await getDocs(q);
+    const sliders = snapshot.docs.map(docToObject);
+    return { data: sliders };
+  } catch (error) {
+    console.error('Error fetching sliders:', error);
+    throw error;
+  }
+};
 
-  const paid = paidAmount || 0;
-  const remaining = totalAmount - paid;
-  let paymentStatus = 'Unpaid';
-  if (paid >= totalAmount) paymentStatus = 'Paid';
-  else if (paid > 0) paymentStatus = 'Partial';
+export const createSlider = async (sliderData) => {
+  try {
+    const data = {
+      ...prepareData(sliderData),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      status: sliderData.status !== undefined ? sliderData.status : true,
+      order: sliderData.order || 0
+    };
+    const docRef = await addDoc(collection(db, 'sliders'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating slider:', error);
+    throw error;
+  }
+};
 
-  console.log('10. Payment Details:', { paid, remaining, paymentStatus });
+export const updateSlider = async (id, sliderData) => {
+  try {
+    const data = {
+      ...prepareData(sliderData),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'sliders', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating slider:', error);
+    throw error;
+  }
+};
 
-  const saleDoc = {
-    invoiceNumber,
-    customerId: customer,
-    items: processedItems,
-    totalAmount,
-    paidAmount: paid,
-    remainingAmount: remaining,
-    paymentStatus,
-    saleType: saleType || (paid >= totalAmount ? 'Cash' : 'Credit'),
-    notes: notes || '',
-    payments: paid > 0 ? [{
-      amount: paid,
-      paymentDate: Timestamp.now(),
-      paymentMethod: 'Cash'
-    }] : [],
-    saleDate: serverTimestamp(),
-    createdAt: serverTimestamp()
-  };
+export const deleteSlider = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'sliders', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting slider:', error);
+    throw error;
+  }
+};
 
-  console.log('11. Creating sale document:', saleDoc);
+export const reorderSliders = async (updates) => {
+  try {
+    // Update multiple sliders' order values
+    const updatePromises = updates.map(({ id, order }) =>
+      updateDoc(doc(db, 'sliders', id), { order, updatedAt: Timestamp.now() })
+    );
+    await Promise.all(updatePromises);
+    return { success: true };
+  } catch (error) {
+    console.error('Error reordering sliders:', error);
+    throw error;
+  }
+};
 
-  const docRef = await addDoc(collection(db, 'sales'), saleDoc);
-  console.log('12. Sale document created with ID:', docRef.id);
+// ==================== ORDERS ====================
+export const getOrders = async (filters = {}) => {
+  try {
+    let q = collection(db, 'orders');
 
-  // Update stock history with sale ID
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const inventoryDoc = await getDoc(doc(db, 'inventory', item.inventory));
-    if (inventoryDoc.exists()) {
-      const inventoryData = inventoryDoc.data();
-      const history = inventoryData.stockHistory || [];
-      if (history.length > 0) {
-        // Update the last entry (which we just added) with sale ID
-        const lastEntry = history[history.length - 1];
-        if (lastEntry.type === 'sale' && !lastEntry.saleId) {
-          lastEntry.saleId = docRef.id;
-          lastEntry.invoiceNumber = invoiceNumber;
-          await updateDoc(doc(db, 'inventory', item.inventory), {
-            stockHistory: history
-          });
-        }
+    if (filters.status) {
+      q = query(q, where('status', '==', filters.status));
+    }
+
+    q = query(q, orderBy('orderDate', 'desc'));
+    const snapshot = await getDocs(q);
+    let orders = snapshot.docs.map(docToObject);
+
+    // Populate customer references if customerId exists
+    const customersRes = await getCustomers();
+    const customers = customersRes.data;
+
+    orders = orders.map(order => ({
+      ...order,
+      customer: order.customerId ? customers.find(c => (c.id || c._id) === order.customerId) : order.customer
+    }));
+
+    return { data: orders };
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    throw error;
+  }
+};
+
+export const getOrder = async (id) => {
+  try {
+    const docSnap = await getDoc(doc(db, 'orders', id));
+    if (!docSnap.exists()) {
+      throw new Error('Order not found');
+    }
+
+    const order = docToObject(docSnap);
+
+    // Populate customer if customerId exists
+    if (order.customerId) {
+      try {
+        const customersRes = await getCustomers();
+        const customers = customersRes.data;
+        order.customer = customers.find(c => (c.id || c._id) === order.customerId);
+      } catch (error) {
+        console.error('Error fetching customer:', error);
       }
     }
+
+    return { data: order };
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    throw error;
   }
-
-  const docSnap = await getDoc(docRef);
-  const result = docToObject(docSnap);
-  console.log('13. Sale created successfully:', result);
-  console.log('=== API: createSale SUCCESS ===');
-
-  return { data: result };
 };
 
-export const addItemsToSale = async (saleId, newItems) => {
-  console.log('=== API: addItemsToSale START ===');
-  console.log('1. Sale ID:', saleId);
-  console.log('2. New Items:', newItems);
+export const createOrder = async (orderData) => {
+  try {
+    // Generate order number
+    const orderNumber = `ORD-${Date.now()}`;
 
-  const saleRef = doc(db, 'sales', saleId);
-  const saleSnap = await getDoc(saleRef);
-
-  if (!saleSnap.exists()) {
-    throw new Error('Sale not found');
-  }
-
-  const saleData = saleSnap.data();
-  console.log('3. Existing Sale Data:', saleData);
-
-  const processedNewItems = [];
-  let additionalAmount = 0;
-
-  // Process new items and update inventory
-  for (let i = 0; i < newItems.length; i++) {
-    const item = newItems[i];
-    console.log(`   Processing New Item ${i + 1}:`, item);
-
-    const inventoryDoc = await getDoc(doc(db, 'inventory', item.inventory));
-    if (!inventoryDoc.exists()) {
-      throw new Error(`Inventory item not found: ${item.inventory}`);
-    }
-
-    const inventoryData = inventoryDoc.data();
-    const sizeObj = inventoryData.sizes.find(s => s.size === item.size);
-
-    if (!sizeObj) {
-      throw new Error(`Size ${item.size} not found for ${inventoryData.productName}`);
-    }
-
-    if (sizeObj.quantity < item.quantity) {
-      throw new Error(`Insufficient stock for ${inventoryData.productName} - Size ${item.size}. Available: ${sizeObj.quantity}`);
-    }
-
-    const itemTotal = item.quantity * item.unitPrice;
-    additionalAmount += itemTotal;
-
-    processedNewItems.push({
-      inventoryId: item.inventory,
-      productName: inventoryData.productName,
-      size: item.size,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      totalPrice: itemTotal,
-      inventorySellingPrice: inventoryData.sellingPrice || 0,
-      inventoryCostPrice: inventoryData.costPerUnit || 0,
-      profitPerUnit: item.unitPrice - (inventoryData.sellingPrice || 0),
-      totalProfit: (item.unitPrice - (inventoryData.sellingPrice || 0)) * item.quantity
-    });
-
-    // Update inventory
-    const oldQuantity = sizeObj.quantity;
-    const newQuantity = oldQuantity - item.quantity;
-
-    const updatedSizes = inventoryData.sizes.map(s =>
-      s.size === item.size ? { ...s, quantity: newQuantity } : s
-    );
-
-    const stockHistoryEntry = {
-      type: 'sale',
-      date: Timestamp.now(),
-      size: item.size,
-      oldQuantity: oldQuantity,
-      newQuantity: newQuantity,
-      change: -item.quantity,
-      saleId: saleId,
-      invoiceNumber: saleData.invoiceNumber,
-      description: `Sold ${item.quantity} units (added to existing sale)`
+    const data = {
+      ...prepareData(orderData),
+      orderNumber,
+      orderDate: Timestamp.now(),
+      status: orderData.status || 'Pending',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
     };
 
-    const existingHistory = inventoryData.stockHistory || [];
+    const docRef = await addDoc(collection(db, 'orders'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    console.error('Error creating order:', error);
+    throw error;
+  }
+};
 
-    await updateDoc(doc(db, 'inventory', item.inventory), {
-      sizes: updatedSizes,
-      stockHistory: [...existingHistory, stockHistoryEntry]
+export const updateOrderStatus = async (id, newStatus) => {
+  try {
+    const validStatuses = ['Pending', 'Accepted', 'Shipped', 'Delivered', 'Cancelled'];
+    if (!validStatuses.includes(newStatus)) {
+      throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+    }
+
+    // Get current order to check previous status
+    const orderRef = doc(db, 'orders', id);
+    const orderDoc = await getDoc(orderRef);
+
+    if (!orderDoc.exists()) {
+      throw new Error('Order not found');
+    }
+
+    const currentOrder = orderDoc.data();
+    const previousStatus = currentOrder.status;
+
+    // If status is changing to "Accepted", reduce inventory atomically
+    if (newStatus === 'Accepted' && previousStatus === 'Pending') {
+      await runTransaction(db, async (transaction) => {
+        // Re-read order to ensure we have latest data
+        const orderSnap = await transaction.get(orderRef);
+        if (!orderSnap.exists()) {
+          throw new Error('Order not found');
+        }
+
+        const order = orderSnap.data();
+
+        // Process each item in the order
+        for (const item of order.items || []) {
+          if (!item.inventoryId) continue;
+
+          const inventoryRef = doc(db, 'inventory', item.inventoryId);
+          const inventorySnap = await transaction.get(inventoryRef);
+
+          if (!inventorySnap.exists()) {
+            console.warn(`Inventory item ${item.inventoryId} not found`);
+            continue;
+          }
+
+          const inventoryData = inventorySnap.data();
+          const sizes = inventoryData.sizes || [];
+          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+          if (sizeIndex >= 0) {
+            const currentQuantity = sizes[sizeIndex].quantity || 0;
+            const requestedQuantity = item.quantity || 0;
+
+            // Check if enough stock available
+            if (currentQuantity < requestedQuantity) {
+              throw new Error(
+                `Insufficient stock for ${item.productName} (Size: ${item.size}). ` +
+                `Available: ${currentQuantity}, Requested: ${requestedQuantity}`
+              );
+            }
+
+            // Update size quantity atomically
+            const newSizes = [...sizes];
+            newSizes[sizeIndex] = {
+              ...newSizes[sizeIndex],
+              quantity: currentQuantity - requestedQuantity
+            };
+
+            transaction.update(inventoryRef, {
+              sizes: newSizes,
+              updatedAt: Timestamp.now()
+            });
+          } else {
+            throw new Error(`Size ${item.size} not found for ${item.productName}`);
+          }
+        }
+
+        // Update order status
+        const updateData = {
+          status: newStatus,
+          updatedAt: Timestamp.now()
+        };
+
+        transaction.update(orderRef, updateData);
+      });
+    } else {
+      // For other status changes, just update order
+      const updateData = {
+        status: newStatus,
+        updatedAt: Timestamp.now()
+      };
+
+      // Add tracking number if status is Shipped
+      if (newStatus === 'Shipped' && !currentOrder.trackingNumber) {
+        updateData.trackingNumber = `TRACK-${Date.now()}`;
+      }
+
+      await updateDoc(orderRef, updateData);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    throw error;
+  }
+};
+
+export const updateOrder = async (id, orderData) => {
+  try {
+    const data = {
+      ...prepareData(orderData),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'orders', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    console.error('Error updating order:', error);
+    throw error;
+  }
+};
+
+export const deleteOrder = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'orders', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    throw error;
+  }
+};
+
+// ==================== ONLINE SALES ANALYTICS ====================
+export const getOnlineSalesStats = async () => {
+  try {
+    const ordersRes = await getOrders();
+    const orders = ordersRes.data;
+
+    // Filter only delivered orders for revenue calculation
+    const deliveredOrders = orders.filter(o => o.status === 'Delivered');
+
+    // Calculate total online revenue
+    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
+    // Calculate product-wise sales
+    const productSales = {};
+    deliveredOrders.forEach(order => {
+      order.items?.forEach(item => {
+        const productKey = `${item.productName}_${item.size || 'N/A'}`;
+        if (!productSales[productKey]) {
+          productSales[productKey] = {
+            productName: item.productName,
+            size: item.size || 'N/A',
+            sku: item.sku || 'N/A',
+            totalQuantity: 0,
+            totalRevenue: 0,
+            unitPrice: item.unitPrice || 0
+          };
+        }
+        productSales[productKey].totalQuantity += item.quantity || 0;
+        productSales[productKey].totalRevenue += (item.unitPrice || 0) * (item.quantity || 0);
+      });
     });
+
+    // Convert to array and sort by revenue
+    const productSalesArray = Object.values(productSales)
+      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    // Calculate metrics
+    const totalOrders = orders.length;
+    const pendingOrders = orders.filter(o => o.status === 'Pending').length;
+    const acceptedOrders = orders.filter(o => o.status === 'Accepted').length;
+    const shippedOrders = orders.filter(o => o.status === 'Shipped').length;
+    const deliveredOrdersCount = deliveredOrders.length;
+
+    return {
+      data: {
+        totalRevenue,
+        totalOrders,
+        pendingOrders,
+        acceptedOrders,
+        shippedOrders,
+        deliveredOrders: deliveredOrdersCount,
+        productSales: productSalesArray,
+        // Additional metrics
+        averageOrderValue: deliveredOrdersCount > 0 ? totalRevenue / deliveredOrdersCount : 0,
+        totalUnitsSold: productSalesArray.reduce((sum, p) => sum + p.totalQuantity, 0)
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching online sales stats:', error);
+    throw error;
   }
-
-  // Update sale with new items and recalculate totals
-  const updatedItems = [...saleData.items, ...processedNewItems];
-  const newTotalAmount = saleData.totalAmount + additionalAmount;
-  const newRemainingAmount = saleData.remainingAmount + additionalAmount;
-
-  let paymentStatus = 'Unpaid';
-  if (saleData.paidAmount >= newTotalAmount) paymentStatus = 'Paid';
-  else if (saleData.paidAmount > 0) paymentStatus = 'Partial';
-
-  await updateDoc(saleRef, {
-    items: updatedItems,
-    totalAmount: newTotalAmount,
-    remainingAmount: newRemainingAmount,
-    paymentStatus
-  });
-
-  const updatedSnap = await getDoc(saleRef);
-  console.log('=== API: addItemsToSale SUCCESS ===');
-  return { data: docToObject(updatedSnap) };
 };
 
-export const addPayment = async (id, paymentData) => {
-  const { amount, paymentMethod, notes } = paymentData;
+export const getProductOnlineSales = async (productId) => {
+  try {
+    const ordersRes = await getOrders();
+    const orders = ordersRes.data.filter(o => o.status === 'Delivered');
 
-  const saleRef = doc(db, 'sales', id);
-  const saleSnap = await getDoc(saleRef);
+    let totalQuantity = 0;
+    let totalRevenue = 0;
 
-  if (!saleSnap.exists()) {
-    throw new Error('Sale not found');
-  }
-
-  const saleData = saleSnap.data();
-
-  if (amount > saleData.remainingAmount) {
-    throw new Error('Payment amount exceeds remaining balance');
-  }
-
-  const newPayment = {
-    amount,
-    paymentDate: Timestamp.now(),
-    paymentMethod: paymentMethod || 'Cash',
-    notes: notes || ''
-  };
-
-  const updatedPaidAmount = saleData.paidAmount + amount;
-  const updatedRemainingAmount = saleData.remainingAmount - amount;
-
-  let paymentStatus = 'Unpaid';
-  if (updatedRemainingAmount === 0) paymentStatus = 'Paid';
-  else if (updatedPaidAmount > 0) paymentStatus = 'Partial';
-
-  await updateDoc(saleRef, {
-    payments: [...(saleData.payments || []), newPayment],
-    paidAmount: updatedPaidAmount,
-    remainingAmount: updatedRemainingAmount,
-    paymentStatus
-  });
-
-  const updatedSnap = await getDoc(saleRef);
-  return { data: docToObject(updatedSnap) };
-};
-
-export const deleteSale = async (id) => {
-  const saleRef = doc(db, 'sales', id);
-  const saleSnap = await getDoc(saleRef);
-
-  if (!saleSnap.exists()) {
-    throw new Error('Sale not found');
-  }
-
-  const saleData = saleSnap.data();
-
-  // Restore inventory
-  for (const item of saleData.items) {
-    const inventoryRef = doc(db, 'inventory', item.inventoryId);
-    const inventorySnap = await getDoc(inventoryRef);
-
-    if (inventorySnap.exists()) {
-      const inventoryData = inventorySnap.data();
-      const updatedSizes = inventoryData.sizes.map(s =>
-        s.size === item.size ? { ...s, quantity: s.quantity + item.quantity } : s
-      );
-      await updateDoc(inventoryRef, { sizes: updatedSizes });
-    }
-  }
-
-  await deleteDoc(saleRef);
-  return { data: { message: 'Sale deleted and inventory restored' } };
-};
-
-export const getSalesStats = async (params = {}) => {
-  const snapshot = await getDocs(collection(db, 'sales'));
-  const sales = snapshot.docs.map(docToObject);
-
-  const totalSales = sales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-  const cashReceived = sales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-  const creditGiven = sales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-
-  const cashSales = sales.filter(s => s.saleType === 'Cash').length;
-  const creditSales = sales.filter(s => s.saleType === 'Credit').length;
-
-  return {
-    data: {
-      totalSales,
-      cashReceived,
-      creditGiven,
-      totalTransactions: sales.length,
-      cashSales,
-      creditSales,
-      averageSale: sales.length > 0 ? totalSales / sales.length : 0
-    }
-  };
-};
-
-// ==================== PRODUCTION ====================
-export const getProductions = async (params = {}) => {
-  let q = collection(db, 'productions');
-  const constraints = [];
-
-  if (params.status) constraints.push(where('status', '==', params.status));
-  constraints.push(orderBy('orderDate', 'desc'));
-
-  q = query(q, ...constraints);
-  const snapshot = await getDocs(q);
-  const productions = [];
-
-  for (const docSnap of snapshot.docs) {
-    const data = docSnap.data();
-    const categoryDoc = data.categoryId ? await getDoc(doc(db, 'categories', data.categoryId)) : null;
-
-    productions.push({
-      id: docSnap.id,
-      ...data,
-      category: categoryDoc?.exists() ? docToObject(categoryDoc) : null
+    orders.forEach(order => {
+      order.items?.forEach(item => {
+        if (item.inventoryId === productId) {
+          totalQuantity += item.quantity || 0;
+          totalRevenue += (item.unitPrice || 0) * (item.quantity || 0);
+        }
+      });
     });
-  }
 
-  return { data: productions };
+    return {
+      data: {
+        totalQuantity,
+        totalRevenue
+      }
+    };
+  } catch (error) {
+    console.error('Error fetching product online sales:', error);
+    throw error;
+  }
 };
 
-export const getProduction = async (id) => {
-  const docRef = doc(db, 'productions', id);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error('Production not found');
-  return { data: docToObject(docSnap) };
-};
+// ==================== REVIEWS ====================
+export const getReviews = async (filters = {}) => {
+  try {
+    let q = collection(db, 'reviews');
 
-export const createProduction = async (data) => {
-  const productionsSnapshot = await getDocs(collection(db, 'productions'));
-  const batchNumber = `BATCH-${String(productionsSnapshot.size + 1).padStart(5, '0')}`;
-
-  const docRef = await addDoc(collection(db, 'productions'), {
-    batchName: data.batchName,
-    batchNumber,
-    categoryId: data.category,
-    productName: data.productName,
-    totalQuantity: data.totalQuantity,
-    sizeBreakdown: data.sizeBreakdown || [],
-    costPerUnit: data.costPerUnit,
-    sellingPrice: data.sellingPrice,
-    status: data.status || 'Ordered',
-    orderDate: serverTimestamp(),
-    expectedCompletionDate: data.expectedCompletionDate || null,
-    notes: data.notes || '',
-    addedToInventory: false,
-    createdAt: serverTimestamp()
-  });
-
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const updateProduction = async (id, data) => {
-  const docRef = doc(db, 'productions', id);
-  await updateDoc(docRef, {
-    batchName: data.batchName,
-    categoryId: data.category,
-    productName: data.productName,
-    totalQuantity: data.totalQuantity,
-    sizeBreakdown: data.sizeBreakdown,
-    costPerUnit: data.costPerUnit,
-    sellingPrice: data.sellingPrice,
-    status: data.status,
-    expectedCompletionDate: data.expectedCompletionDate,
-    notes: data.notes
-  });
-  const docSnap = await getDoc(docRef);
-  return { data: docToObject(docSnap) };
-};
-
-export const moveToInventory = async (id, data) => {
-  const { brandId } = data;
-
-  const productionRef = doc(db, 'productions', id);
-  const productionSnap = await getDoc(productionRef);
-
-  if (!productionSnap.exists()) {
-    throw new Error('Production batch not found');
-  }
-
-  const productionData = productionSnap.data();
-
-  if (productionData.status !== 'Completed') {
-    throw new Error('Only completed batches can be moved to inventory');
-  }
-
-  if (productionData.addedToInventory) {
-    throw new Error('Batch already added to inventory');
-  }
-
-  const inventoryRef = await addDoc(collection(db, 'inventory'), {
-    brandId,
-    categoryId: productionData.categoryId,
-    productName: productionData.productName,
-    sizes: productionData.sizeBreakdown,
-    costPerUnit: productionData.costPerUnit,
-    sellingPrice: productionData.sellingPrice,
-    productionBatchId: id,
-    createdAt: serverTimestamp()
-  });
-
-  await updateDoc(productionRef, {
-    status: 'Added to Stock',
-    addedToInventory: true,
-    inventoryId: inventoryRef.id
-  });
-
-  const updatedProduction = await getDoc(productionRef);
-  const inventoryDoc = await getDoc(inventoryRef);
-
-  return {
-    data: {
-      batch: docToObject(updatedProduction),
-      inventoryItem: docToObject(inventoryDoc)
+    if (filters.status) {
+      q = query(q, where('status', '==', filters.status));
     }
-  };
+
+    q = query(q, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    const reviews = snapshot.docs.map(docToObject);
+    return { data: reviews };
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    throw error;
+  }
 };
 
-export const deleteProduction = async (id) => {
-  await deleteDoc(doc(db, 'productions', id));
-  return { data: { message: 'Production deleted successfully' } };
-};
-
-// ==================== DASHBOARD ====================
-export const getDashboardStats = async () => {
-  // Inventory Stats
-  const inventorySnapshot = await getDocs(collection(db, 'inventory'));
-  const inventoryItems = inventorySnapshot.docs.map(docToObject);
-
-  const totalStock = inventoryItems.reduce((sum, item) => {
-    return sum + (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-  }, 0);
-
-  const totalInventoryValue = inventoryItems.reduce((sum, item) => {
-    const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    return sum + (qty * (item.costPerUnit || 0));
-  }, 0);
-
-  const lowStockItems = inventoryItems.filter(item => {
-    const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    return qty <= (item.lowStockThreshold || 10);
-  }).length;
-
-  // Sales Stats
-  const salesSnapshot = await getDocs(collection(db, 'sales'));
-  const allSales = salesSnapshot.docs.map(docToObject);
-
-  const totalSalesAmount = allSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-  const totalPaidAmount = allSales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-  const totalCreditAmount = allSales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-
-  // Customer Stats
-  const customersSnapshot = await getDocs(collection(db, 'customers'));
-  const totalCustomers = customersSnapshot.size;
-
-  // Production Stats
-  const productionsSnapshot = await getDocs(collection(db, 'productions'));
-  const productions = productionsSnapshot.docs.map(docToObject);
-  const inProcessProduction = productions.filter(p => p.status === 'In Process').length;
-  const completedProduction = productions.filter(p => p.status === 'Completed').length;
-
-  return {
-    data: {
-      inventory: {
-        totalStock,
-        totalValue: totalInventoryValue,
-        lowStockItems,
-        totalProducts: inventoryItems.length
-      },
-      sales: {
-        totalSales: totalSalesAmount,
-        totalPaid: totalPaidAmount,
-        totalCredit: totalCreditAmount,
-        totalTransactions: allSales.length
-      },
-      customers: {
-        total: totalCustomers,
-        creditCustomers: 0
-      },
-      production: {
-        total: productionsSnapshot.size,
-        inProcess: inProcessProduction,
-        completed: completedProduction
-      },
-      topProducts: [],
-      salesByDate: []
+export const updateReviewStatus = async (reviewId, status) => {
+  try {
+    const validStatuses = ['pending', 'approved', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
     }
-  };
+
+    await updateDoc(doc(db, 'reviews', reviewId), {
+      status,
+      updatedAt: Timestamp.now()
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating review status:', error);
+    throw error;
+  }
 };
 
-export default {
-  getBrands, getBrand, createBrand, updateBrand, deleteBrand,
-  getCategories, getCategory, createCategory, updateCategory, deleteCategory,
-  getInventory, getInventoryItem, createInventoryItem, updateInventoryItem, deleteInventoryItem, getInventoryStats,
-  getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer,
-  getSales, getSale, createSale, addItemsToSale, addPayment, deleteSale, getSalesStats,
-  getProductions, getProduction, createProduction, updateProduction, moveToInventory, deleteProduction,
-  getDashboardStats
+export const deleteReview = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'reviews', id));
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting review:', error);
+    throw error;
+  }
 };

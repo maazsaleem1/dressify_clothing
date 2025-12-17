@@ -9,7 +9,10 @@ import {
   Factory,
   FileText,
   Menu,
-  X
+  X,
+  Image as ImageIcon,
+  ShoppingBag,
+  Star
 } from 'lucide-react';
 
 const Layout = ({ children }) => {
@@ -24,6 +27,9 @@ const Layout = ({ children }) => {
     { path: '/sales', icon: ShoppingCart, label: 'Sales & Credit' },
     { path: '/production', icon: Factory, label: 'Production' },
     { path: '/reports', icon: FileText, label: 'Reports' },
+    { path: '/slider', icon: ImageIcon, label: 'Homepage Slider' },
+    { path: '/orders', icon: ShoppingBag, label: 'Orders' },
+    { path: '/reviews', icon: Star, label: 'Reviews' },
   ];
 
   const isActive = (path) => {
@@ -64,8 +70,8 @@ const Layout = ({ children }) => {
                 key={item.path}
                 to={item.path}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${active
-                    ? 'bg-white text-primary-800 shadow-lg'
-                    : 'hover:bg-primary-700 text-primary-100'
+                  ? 'bg-white text-primary-800 shadow-lg'
+                  : 'hover:bg-primary-700 text-primary-100'
                   }`}
               >
                 <Icon size={20} />

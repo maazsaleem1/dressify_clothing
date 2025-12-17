@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle } from 'lucide-react';
-import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales } from '../services/api';
+import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats } from '../services/api';
+import ImageUpload from '../components/ImageUpload';
 
 const Inventory = () => {
   const [inventory, setInventory] = useState([]);
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
   const [sales, setSales] = useState([]);
+  const [onlineSales, setOnlineSales] = useState({}); // Store online sales per product
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -25,9 +27,22 @@ const Inventory = () => {
     productName: '',
     quantity: '',
     costPerUnit: '',
-    sellingPrice: '',
+    sellingPrice: '', // Original price (Was price for sale items)
+    onlinePrice: '', // Online/website price (Now price for sale items)
+    sku: '', // Product SKU/Model number
+    description: '', // Product description for website
+    onlineStatus: false, // Show/hide on website
     lowStockThreshold: 10,
     notes: '',
+    imageUrl: '', // Main product image
+    productImages: [], // Multiple product images (front, back, close-up, etc.)
+    // Badge fields - multiple ways to set badges
+    tag: '', // 'new' or 'sale'
+    status: '', // 'new' or 'sale'
+    isNew: false,
+    isSale: false,
+    new: false,
+    sale: false,
     sizes: [
       { size: 'S', quantity: 0 },
       { size: 'M', quantity: 0 },
@@ -89,6 +104,27 @@ const Inventory = () => {
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
       setSales(salesRes.data);
+
+      // Fetch online sales stats and map to products
+      try {
+        const onlineSalesRes = await getOnlineSalesStats();
+        const productSalesMap = {};
+        onlineSalesRes.data.productSales?.forEach(product => {
+          // Create a key from product name and size to match inventory items
+          const key = `${product.productName}_${product.size}`;
+          if (!productSalesMap[key]) {
+            productSalesMap[key] = {
+              totalQuantity: 0,
+              totalRevenue: 0
+            };
+          }
+          productSalesMap[key].totalQuantity += product.totalQuantity;
+          productSalesMap[key].totalRevenue += product.totalRevenue;
+        });
+        setOnlineSales(productSalesMap);
+      } catch (error) {
+        console.error('Error fetching online sales:', error);
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -123,14 +159,28 @@ const Inventory = () => {
       // Use subcategory if selected, otherwise use category
       const finalCategory = formData.subcategory || formData.category;
 
+      // Auto-detect sale badge if originalPrice > onlinePrice
+      let badgeData = { ...formData };
+      const sellingPriceNum = parseFloat(formData.sellingPrice) || 0;
+      const onlinePriceNum = parseFloat(formData.onlinePrice) || 0;
+
+      // If sellingPrice > onlinePrice, auto-mark as sale
+      if (sellingPriceNum > 0 && onlinePriceNum > 0 && sellingPriceNum > onlinePriceNum) {
+        if (!badgeData.tag && !badgeData.status && !badgeData.isSale && !badgeData.sale) {
+          badgeData.tag = 'sale';
+          badgeData.isSale = true;
+          badgeData.sale = true;
+        }
+      }
+
       if (useSizes) {
         // Use size breakdown
         const filteredSizes = formData.sizes.filter(s => s.quantity > 0);
-        dataToSubmit = { ...formData, category: finalCategory, subcategory: '', sizes: filteredSizes };
+        dataToSubmit = { ...badgeData, category: finalCategory, subcategory: '', sizes: filteredSizes };
       } else {
         // Use simple quantity - convert to single size entry
         dataToSubmit = {
-          ...formData,
+          ...badgeData,
           category: finalCategory,
           subcategory: '',
           sizes: formData.quantity > 0 ? [{ size: 'One Size', quantity: parseInt(formData.quantity) }] : []
@@ -170,6 +220,11 @@ const Inventory = () => {
     const isSubcategory = categoryData?.parentCategoryId;
     const parentCategoryId = categoryData?.parentCategoryId;
 
+    // Determine badge from multiple possible fields
+    const badgeTag = item.tag || item.status || '';
+    const isNewBadge = item.isNew || item.new || badgeTag === 'new' || item.status === 'new';
+    const isSaleBadge = item.isSale || item.sale || badgeTag === 'sale' || item.status === 'sale';
+
     setFormData({
       brand: brandId,
       category: isSubcategory ? parentCategoryId : categoryId,
@@ -178,8 +233,20 @@ const Inventory = () => {
       quantity: isOneSize ? item.sizes[0].quantity : '',
       costPerUnit: item.costPerUnit,
       sellingPrice: item.sellingPrice,
+      onlinePrice: item.onlinePrice || '',
+      sku: item.sku || '',
+      description: item.description || '',
+      onlineStatus: item.onlineStatus !== undefined ? item.onlineStatus : false,
       lowStockThreshold: item.lowStockThreshold,
       notes: item.notes || '',
+      imageUrl: item.imageUrl || '',
+      productImages: item.productImages || [],
+      tag: badgeTag,
+      status: item.status || '',
+      isNew: isNewBadge,
+      isSale: isSaleBadge,
+      new: isNewBadge,
+      sale: isSaleBadge,
       sizes: hasMultipleSizes ? item.sizes : [
         { size: 'S', quantity: 0 },
         { size: 'M', quantity: 0 },
@@ -236,8 +303,20 @@ const Inventory = () => {
       quantity: '',
       costPerUnit: '',
       sellingPrice: '',
+      onlinePrice: '',
+      sku: '',
+      description: '',
+      onlineStatus: false,
       lowStockThreshold: 10,
       notes: '',
+      imageUrl: '',
+      productImages: [],
+      tag: '',
+      status: '',
+      isNew: false,
+      isSale: false,
+      new: false,
+      sale: false,
       sizes: [
         { size: 'S', quantity: 0 },
         { size: 'M', quantity: 0 },
@@ -359,8 +438,9 @@ const Inventory = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Online</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Value</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Earned</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Revenue (In-store + Online)</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -374,9 +454,54 @@ const Inventory = () => {
                   return (
                     <tr key={item.id || item._id} className={lowStock ? 'bg-red-50' : 'hover:bg-gray-50'}>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          {lowStock && <AlertCircle className="text-red-500 mr-2" size={16} />}
-                          <span className="font-medium text-gray-900">{item.productName}</span>
+                        <div className="flex items-center gap-3">
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.productName}
+                              className="w-12 h-12 object-cover rounded-lg"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center">
+                              <Package size={20} className="text-gray-400" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            {lowStock && <AlertCircle className="text-red-500 mb-1" size={16} />}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-gray-900">{item.productName}</span>
+                              {item.sku && (
+                                <span className="text-xs text-gray-500">- {item.sku}</span>
+                              )}
+                            </div>
+                            {/* Badge indicators */}
+                            <div className="flex gap-2 mt-1">
+                              {(() => {
+                                const isNew = item.tag === 'new' || item.status === 'new' ||
+                                  item.isNew || item.new;
+                                const isSale = item.tag === 'sale' || item.status === 'sale' ||
+                                  item.isSale || item.sale ||
+                                  (item.sellingPrice > item.onlinePrice && item.onlinePrice > 0);
+                                return (
+                                  <>
+                                    {isNew && (
+                                      <span className="px-2 py-0.5 bg-black text-white text-xs font-medium rounded">
+                                        NEW
+                                      </span>
+                                    )}
+                                    {isSale && (
+                                      <span className="px-2 py-0.5 bg-black text-white text-xs font-medium rounded">
+                                        SALE
+                                      </span>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -434,8 +559,53 @@ const Inventory = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                         Rs. {item.costPerUnit.toLocaleString()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        Rs. {item.sellingPrice.toLocaleString()}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {(() => {
+                          const sellingPrice = item.sellingPrice || 0;
+                          const onlinePrice = item.onlinePrice || sellingPrice;
+                          const isSale = sellingPrice > onlinePrice && onlinePrice > 0;
+
+                          // Check for sale badge
+                          const hasSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
+                            item.isSale || item.sale || isSale;
+
+                          if (hasSaleBadge && sellingPrice > onlinePrice) {
+                            return (
+                              <div>
+                                <div className="text-xs text-gray-500 line-through">
+                                  Was Rs. {sellingPrice.toLocaleString()}
+                                </div>
+                                <div className="font-bold text-gray-900">
+                                  Now Rs. {onlinePrice.toLocaleString()}
+                                </div>
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <div className="text-gray-600">
+                                Rs. {onlinePrice.toLocaleString()}
+                                {item.onlinePrice && item.onlinePrice !== item.sellingPrice && (
+                                  <div className="text-xs text-blue-600 mt-1">
+                                    Online: Rs. {item.onlinePrice.toLocaleString()}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                        })()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${item.onlineStatus
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-100 text-gray-500'
+                            }`}>
+                            {item.onlineStatus ? '🌐 Online' : '🔒 Hidden'}
+                          </span>
+                          {item.onlineStatus && item.sku && (
+                            <span className="text-xs text-gray-500">SKU: {item.sku}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         Rs. {(totalQty * item.costPerUnit).toLocaleString()}
@@ -443,6 +613,7 @@ const Inventory = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {(() => {
                           const totalEarned = calculateTotalEarned(item.id || item._id);
+                          const onlineSalesData = onlineSales[item.id || item._id];
                           return (
                             <div className="flex flex-col gap-1">
                               <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-gray-400'}`}>
@@ -453,6 +624,24 @@ const Inventory = () => {
                                   ({soldQty} sold)
                                 </span>
                               )}
+                              {(() => {
+                                // Find online sales for this product
+                                const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                                const onlineData = onlineSales[productKey];
+                                if (onlineData && onlineData.totalRevenue > 0) {
+                                  return (
+                                    <div className="mt-1 pt-1 border-t border-gray-200">
+                                      <span className="text-xs text-blue-600 font-semibold">
+                                        Online: Rs. {onlineData.totalRevenue.toLocaleString()}
+                                      </span>
+                                      <span className="text-xs text-gray-500 ml-1">
+                                        ({onlineData.totalQuantity} units)
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </div>
                           );
                         })()}
@@ -577,6 +766,15 @@ const Inventory = () => {
                 />
               </div>
 
+              {/* Image Upload */}
+              <ImageUpload
+                imageUrl={formData.imageUrl}
+                onImageChange={(url) => setFormData({ ...formData, imageUrl: url })}
+                label="Product Image"
+                folder="upload pics/inventory"
+                disabled={saving}
+              />
+
               {/* Size Option Toggle */}
               <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
                 <input
@@ -644,7 +842,7 @@ const Inventory = () => {
                   <p className="text-xs text-gray-500 mt-1">Your purchase/production cost</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Selling Price *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Selling Price (Original/Was) *</label>
                   <input
                     type="number"
                     required
@@ -652,9 +850,9 @@ const Inventory = () => {
                     value={formData.sellingPrice}
                     onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
                     className="input-field"
-                    placeholder="1500"
+                    placeholder="4690"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Price you sell to customers</p>
+                  <p className="text-xs text-gray-500 mt-1">Original price (shown as "Was" for sale items)</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -670,6 +868,195 @@ const Inventory = () => {
                   />
                   <p className="text-xs text-gray-500 mt-1">Alert when stock falls below this number</p>
                 </div>
+              </div>
+
+              {/* Online/Website Settings Section */}
+              <div className="border-t border-gray-200 pt-6 mt-6">
+                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <span>🌐</span>
+                  Online Store Settings
+                </h4>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">SKU/Model Number</label>
+                  <input
+                    type="text"
+                    value={formData.sku}
+                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                    className="input-field"
+                    placeholder="e.g., MT0405P"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Product identifier for website (shown as "Product Name - SKU")</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Sale Price / Now Price (Rs.)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.onlinePrice}
+                    onChange={(e) => {
+                      const newOnlinePrice = e.target.value;
+                      // Auto-detect sale if sellingPrice > onlinePrice
+                      const sellingPriceNum = parseFloat(formData.sellingPrice) || 0;
+                      const onlinePriceNum = parseFloat(newOnlinePrice) || 0;
+                      const shouldBeSale = sellingPriceNum > onlinePriceNum && onlinePriceNum > 0;
+
+                      setFormData({
+                        ...formData,
+                        onlinePrice: newOnlinePrice,
+                        // Auto-apply sale badge if price is lower
+                        tag: shouldBeSale ? (formData.tag || 'sale') : (formData.tag === 'sale' ? '' : formData.tag),
+                        isSale: shouldBeSale || formData.isSale,
+                        sale: shouldBeSale || formData.sale
+                      });
+                    }}
+                    className="input-field"
+                    placeholder="3690"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sale price (shown as "Now"). If set lower than Original Price ({formData.sellingPrice || '0'}), automatically marks as SALE.
+                    {formData.sellingPrice && formData.onlinePrice &&
+                      parseFloat(formData.sellingPrice) > parseFloat(formData.onlinePrice) && (
+                        <span className="text-green-600 font-medium ml-1">✓ Sale badge will be applied</span>
+                      )}
+                  </p>
+                  {!formData.onlinePrice && (
+                    <p className="text-xs text-blue-500 mt-1">
+                      💡 Leave empty to use Original Price ({formData.sellingPrice || 'set above'}) as the regular price
+                    </p>
+                  )}
+                </div>
+
+                {/* Badge Selection */}
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">Product Badges</label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Select badges to display on website. "NEW" and "SALE" badges appear as black rectangles in top-right corner.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200">
+                      <input
+                        type="checkbox"
+                        id="isNew"
+                        checked={formData.isNew || formData.new || formData.tag === 'new' || formData.status === 'new'}
+                        onChange={(e) => {
+                          const isChecked = e.target.checked;
+                          setFormData({
+                            ...formData,
+                            isNew: isChecked,
+                            new: isChecked,
+                            tag: isChecked ? 'new' : (formData.tag === 'new' ? '' : formData.tag),
+                            status: isChecked ? 'new' : (formData.status === 'new' ? '' : formData.status),
+                            // Clear sale if new is selected
+                            isSale: isChecked ? false : formData.isSale,
+                            sale: isChecked ? false : formData.sale
+                          });
+                        }}
+                        className="w-4 h-4 text-primary-600 rounded"
+                      />
+                      <label htmlFor="isNew" className="flex items-center gap-2 cursor-pointer flex-1">
+                        <span className="px-2 py-1 bg-black text-white text-xs font-medium rounded">NEW</span>
+                        <span className="text-sm text-gray-700">New Arrival Badge</span>
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-white rounded-lg border border-gray-200">
+                      <input
+                        type="checkbox"
+                        id="isSale"
+                        checked={formData.isSale || formData.sale || formData.tag === 'sale' || formData.status === 'sale' ||
+                          (formData.sellingPrice && formData.onlinePrice &&
+                            parseFloat(formData.sellingPrice) > parseFloat(formData.onlinePrice) && parseFloat(formData.onlinePrice) > 0)}
+                        onChange={(e) => {
+                          const isChecked = e.target.checked;
+                          setFormData({
+                            ...formData,
+                            isSale: isChecked,
+                            sale: isChecked,
+                            tag: isChecked ? 'sale' : (formData.tag === 'sale' ? '' : formData.tag),
+                            status: isChecked ? 'sale' : (formData.status === 'sale' ? '' : formData.status),
+                            // Clear new if sale is selected
+                            isNew: isChecked ? false : formData.isNew,
+                            new: isChecked ? false : formData.new
+                          });
+                        }}
+                        className="w-4 h-4 text-primary-600 rounded"
+                      />
+                      <label htmlFor="isSale" className="flex items-center gap-2 cursor-pointer flex-1">
+                        <span className="px-2 py-1 bg-black text-white text-xs font-medium rounded">SALE</span>
+                        <span className="text-sm text-gray-700">Sale Badge</span>
+                      </label>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    💡 Tip: Sale badge is automatically applied when Sale Price is lower than Original Price.
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Product Description</label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    className="input-field"
+                    rows="4"
+                    placeholder="Enter detailed product description for website visitors..."
+                  />
+                  <p className="text-xs text-gray-500 mt-1">This description will appear on your website product page</p>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Additional Product Images</label>
+                  <p className="text-xs text-gray-500 mb-2">Upload multiple images (front, back, close-up, etc.) for the website</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[0, 1, 2, 3].map((index) => (
+                      <div key={index}>
+                        <ImageUpload
+                          imageUrl={formData.productImages[index] || ''}
+                          onImageChange={(url) => {
+                            const newImages = [...(formData.productImages || [])];
+                            if (url) {
+                              newImages[index] = url;
+                            } else {
+                              newImages.splice(index, 1);
+                            }
+                            setFormData({ ...formData, productImages: newImages });
+                          }}
+                          label={`Image ${index + 1}`}
+                          folder="upload pics/inventory"
+                          disabled={saving}
+                          className="text-xs"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg">
+                  <input
+                    type="checkbox"
+                    id="onlineStatus"
+                    checked={formData.onlineStatus}
+                    onChange={(e) => setFormData({ ...formData, onlineStatus: e.target.checked })}
+                    className="w-4 h-4 text-primary-600 rounded"
+                  />
+                  <label htmlFor="onlineStatus" className="text-sm font-medium text-gray-700 cursor-pointer flex-1">
+                    Show this product on website
+                  </label>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${formData.onlineStatus
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-gray-100 text-gray-700'
+                    }`}>
+                    {formData.onlineStatus ? 'Visible Online' : 'Hidden'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  {formData.onlineStatus
+                    ? '✅ This product will be visible on your website'
+                    : '❌ This product will be hidden from your website'}
+                </p>
               </div>
 
               <div>

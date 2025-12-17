@@ -1,732 +1,236 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-const cors = require('cors')({ origin: true });
+const nodemailer = require('nodemailer');
 
 admin.initializeApp();
-const db = admin.firestore();
 
-// Helper function to wrap endpoints with CORS
-const corsHandler = (handler) => {
-  return (req, res) => {
-    cors(req, res, () => handler(req, res));
-  };
-};
+// Configure email transporter
+// You'll need to set up email credentials in Firebase Functions config
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // or use your email service (SMTP)
+  auth: {
+    user: functions.config().email?.user || process.env.EMAIL_USER,
+    pass: functions.config().email?.password || process.env.EMAIL_PASSWORD,
+  },
+});
 
-// ==================== BRANDS ====================
-exports.getBrands = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const snapshot = await db.collection('brands').orderBy('name').get();
-    const brands = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(brands);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
+// Alternative: Use SMTP (more flexible)
+// const transporter = nodemailer.createTransport({
+//   host: 'smtp.gmail.com',
+//   port: 587,
+//   secure: false,
+//   auth: {
+//     user: functions.config().email?.user,
+//     pass: functions.config().email?.password,
+//   },
+// });
 
-exports.createBrand = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const data = { ...req.body, createdAt: admin.firestore.FieldValue.serverTimestamp() };
-    const docRef = await db.collection('brands').add(data);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
+/**
+ * Cloud Function: Send email notification when a new order is created
+ * Triggered automatically when a document is created in 'orders' collection
+ */
+exports.sendOrderNotification = functions.firestore
+  .document('orders/{orderId}')
+  .onCreate(async (snap, context) => {
+    try {
+      const order = snap.data();
+      const orderId = context.params.orderId;
 
-exports.updateBrand = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id || req.body.id;
-    await db.collection('brands').doc(id).update(req.body);
-    const doc = await db.collection('brands').doc(id).get();
-    res.json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
+      // Admin email (where notifications will be sent)
+      const adminEmail = functions.config().email?.admin || process.env.ADMIN_EMAIL || 'admin@dressifyclothing.com';
 
-exports.deleteBrand = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    await db.collection('brands').doc(id).delete();
-    res.json({ message: 'Brand deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
+      // Prepare email content
+      const mailOptions = {
+        from: `Dressify Clothing <${functions.config().email?.user || 'noreply@dressifyclothing.com'}>`,
+        to: adminEmail,
+        subject: `New Order Received - ${order.orderNumber || orderId}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+              .content { background: #f9f9f9; padding: 20px; border-radius: 0 0 8px 8px; }
+              .order-info { background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #667eea; }
+              .customer-info { background: white; padding: 15px; margin: 15px 0; border-radius: 5px; }
+              .items-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+              .items-table th, .items-table td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+              .items-table th { background: #f5f5f5; font-weight: bold; }
+              .total { font-size: 18px; font-weight: bold; color: #667eea; margin-top: 15px; }
+              .button { display: inline-block; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🎉 New Order Received!</h1>
+                <p>Order #${order.orderNumber || orderId}</p>
+              </div>
+              <div class="content">
+                <div class="order-info">
+                  <h2>Order Details</h2>
+                  <p><strong>Order Number:</strong> ${order.orderNumber || orderId}</p>
+                  <p><strong>Order Date:</strong> ${order.orderDate?.toDate ? order.orderDate.toDate().toLocaleString() : new Date().toLocaleString()}</p>
+                  <p><strong>Status:</strong> <span style="background: #ffc107; color: #000; padding: 3px 8px; border-radius: 3px;">${order.status || 'Pending'}</span></p>
+                  <p><strong>Payment Method:</strong> ${order.paymentMethod || 'N/A'}</p>
+                  <p><strong>Payment Status:</strong> ${order.paymentStatus || 'Pending'}</p>
+                </div>
 
-// ==================== CATEGORIES ====================
-exports.getCategories = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const snapshot = await db.collection('categories').orderBy('name').get();
-    const categories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(categories);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
+                <div class="customer-info">
+                  <h2>Customer Information</h2>
+                  <p><strong>Name:</strong> ${order.customer?.name || order.customerId || 'N/A'}</p>
+                  <p><strong>Email:</strong> ${order.customer?.email || 'N/A'}</p>
+                  <p><strong>Phone:</strong> ${order.customer?.phone || 'N/A'}</p>
+                  ${order.shippingAddress ? `<p><strong>Shipping Address:</strong><br>${order.shippingAddress}</p>` : ''}
+                </div>
 
-exports.createCategory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const data = { ...req.body, createdAt: admin.firestore.FieldValue.serverTimestamp() };
-    const docRef = await db.collection('categories').add(data);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
+                <h2>Order Items</h2>
+                <table class="items-table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Size</th>
+                      <th>Quantity</th>
+                      <th>Unit Price</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${(order.items || []).map(item => `
+                      <tr>
+                        <td>${item.productName || 'N/A'}</td>
+                        <td>${item.size || 'N/A'}</td>
+                        <td>${item.quantity || 0}</td>
+                        <td>Rs. ${(item.unitPrice || 0).toLocaleString()}</td>
+                        <td>Rs. ${((item.unitPrice || 0) * (item.quantity || 0)).toLocaleString()}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
 
-exports.updateCategory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id || req.body.id;
-    await db.collection('categories').doc(id).update(req.body);
-    const doc = await db.collection('categories').doc(id).get();
-    res.json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
+                <div class="total">
+                  <p>Total Amount: <strong>Rs. ${(order.totalAmount || 0).toLocaleString()}</strong></p>
+                </div>
 
-exports.deleteCategory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    await db.collection('categories').doc(id).delete();
-    res.json({ message: 'Category deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
+                ${order.notes ? `<p><strong>Notes:</strong> ${order.notes}</p>` : ''}
 
-// ==================== INVENTORY ====================
-exports.getInventory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    let query = db.collection('inventory');
-    
-    if (req.query.brand) query = query.where('brandId', '==', req.query.brand);
-    if (req.query.category) query = query.where('categoryId', '==', req.query.category);
-    
-    const snapshot = await query.orderBy('createdAt', 'desc').get();
-    const inventory = [];
-    
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      
-      // Fetch brand and category details
-      const brandDoc = data.brandId ? await db.collection('brands').doc(data.brandId).get() : null;
-      const categoryDoc = data.categoryId ? await db.collection('categories').doc(data.categoryId).get() : null;
-      
-      inventory.push({
-        id: doc.id,
-        ...data,
-        brand: brandDoc?.exists ? { id: brandDoc.id, ...brandDoc.data() } : null,
-        category: categoryDoc?.exists ? { id: categoryDoc.id, ...categoryDoc.data() } : null
-      });
+                <p style="margin-top: 20px;">
+                  <a href="https://your-dashboard-url.com/orders" class="button">View Order in Dashboard</a>
+                </p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `
+New Order Received!
+
+Order Number: ${order.orderNumber || orderId}
+Order Date: ${order.orderDate?.toDate ? order.orderDate.toDate().toLocaleString() : new Date().toLocaleString()}
+Status: ${order.status || 'Pending'}
+
+Customer Information:
+Name: ${order.customer?.name || 'N/A'}
+Email: ${order.customer?.email || 'N/A'}
+Phone: ${order.customer?.phone || 'N/A'}
+
+Order Items:
+${(order.items || []).map(item =>
+          `- ${item.productName} (Size: ${item.size || 'N/A'}) x${item.quantity || 0} = Rs. ${((item.unitPrice || 0) * (item.quantity || 0)).toLocaleString()}`
+        ).join('\n')}
+
+Total Amount: Rs. ${(order.totalAmount || 0).toLocaleString()}
+
+View order in dashboard: https://your-dashboard-url.com/orders
+        `
+      };
+
+      // Send email
+      await transporter.sendMail(mailOptions);
+      console.log(`Order notification email sent for order ${orderId}`);
+
+      return null;
+    } catch (error) {
+      console.error('Error sending order notification email:', error);
+      // Don't throw error to prevent function retry loops
+      return null;
     }
-    
-    res.json(inventory);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
+  });
 
-exports.createInventory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const data = {
-      brandId: req.body.brand,
-      categoryId: req.body.category,
-      productName: req.body.productName,
-      sizes: req.body.sizes || [],
-      costPerUnit: req.body.costPerUnit,
-      sellingPrice: req.body.sellingPrice,
-      lowStockThreshold: req.body.lowStockThreshold || 10,
-      notes: req.body.notes || '',
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    const docRef = await db.collection('inventory').add(data);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
+/**
+ * Optional: Send email to customer when order status changes
+ */
+exports.sendOrderStatusUpdate = functions.firestore
+  .document('orders/{orderId}')
+  .onUpdate(async (change, context) => {
+    try {
+      const before = change.before.data();
+      const after = change.after.data();
+      const orderId = context.params.orderId;
 
-exports.updateInventory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id || req.body.id;
-    const updateData = {
-      brandId: req.body.brand,
-      categoryId: req.body.category,
-      productName: req.body.productName,
-      sizes: req.body.sizes,
-      costPerUnit: req.body.costPerUnit,
-      sellingPrice: req.body.sellingPrice,
-      lowStockThreshold: req.body.lowStockThreshold,
-      notes: req.body.notes
-    };
-    
-    await db.collection('inventory').doc(id).update(updateData);
-    const doc = await db.collection('inventory').doc(id).get();
-    res.json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.deleteInventory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    await db.collection('inventory').doc(id).delete();
-    res.json({ message: 'Inventory item deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.getInventoryStats = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const snapshot = await db.collection('inventory').get();
-    const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
-    const totalItems = items.length;
-    const totalQuantity = items.reduce((sum, item) => {
-      return sum + (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    }, 0);
-    
-    const totalValue = items.reduce((sum, item) => {
-      const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-      return sum + (qty * (item.costPerUnit || 0));
-    }, 0);
-    
-    const lowStockItems = items.filter(item => {
-      const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-      return qty <= (item.lowStockThreshold || 10);
-    });
-    
-    res.json({
-      totalItems,
-      totalQuantity,
-      totalValue,
-      lowStockCount: lowStockItems.length,
-      lowStockItems: lowStockItems.map(item => ({
-        id: item.id,
-        productName: item.productName,
-        quantity: (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0)
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-// ==================== CUSTOMERS ====================
-exports.getCustomers = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    let query = db.collection('customers');
-    
-    if (req.query.type) query = query.where('customerType', '==', req.query.type);
-    
-    const snapshot = await query.orderBy('name').get();
-    const customers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json(customers);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.getCustomer = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    const customerDoc = await db.collection('customers').doc(id).get();
-    
-    if (!customerDoc.exists) {
-      return res.status(404).json({ error: 'Customer not found' });
-    }
-    
-    const salesSnapshot = await db.collection('sales')
-      .where('customerId', '==', id)
-      .orderBy('saleDate', 'desc')
-      .limit(10)
-      .get();
-    
-    const sales = salesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
-    const allSalesSnapshot = await db.collection('sales').where('customerId', '==', id).get();
-    const allSales = allSalesSnapshot.docs.map(doc => doc.data());
-    
-    const totalPurchases = allSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-    const totalPaid = allSales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-    const totalOutstanding = allSales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-    
-    res.json({
-      customer: { id: customerDoc.id, ...customerDoc.data() },
-      recentSales: sales,
-      summary: { totalPurchases, totalPaid, totalOutstanding }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.createCustomer = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const data = { ...req.body, createdAt: admin.firestore.FieldValue.serverTimestamp() };
-    const docRef = await db.collection('customers').add(data);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.updateCustomer = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id || req.body.id;
-    await db.collection('customers').doc(id).update(req.body);
-    const doc = await db.collection('customers').doc(id).get();
-    res.json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.deleteCustomer = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    await db.collection('customers').doc(id).delete();
-    res.json({ message: 'Customer deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-// ==================== SALES ====================
-exports.getSales = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    let query = db.collection('sales');
-    
-    if (req.query.customer) query = query.where('customerId', '==', req.query.customer);
-    if (req.query.status) query = query.where('paymentStatus', '==', req.query.status);
-    
-    const snapshot = await query.orderBy('saleDate', 'desc').get();
-    const sales = [];
-    
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const customerDoc = await db.collection('customers').doc(data.customerId).get();
-      
-      sales.push({
-        id: doc.id,
-        ...data,
-        customer: customerDoc.exists ? { id: customerDoc.id, ...customerDoc.data() } : null
-      });
-    }
-    
-    res.json(sales);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.createSale = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const { customer, items, paidAmount, saleType, notes } = req.body;
-    
-    // Generate invoice number
-    const salesCount = await db.collection('sales').count().get();
-    const invoiceNumber = `INV-${String(salesCount.data().count + 1).padStart(6, '0')}`;
-    
-    let totalAmount = 0;
-    const processedItems = [];
-    
-    // Process items and update inventory
-    for (const item of items) {
-      const inventoryDoc = await db.collection('inventory').doc(item.inventory).get();
-      
-      if (!inventoryDoc.exists) {
-        return res.status(404).json({ error: `Inventory item not found: ${item.inventory}` });
+      // Only send email if status changed
+      if (before.status === after.status) {
+        return null;
       }
-      
-      const inventoryData = inventoryDoc.data();
-      const sizeObj = inventoryData.sizes.find(s => s.size === item.size);
-      
-      if (!sizeObj || sizeObj.quantity < item.quantity) {
-        return res.status(400).json({ 
-          error: `Insufficient stock for ${inventoryData.productName} - Size ${item.size}` 
-        });
+
+      const customerEmail = after.customer?.email;
+      if (!customerEmail) {
+        console.log('No customer email found, skipping status update email');
+        return null;
       }
-      
-      const itemTotal = item.quantity * item.unitPrice;
-      totalAmount += itemTotal;
-      
-      processedItems.push({
-        inventoryId: item.inventory,
-        productName: inventoryData.productName,
-        size: item.size,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: itemTotal
-      });
-      
-      // Update inventory
-      const updatedSizes = inventoryData.sizes.map(s => 
-        s.size === item.size ? { ...s, quantity: s.quantity - item.quantity } : s
-      );
-      
-      await db.collection('inventory').doc(item.inventory).update({ sizes: updatedSizes });
+
+      const mailOptions = {
+        from: `Dressify Clothing <${functions.config().email?.user || 'noreply@dressifyclothing.com'}>`,
+        to: customerEmail,
+        subject: `Order ${after.orderNumber || orderId} - Status Updated`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+              .content { background: #f9f9f9; padding: 20px; border-radius: 0 0 8px 8px; }
+              .status-badge { display: inline-block; padding: 8px 16px; border-radius: 5px; font-weight: bold; }
+              .status-pending { background: #ffc107; color: #000; }
+              .status-accepted { background: #2196F3; color: white; }
+              .status-shipped { background: #9c27b0; color: white; }
+              .status-delivered { background: #4caf50; color: white; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>Order Status Update</h1>
+                <p>Order #${after.orderNumber || orderId}</p>
+              </div>
+              <div class="content">
+                <p>Dear ${after.customer?.name || 'Customer'},</p>
+                <p>Your order status has been updated:</p>
+                <p>
+                  <span class="status-badge status-${after.status?.toLowerCase() || 'pending'}">
+                    ${after.status || 'Pending'}
+                  </span>
+                </p>
+                ${after.status === 'Shipped' && after.trackingNumber ?
+            `<p><strong>Tracking Number:</strong> ${after.trackingNumber}</p>` : ''}
+                <p>Thank you for shopping with Dressify Clothing!</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log(`Order status update email sent to ${customerEmail} for order ${orderId}`);
+
+      return null;
+    } catch (error) {
+      console.error('Error sending status update email:', error);
+      return null;
     }
-    
-    const paid = paidAmount || 0;
-    const remaining = totalAmount - paid;
-    let paymentStatus = 'Unpaid';
-    if (paid >= totalAmount) paymentStatus = 'Paid';
-    else if (paid > 0) paymentStatus = 'Partial';
-    
-    const saleData = {
-      invoiceNumber,
-      customerId: customer,
-      items: processedItems,
-      totalAmount,
-      paidAmount: paid,
-      remainingAmount: remaining,
-      paymentStatus,
-      saleType: saleType || (paid >= totalAmount ? 'Cash' : 'Credit'),
-      notes: notes || '',
-      payments: paid > 0 ? [{
-        amount: paid,
-        paymentDate: admin.firestore.FieldValue.serverTimestamp(),
-        paymentMethod: 'Cash'
-      }] : [],
-      saleDate: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    const docRef = await db.collection('sales').add(saleData);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.addPayment = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    const { amount, paymentMethod, notes } = req.body;
-    
-    const saleDoc = await db.collection('sales').doc(id).get();
-    if (!saleDoc.exists) {
-      return res.status(404).json({ error: 'Sale not found' });
-    }
-    
-    const saleData = saleDoc.data();
-    
-    if (amount > saleData.remainingAmount) {
-      return res.status(400).json({ error: 'Payment amount exceeds remaining balance' });
-    }
-    
-    const newPayment = {
-      amount,
-      paymentDate: admin.firestore.FieldValue.serverTimestamp(),
-      paymentMethod: paymentMethod || 'Cash',
-      notes: notes || ''
-    };
-    
-    const updatedPaidAmount = saleData.paidAmount + amount;
-    const updatedRemainingAmount = saleData.remainingAmount - amount;
-    
-    let paymentStatus = 'Unpaid';
-    if (updatedRemainingAmount === 0) paymentStatus = 'Paid';
-    else if (updatedPaidAmount > 0) paymentStatus = 'Partial';
-    
-    await db.collection('sales').doc(id).update({
-      payments: admin.firestore.FieldValue.arrayUnion(newPayment),
-      paidAmount: updatedPaidAmount,
-      remainingAmount: updatedRemainingAmount,
-      paymentStatus
-    });
-    
-    const updatedDoc = await db.collection('sales').doc(id).get();
-    res.json({ id: updatedDoc.id, ...updatedDoc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.deleteSale = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    const saleDoc = await db.collection('sales').doc(id).get();
-    
-    if (!saleDoc.exists) {
-      return res.status(404).json({ error: 'Sale not found' });
-    }
-    
-    const saleData = saleDoc.data();
-    
-    // Restore inventory
-    for (const item of saleData.items) {
-      const inventoryDoc = await db.collection('inventory').doc(item.inventoryId).get();
-      
-      if (inventoryDoc.exists) {
-        const inventoryData = inventoryDoc.data();
-        const updatedSizes = inventoryData.sizes.map(s => 
-          s.size === item.size ? { ...s, quantity: s.quantity + item.quantity } : s
-        );
-        await db.collection('inventory').doc(item.inventoryId).update({ sizes: updatedSizes });
-      }
-    }
-    
-    await db.collection('sales').doc(id).delete();
-    res.json({ message: 'Sale deleted and inventory restored' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.getSalesStats = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const snapshot = await db.collection('sales').get();
-    const sales = snapshot.docs.map(doc => doc.data());
-    
-    const totalSales = sales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-    const cashReceived = sales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-    const creditGiven = sales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-    
-    const cashSales = sales.filter(s => s.saleType === 'Cash').length;
-    const creditSales = sales.filter(s => s.saleType === 'Credit').length;
-    
-    res.json({
-      totalSales,
-      cashReceived,
-      creditGiven,
-      totalTransactions: sales.length,
-      cashSales,
-      creditSales,
-      averageSale: sales.length > 0 ? totalSales / sales.length : 0
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-// ==================== PRODUCTION ====================
-exports.getProductions = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    let query = db.collection('productions');
-    
-    if (req.query.status) query = query.where('status', '==', req.query.status);
-    
-    const snapshot = await query.orderBy('orderDate', 'desc').get();
-    const productions = [];
-    
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      const categoryDoc = data.categoryId ? await db.collection('categories').doc(data.categoryId).get() : null;
-      
-      productions.push({
-        id: doc.id,
-        ...data,
-        category: categoryDoc?.exists ? { id: categoryDoc.id, ...categoryDoc.data() } : null
-      });
-    }
-    
-    res.json(productions);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-exports.createProduction = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const productionsCount = await db.collection('productions').count().get();
-    const batchNumber = `BATCH-${String(productionsCount.data().count + 1).padStart(5, '0')}`;
-    
-    const data = {
-      batchName: req.body.batchName,
-      batchNumber,
-      categoryId: req.body.category,
-      productName: req.body.productName,
-      totalQuantity: req.body.totalQuantity,
-      sizeBreakdown: req.body.sizeBreakdown || [],
-      costPerUnit: req.body.costPerUnit,
-      sellingPrice: req.body.sellingPrice,
-      status: req.body.status || 'Ordered',
-      orderDate: admin.firestore.FieldValue.serverTimestamp(),
-      expectedCompletionDate: req.body.expectedCompletionDate || null,
-      notes: req.body.notes || '',
-      addedToInventory: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    const docRef = await db.collection('productions').add(data);
-    const doc = await docRef.get();
-    res.status(201).json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.updateProduction = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id || req.body.id;
-    const updateData = {
-      batchName: req.body.batchName,
-      categoryId: req.body.category,
-      productName: req.body.productName,
-      totalQuantity: req.body.totalQuantity,
-      sizeBreakdown: req.body.sizeBreakdown,
-      costPerUnit: req.body.costPerUnit,
-      sellingPrice: req.body.sellingPrice,
-      status: req.body.status,
-      expectedCompletionDate: req.body.expectedCompletionDate,
-      notes: req.body.notes
-    };
-    
-    await db.collection('productions').doc(id).update(updateData);
-    const doc = await db.collection('productions').doc(id).get();
-    res.json({ id: doc.id, ...doc.data() });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.moveToInventory = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    const { brandId } = req.body;
-    
-    const productionDoc = await db.collection('productions').doc(id).get();
-    
-    if (!productionDoc.exists) {
-      return res.status(404).json({ error: 'Production batch not found' });
-    }
-    
-    const productionData = productionDoc.data();
-    
-    if (productionData.status !== 'Completed') {
-      return res.status(400).json({ error: 'Only completed batches can be moved to inventory' });
-    }
-    
-    if (productionData.addedToInventory) {
-      return res.status(400).json({ error: 'Batch already added to inventory' });
-    }
-    
-    const inventoryData = {
-      brandId,
-      categoryId: productionData.categoryId,
-      productName: productionData.productName,
-      sizes: productionData.sizeBreakdown,
-      costPerUnit: productionData.costPerUnit,
-      sellingPrice: productionData.sellingPrice,
-      productionBatchId: id,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    
-    const inventoryRef = await db.collection('inventory').add(inventoryData);
-    
-    await db.collection('productions').doc(id).update({
-      status: 'Added to Stock',
-      addedToInventory: true,
-      inventoryId: inventoryRef.id
-    });
-    
-    const updatedProduction = await db.collection('productions').doc(id).get();
-    const inventoryDoc = await inventoryRef.get();
-    
-    res.json({
-      batch: { id: updatedProduction.id, ...updatedProduction.data() },
-      inventoryItem: { id: inventoryDoc.id, ...inventoryDoc.data() }
-    });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-}));
-
-exports.deleteProduction = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    const id = req.query.id;
-    await db.collection('productions').doc(id).delete();
-    res.json({ message: 'Production batch deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
-// ==================== DASHBOARD ====================
-exports.getDashboardStats = functions.https.onRequest(corsHandler(async (req, res) => {
-  try {
-    // Inventory Stats
-    const inventorySnapshot = await db.collection('inventory').get();
-    const inventoryItems = inventorySnapshot.docs.map(doc => doc.data());
-    
-    const totalStock = inventoryItems.reduce((sum, item) => {
-      return sum + (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-    }, 0);
-    
-    const totalInventoryValue = inventoryItems.reduce((sum, item) => {
-      const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-      return sum + (qty * (item.costPerUnit || 0));
-    }, 0);
-    
-    const lowStockItems = inventoryItems.filter(item => {
-      const qty = (item.sizes || []).reduce((s, size) => s + (size.quantity || 0), 0);
-      return qty <= (item.lowStockThreshold || 10);
-    }).length;
-    
-    // Sales Stats
-    const salesSnapshot = await db.collection('sales').get();
-    const allSales = salesSnapshot.docs.map(doc => doc.data());
-    
-    const totalSalesAmount = allSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
-    const totalPaidAmount = allSales.reduce((sum, sale) => sum + (sale.paidAmount || 0), 0);
-    const totalCreditAmount = allSales.reduce((sum, sale) => sum + (sale.remainingAmount || 0), 0);
-    
-    // Customer Stats
-    const customersSnapshot = await db.collection('customers').get();
-    const totalCustomers = customersSnapshot.size;
-    const creditCustomers = customersSnapshot.docs.filter(doc => 
-      doc.data().customerType === 'Credit'
-    ).length;
-    
-    // Production Stats
-    const productionsSnapshot = await db.collection('productions').get();
-    const totalProduction = productionsSnapshot.size;
-    const inProcessProduction = productionsSnapshot.docs.filter(doc => 
-      doc.data().status === 'In Process'
-    ).length;
-    const completedProduction = productionsSnapshot.docs.filter(doc => 
-      doc.data().status === 'Completed'
-    ).length;
-    
-    res.json({
-      inventory: {
-        totalStock,
-        totalValue: totalInventoryValue,
-        lowStockItems,
-        totalProducts: inventoryItems.length
-      },
-      sales: {
-        totalSales: totalSalesAmount,
-        totalPaid: totalPaidAmount,
-        totalCredit: totalCreditAmount,
-        totalTransactions: allSales.length
-      },
-      customers: {
-        total: totalCustomers,
-        creditCustomers
-      },
-      production: {
-        total: totalProduction,
-        inProcess: inProcessProduction,
-        completed: completedProduction
-      },
-      topProducts: [],
-      salesByDate: []
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}));
-
+  });

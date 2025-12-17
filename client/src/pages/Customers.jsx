@@ -5,6 +5,7 @@ import { getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustom
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -42,6 +43,7 @@ const Customers = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       if (editingCustomer) {
         await updateCustomer(editingCustomer.id || editingCustomer._id, formData);
@@ -54,6 +56,8 @@ const Customers = () => {
     } catch (error) {
       console.error('Error saving customer:', error);
       alert(error.response?.data?.error || 'Error saving customer');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -376,11 +380,23 @@ const Customers = () => {
                     resetForm();
                   }}
                   className="btn-secondary"
+                  disabled={saving}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
-                  {editingCustomer ? 'Update' : 'Add'} Customer
+                <button
+                  type="submit"
+                  className="btn-primary flex items-center gap-2"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>{editingCustomer ? 'Updating...' : 'Adding...'}</span>
+                    </>
+                  ) : (
+                    <span>{editingCustomer ? 'Update' : 'Add'} Customer</span>
+                  )}
                 </button>
               </div>
             </form>

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Package, 
-  DollarSign, 
-  TrendingUp, 
+import {
+  Package,
+  DollarSign,
+  TrendingUp,
   AlertTriangle,
   Users,
   ShoppingCart,
@@ -11,10 +11,12 @@ import {
   ArrowDown
 } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getDashboardStats } from '../services/api';
+import { getDashboardStats, getOnlineSalesStats } from '../services/api';
+import HomepageSlider from '../components/HomepageSlider';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
+  const [onlineSalesStats, setOnlineSalesStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,8 +25,12 @@ const Dashboard = () => {
 
   const fetchStats = async () => {
     try {
-      const response = await getDashboardStats();
-      setStats(response.data);
+      const [dashboardRes, onlineSalesRes] = await Promise.all([
+        getDashboardStats(),
+        getOnlineSalesStats()
+      ]);
+      setStats(dashboardRes.data);
+      setOnlineSalesStats(onlineSalesRes.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
     } finally {
@@ -88,6 +94,22 @@ const Dashboard = () => {
       color: 'bg-indigo-500',
       change: '2 batches',
       positive: true
+    },
+    {
+      title: 'Online Revenue',
+      value: `Rs. ${(onlineSalesStats?.totalRevenue || 0).toLocaleString()}`,
+      icon: DollarSign,
+      color: 'bg-emerald-500',
+      change: `${onlineSalesStats?.deliveredOrders || 0} orders`,
+      positive: true
+    },
+    {
+      title: 'Online Orders',
+      value: onlineSalesStats?.totalOrders || 0,
+      icon: ShoppingCart,
+      color: 'bg-cyan-500',
+      change: `${onlineSalesStats?.pendingOrders || 0} pending`,
+      positive: true
     }
   ];
 
@@ -115,6 +137,9 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6">
+      {/* Homepage Slider */}
+      <HomepageSlider />
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {statCards.map((stat, index) => {
@@ -160,19 +185,19 @@ const Dashboard = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#fff', 
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px',
                   boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
                 }}
               />
               <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="sales" 
-                stroke="#0ea5e9" 
+              <Line
+                type="monotone"
+                dataKey="sales"
+                stroke="#0ea5e9"
                 strokeWidth={2}
                 dot={{ fill: '#0ea5e9', r: 4 }}
                 activeDot={{ r: 6 }}
@@ -201,10 +226,10 @@ const Dashboard = () => {
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip 
+              <Tooltip
                 formatter={(value) => `Rs. ${value.toLocaleString()}`}
-                contentStyle={{ 
-                  backgroundColor: '#fff', 
+                contentStyle={{
+                  backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}
@@ -224,9 +249,9 @@ const Dashboard = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip 
-                contentStyle={{ 
-                  backgroundColor: '#fff', 
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}
@@ -268,6 +293,74 @@ const Dashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* Online Sales Analytics Section */}
+      {onlineSalesStats && onlineSalesStats.totalOrders > 0 && (
+        <div className="card">
+          <h3 className="text-lg font-semibold text-gray-800 mb-4">Online Sales Analytics</h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <p className="text-xs text-gray-600 mb-1">Total Online Revenue</p>
+              <p className="text-2xl font-bold text-blue-600">
+                Rs. {onlineSalesStats.totalRevenue.toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">{onlineSalesStats.deliveredOrders} delivered orders</p>
+            </div>
+            <div className="bg-green-50 p-4 rounded-lg">
+              <p className="text-xs text-gray-600 mb-1">Total Orders</p>
+              <p className="text-2xl font-bold text-green-600">{onlineSalesStats.totalOrders}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {onlineSalesStats.pendingOrders} pending, {onlineSalesStats.deliveredOrders} delivered
+              </p>
+            </div>
+            <div className="bg-purple-50 p-4 rounded-lg">
+              <p className="text-xs text-gray-600 mb-1">Units Sold</p>
+              <p className="text-2xl font-bold text-purple-600">{onlineSalesStats.totalUnitsSold}</p>
+              <p className="text-xs text-gray-500 mt-1">Total products sold online</p>
+            </div>
+            <div className="bg-orange-50 p-4 rounded-lg">
+              <p className="text-xs text-gray-600 mb-1">Average Order Value</p>
+              <p className="text-2xl font-bold text-orange-600">
+                Rs. {Math.round(onlineSalesStats.averageOrderValue).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Per delivered order</p>
+            </div>
+          </div>
+
+          {/* Top Selling Products */}
+          {onlineSalesStats.productSales && onlineSalesStats.productSales.length > 0 && (
+            <div>
+              <h4 className="font-semibold text-gray-800 mb-3">Top Selling Products (Online)</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Units Sold</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Online Price</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {onlineSalesStats.productSales.slice(0, 10).map((product, index) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-gray-900">{product.productName}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{product.size}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">{product.totalQuantity}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">Rs. {product.unitPrice.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-sm font-bold text-green-600">
+                          Rs. {product.totalRevenue.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quick Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
