@@ -70,8 +70,10 @@ const BrandsCategories = () => {
       if (modalType === 'brand') {
         if (editingItem) {
           await updateBrand(editingItem.id || editingItem._id, formData);
+          showSuccess('Brand updated successfully!');
         } else {
           await createBrand(formData);
+          showSuccess('Brand created successfully!');
         }
       } else {
         const categoryData = {
@@ -86,8 +88,10 @@ const BrandsCategories = () => {
 
         if (editingItem) {
           await updateCategory(editingItem.id || editingItem._id, categoryData);
+          showSuccess('Category updated successfully!');
         } else {
           await createCategory(categoryData);
+          showSuccess('Category created successfully!');
         }
 
         // Refresh parent categories if a main category was created/updated
@@ -99,7 +103,7 @@ const BrandsCategories = () => {
       resetForm();
       fetchData();
     } catch (error) {
-      alert(error.message || error.response?.data?.error || 'Error saving item');
+      showError(error.message || error.response?.data?.error || 'Error saving item');
     } finally {
       setSaving(false);
     }
@@ -130,12 +134,14 @@ const BrandsCategories = () => {
       try {
         if (type === 'brand') {
           await deleteBrand(id);
+          showSuccess('Brand deleted successfully!');
         } else {
           await deleteCategory(id);
+          showSuccess('Category deleted successfully!');
         }
         fetchData();
       } catch (error) {
-        alert(error.message || error.response?.data?.error || 'Error deleting item');
+        showError(error.message || error.response?.data?.error || 'Error deleting item');
       } finally {
         setDeleting(null);
       }

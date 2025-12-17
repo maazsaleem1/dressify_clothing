@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Edit2, Trash2, Users, Eye, Phone, MapPin, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCustomers, getCustomer, createCustomer, updateCustomer, deleteCustomer } from '../services/api';
+import { showSuccess, showError } from '../utils/toast';
+import { ListItemShimmer } from '../components/Shimmer';
 
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
@@ -48,14 +50,16 @@ const Customers = () => {
     try {
       if (editingCustomer) {
         await updateCustomer(editingCustomer.id || editingCustomer._id, formData);
+        showSuccess('Customer updated successfully!');
       } else {
         await createCustomer(formData);
+        showSuccess('Customer added successfully!');
       }
       setShowModal(false);
       resetForm();
       fetchCustomers();
     } catch (error) {
-      alert(error.response?.data?.error || 'Error saving customer');
+      showError(error.response?.data?.error || 'Error saving customer');
     } finally {
       setSaving(false);
     }
@@ -81,9 +85,10 @@ const Customers = () => {
       setDeleting(id);
       try {
         await deleteCustomer(id);
+        showSuccess('Customer deleted successfully!');
         fetchCustomers();
       } catch (error) {
-        alert(error.response?.data?.error || 'Error deleting customer');
+        showError(error.response?.data?.error || 'Error deleting customer');
       } finally {
         setDeleting(null);
       }
@@ -180,9 +185,11 @@ const Customers = () => {
       {/* Customers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {loading ? (
-          <div className="col-span-full flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-          </div>
+          <>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <ListItemShimmer key={i} />
+            ))}
+          </>
         ) : filteredCustomers.length === 0 ? (
           <div className="col-span-full text-center py-12">
             <Users size={48} className="mx-auto text-gray-400 mb-4" />

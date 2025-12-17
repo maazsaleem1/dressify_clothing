@@ -13,6 +13,7 @@ import {
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getDashboardStats, getOnlineSalesStats } from '../services/api';
 import HomepageSlider from '../components/HomepageSlider';
+import { StatCardShimmer, CardShimmer } from '../components/Shimmer';
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -39,8 +40,16 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <StatCardShimmer key={i} />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <CardShimmer />
+          <CardShimmer />
+        </div>
       </div>
     );
   }

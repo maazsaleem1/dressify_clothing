@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Star, CheckCircle, XCircle, Trash2, Filter, Search, Clock, User, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getReviews, updateReviewStatus, deleteReview } from '../services/api';
+import { showSuccess, showError } from '../utils/toast';
+import { ListItemShimmer } from '../components/Shimmer';
 
 const Reviews = () => {
   const [reviews, setReviews] = useState([]);
@@ -22,7 +24,7 @@ const Reviews = () => {
       const response = await getReviews(filterStatus ? { status: filterStatus } : {});
       setReviews(response.data);
     } catch (error) {
-      alert('Error fetching reviews');
+      showError('Error fetching reviews');
     } finally {
       setLoading(false);
     }
@@ -36,9 +38,10 @@ const Reviews = () => {
     setUpdating(reviewId);
     try {
       await updateReviewStatus(reviewId, 'approved');
+      showSuccess('Review approved successfully!');
       fetchReviews();
     } catch (error) {
-      alert('Error approving review');
+      showError('Error approving review');
     } finally {
       setUpdating(null);
     }
@@ -52,9 +55,10 @@ const Reviews = () => {
     setUpdating(reviewId);
     try {
       await updateReviewStatus(reviewId, 'rejected');
+      showSuccess('Review rejected successfully!');
       fetchReviews();
     } catch (error) {
-      alert('Error rejecting review');
+      showError('Error rejecting review');
     } finally {
       setUpdating(null);
     }
@@ -68,9 +72,10 @@ const Reviews = () => {
     setDeleting(reviewId);
     try {
       await deleteReview(reviewId);
+      showSuccess('Review deleted successfully!');
       fetchReviews();
     } catch (error) {
-      alert('Error deleting review');
+      showError('Error deleting review');
     } finally {
       setDeleting(null);
     }
@@ -162,8 +167,10 @@ const Reviews = () => {
 
       {/* Reviews List */}
       {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+        <div className="space-y-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <ListItemShimmer key={i} />
+          ))}
         </div>
       ) : filteredReviews.length === 0 ? (
         <div className="card text-center py-12">
@@ -334,8 +341,8 @@ const Reviews = () => {
                     key={pageNum}
                     onClick={() => setCurrentPage(pageNum)}
                     className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
-                        ? 'bg-primary-600 text-white'
-                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                      ? 'bg-primary-600 text-white'
+                      : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
                       }`}
                   >
                     {pageNum}

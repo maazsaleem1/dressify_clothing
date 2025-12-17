@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
+import { showSuccess, showError } from '../utils/toast';
+import { TableRowShimmer } from '../components/Shimmer';
 
 const Inventory = () => {
   const [inventory, setInventory] = useState([]);
@@ -190,14 +192,16 @@ const Inventory = () => {
 
       if (editingItem) {
         await updateInventoryItem(editingItem.id, dataToSubmit);
+        showSuccess('Inventory item updated successfully!');
       } else {
         await createInventoryItem(dataToSubmit);
+        showSuccess('Inventory item added successfully!');
       }
       setShowModal(false);
       resetForm();
       fetchData();
     } catch (error) {
-      alert(error.message || 'Error saving item');
+      showError(error.message || 'Error saving item');
     } finally {
       setSaving(false);
     }
@@ -277,9 +281,10 @@ const Inventory = () => {
 
     try {
       await deleteInventoryItem(id);
+      showSuccess('Inventory item deleted successfully!');
       await fetchData();
     } catch (error) {
-      alert(error.message || 'Error deleting item. Please try again.');
+      showError(error.message || 'Error deleting item. Please try again.');
     } finally {
       setDeleting(null);
     }
@@ -420,8 +425,29 @@ const Inventory = () => {
       {/* Inventory Table */}
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <TableRowShimmer key={i} cols={11} />
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : filteredInventory.length === 0 ? (
           <div className="text-center py-12">

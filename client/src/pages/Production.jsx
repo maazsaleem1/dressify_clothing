@@ -70,14 +70,16 @@ const Production = () => {
 
       if (editingProduction) {
         await updateProduction(editingProduction._id, dataToSubmit);
+        showSuccess('Production batch updated successfully!');
       } else {
         await createProduction(dataToSubmit);
+        showSuccess('Production batch created successfully!');
       }
       setShowModal(false);
       resetForm();
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.error || 'Error saving production batch');
+      showError(error.response?.data?.error || 'Error saving production batch');
     } finally {
       setSaving(false);
     }
@@ -85,18 +87,19 @@ const Production = () => {
 
   const handleMoveToInventory = async () => {
     if (!selectedBrand) {
-      alert('Please select a brand');
+      showError('Please select a brand');
       return;
     }
     setMoving(true);
     try {
       await moveToInventory(selectedProduction._id, { brandId: selectedBrand });
+      showSuccess('Production moved to inventory successfully!');
       setShowMoveModal(false);
       setSelectedProduction(null);
       setSelectedBrand('');
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.error || 'Error moving to inventory');
+      showError(error.response?.data?.error || 'Error moving to inventory');
     } finally {
       setMoving(false);
     }
@@ -130,9 +133,10 @@ const Production = () => {
       setDeleting(id);
       try {
         await deleteProduction(id);
+        showSuccess('Production batch deleted successfully!');
         fetchData();
       } catch (error) {
-        alert(error.message || 'Error deleting production batch');
+        showError(error.message || 'Error deleting production batch');
       } finally {
         setDeleting(null);
       }

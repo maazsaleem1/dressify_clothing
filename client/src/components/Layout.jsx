@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Package,
@@ -12,12 +12,29 @@ import {
   X,
   Image as ImageIcon,
   ShoppingBag,
-  Star
+  Star,
+  LogOut
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { showSuccess, showError } from '../utils/toast';
 
 const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const location = useLocation();
+  const { currentUser, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    if (window.confirm('Are you sure you want to logout?')) {
+      try {
+        await logout();
+        showSuccess('Logged out successfully!');
+        navigate('/login');
+      } catch (error) {
+        showError('Error signing out. Please try again.');
+      }
+    }
+  };
 
   const menuItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -85,7 +102,14 @@ const Layout = ({ children }) => {
 
         {/* Footer */}
         {sidebarOpen && (
-          <div className="p-4 border-t border-primary-700">
+          <div className="p-4 border-t border-primary-700 space-y-2">
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-primary-700 text-primary-100 transition-all"
+            >
+              <LogOut size={20} />
+              <span className="font-medium">Logout</span>
+            </button>
             <p className="text-xs text-primary-200 text-center">
               © 2025 Dressify Clothing
             </p>
@@ -108,7 +132,9 @@ const Layout = ({ children }) => {
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <p className="text-sm font-medium text-gray-700">Admin User</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {currentUser?.email || 'Admin User'}
+                </p>
                 <p className="text-xs text-gray-500">
                   {new Date().toLocaleDateString('en-US', {
                     weekday: 'long',
@@ -119,7 +145,7 @@ const Layout = ({ children }) => {
                 </p>
               </div>
               <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-full flex items-center justify-center text-white font-bold">
-                A
+                {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
               </div>
             </div>
           </div>

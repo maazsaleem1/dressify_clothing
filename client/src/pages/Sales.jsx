@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getSales, getCustomers, getInventory, createSale, addItemsToSale, addPayment, deleteSale } from '../services/api';
+import { showSuccess, showError } from '../utils/toast';
+import { TableRowShimmer } from '../components/Shimmer';
 
 const Sales = () => {
   const [sales, setSales] = useState([]);
@@ -77,21 +79,21 @@ const Sales = () => {
     // Convert empty string to 0 for validation
     const qtyToCheck = currentItem.quantity === '' ? 0 : currentItem.quantity;
     if (!currentItem.inventory || qtyToCheck <= 0) {
-      alert('Please select product and enter quantity');
+      showError('Please select product and enter quantity');
       return;
     }
 
     // Convert empty string to 0 for validation
     const priceToCheck = currentItem.unitPrice === '' ? 0 : currentItem.unitPrice;
     if (!priceToCheck || priceToCheck <= 0) {
-      alert('Please enter a valid selling price');
+      showError('Please enter a valid selling price');
       return;
     }
 
     const inventoryItem = inventory.find(i => (i.id || i._id) === currentItem.inventory);
 
     if (!inventoryItem) {
-      alert('Product not found');
+      showError('Product not found');
       return;
     }
 
@@ -99,7 +101,7 @@ const Sales = () => {
     const hasSizes = inventoryItem.sizes && inventoryItem.sizes.length > 0;
 
     if (hasSizes && !currentItem.size) {
-      alert('Please select a size');
+      showError('Please select a size');
       return;
     }
 
@@ -113,7 +115,7 @@ const Sales = () => {
         : null;
 
     if (hasSizes && (!sizeStock || sizeStock.quantity < currentItem.quantity)) {
-      alert(`Insufficient stock! Available: ${sizeStock?.quantity || 0}`);
+      showError(`Insufficient stock! Available: ${sizeStock?.quantity || 0}`);
       return;
     }
 
@@ -160,7 +162,7 @@ const Sales = () => {
     e.preventDefault();
 
     if (saleFormData.items.length === 0) {
-      alert('Please add at least one item');
+      showError('Please add at least one item');
       return;
     }
 
@@ -175,9 +177,10 @@ const Sales = () => {
 
       setShowSaleModal(false);
       resetSaleForm();
+      showSuccess('Sale created successfully!');
       fetchData();
     } catch (error) {
-      alert(error.message || error.response?.data?.error || 'Error creating sale');
+      showError(error.message || error.response?.data?.error || 'Error creating sale');
     } finally {
       setSaving(false);
     }
@@ -193,11 +196,12 @@ const Sales = () => {
         amount: paymentFormData.amount === '' ? 0 : paymentFormData.amount
       };
       await addPayment(selectedSale.id || selectedSale._id, paymentData);
+      showSuccess('Payment added successfully!');
       setShowPaymentModal(false);
       setPaymentFormData({ amount: '', paymentMethod: 'Cash', notes: '' });
       fetchData();
     } catch (error) {
-      alert(error.response?.data?.error || 'Error adding payment');
+      showError(error.response?.data?.error || 'Error adding payment');
     } finally {
       setSaving(false);
     }
@@ -207,6 +211,7 @@ const Sales = () => {
     if (window.confirm('Are you sure? This will restore inventory.')) {
       try {
         await deleteSale(id);
+        showSuccess('Sale deleted successfully!');
         fetchData();
       } catch (error) {
       }
@@ -216,30 +221,30 @@ const Sales = () => {
   const handleAddNewItem = () => {
     const qtyToCheck = currentNewItem.quantity === '' ? 0 : currentNewItem.quantity;
     if (!currentNewItem.inventory || qtyToCheck <= 0) {
-      alert('Please select product and enter quantity');
+      showError('Please select product and enter quantity');
       return;
     }
 
     const priceToCheck = currentNewItem.unitPrice === '' ? 0 : currentNewItem.unitPrice;
     if (!priceToCheck || priceToCheck <= 0) {
-      alert('Please enter a valid selling price');
+      showError('Please enter a valid selling price');
       return;
     }
 
     const inventoryItem = inventory.find(i => (i.id || i._id) === currentNewItem.inventory);
     if (!inventoryItem) {
-      alert('Product not found');
+      showError('Product not found');
       return;
     }
 
     const sizeObj = inventoryItem.sizes.find(s => s.size === currentNewItem.size);
     if (!sizeObj) {
-      alert('Please select a size');
+      showError('Please select a size');
       return;
     }
 
     if (sizeObj.quantity < currentNewItem.quantity) {
-      alert(`Insufficient stock! Available: ${sizeObj.quantity}`);
+      showError(`Insufficient stock! Available: ${sizeObj.quantity}`);
       return;
     }
 
@@ -273,7 +278,7 @@ const Sales = () => {
   const handleSubmitAddItems = async (e) => {
     e.preventDefault();
     if (addItemsFormData.items.length === 0) {
-      alert('Please add at least one item');
+      showError('Please add at least one item');
       return;
     }
 
@@ -284,9 +289,9 @@ const Sales = () => {
       setAddItemsFormData({ items: [] });
       setCurrentNewItem({ inventory: '', size: '', quantity: '', unitPrice: '' });
       fetchData();
-      alert('Items added successfully!');
+      showSuccess('Items added successfully!');
     } catch (error) {
-      alert(error.message || 'Error adding items to sale');
+      showError(error.message || 'Error adding items to sale');
     } finally {
       setSaving(false);
     }
@@ -563,8 +568,8 @@ const Sales = () => {
                       key={pageNum}
                       onClick={() => setCurrentPage(pageNum)}
                       className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
-                          ? 'bg-primary-600 text-white'
-                          : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                        ? 'bg-primary-600 text-white'
+                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
                         }`}
                     >
                       {pageNum}

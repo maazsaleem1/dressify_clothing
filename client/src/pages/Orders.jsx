@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Search, Eye, CheckCircle, Truck, Package, XCircle, Clock, Edit2, X, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getOrders, updateOrderStatus, getOrder } from '../services/api';
 import { sendOrderConfirmationEmail } from '../services/emailService';
+import { showSuccess, showError, showInfo } from '../utils/toast';
+import { TableRowShimmer } from '../components/Shimmer';
 
 const Orders = () => {
   const [orders, setOrders] = useState([]);
@@ -36,7 +38,7 @@ const Orders = () => {
       setSelectedOrder(response.data);
       setShowDetailsModal(true);
     } catch (error) {
-      alert('Error loading order details');
+      showError('Error loading order details');
     }
   };
 
@@ -48,13 +50,14 @@ const Orders = () => {
     setUpdating(orderId);
     try {
       await updateOrderStatus(orderId, newStatus);
+      showSuccess(`Order status updated to ${newStatus} successfully!`);
       await fetchOrders();
       if (selectedOrder && selectedOrder.id === orderId) {
         const response = await getOrder(orderId);
         setSelectedOrder(response.data);
       }
     } catch (error) {
-      alert(error.message || 'Error updating order status');
+      showError(error.message || 'Error updating order status');
     } finally {
       setUpdating(null);
     }
@@ -62,7 +65,7 @@ const Orders = () => {
 
   const handleSendEmail = async (order) => {
     if (!order.customer?.email) {
-      alert('Customer email is required to send confirmation email');
+      showError('Customer email is required to send confirmation email');
       return;
     }
 
@@ -73,9 +76,9 @@ const Orders = () => {
     setSendingEmail(order.id || order._id);
     try {
       const result = await sendOrderConfirmationEmail(order);
-      alert('Order confirmation email sent successfully!');
+      showSuccess('Order confirmation email sent successfully!');
     } catch (error) {
-      alert(error.message || 'Failed to send email. Please try again.');
+      showError(error.message || 'Failed to send email. Please try again.');
     } finally {
       setSendingEmail(null);
     }
@@ -175,8 +178,26 @@ const Orders = () => {
       {/* Orders Table */}
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order #</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <TableRowShimmer key={i} cols={8} />
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : filteredOrders.length === 0 ? (
           <div className="text-center py-12">

@@ -1212,13 +1212,26 @@ export const getReviews = async (filters = {}) => {
   try {
     let q = collection(db, 'reviews');
 
+    // Apply filters without orderBy to avoid composite index requirement
     if (filters.status) {
       q = query(q, where('status', '==', filters.status));
     }
 
-    q = query(q, orderBy('createdAt', 'desc'));
+    if (filters.productId) {
+      q = query(q, where('productId', '==', filters.productId));
+    }
+
+    // Fetch without orderBy - sort client-side instead
     const snapshot = await getDocs(q);
-    const reviews = snapshot.docs.map(docToObject);
+    let reviews = snapshot.docs.map(docToObject);
+
+    // Sort client-side by createdAt (descending) - no index needed
+    reviews.sort((a, b) => {
+      const dateA = a.createdAt?.seconds || a.createdAt?._seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0);
+      const dateB = b.createdAt?.seconds || b.createdAt?._seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0);
+      return dateB - dateA; // Descending order (newest first)
+    });
+
     return { data: reviews };
   } catch (error) {
 

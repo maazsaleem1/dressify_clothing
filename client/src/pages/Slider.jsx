@@ -67,16 +67,18 @@ const Slider = () => {
     try {
       if (editingSlider) {
         await updateSlider(editingSlider.id || editingSlider._id, formData);
+        showSuccess('Slider updated successfully!');
       } else {
         // Set order to last position for new items
         const newOrder = sliders.length > 0 ? Math.max(...sliders.map(s => s.order || 0)) + 1 : 0;
         await createSlider({ ...formData, order: newOrder });
+        showSuccess('Slider created successfully!');
       }
       setShowModal(false);
       resetForm();
       fetchSliders();
     } catch (error) {
-      alert(error.message || 'Error saving slider');
+      showError(error.message || 'Error saving slider');
     } finally {
       setSaving(false);
     }
@@ -122,9 +124,10 @@ const Slider = () => {
     setDeleting(id);
     try {
       await deleteSlider(id);
+      showSuccess('Slider deleted successfully!');
       fetchSliders();
     } catch (error) {
-      alert(error.message || 'Error deleting slider');
+      showError(error.message || 'Error deleting slider');
     } finally {
       setDeleting(null);
     }
@@ -136,9 +139,10 @@ const Slider = () => {
         ...slider,
         status: !slider.status
       });
+      showSuccess(`Slider ${!slider.status ? 'enabled' : 'disabled'} successfully!`);
       fetchSliders();
     } catch (error) {
-      alert(error.message || 'Error updating status');
+      showError(error.message || 'Error updating status');
     }
   };
 
@@ -160,9 +164,10 @@ const Slider = () => {
 
     try {
       await reorderSliders(updates);
+      showSuccess('Slider order updated successfully!');
       fetchSliders();
     } catch (error) {
-      alert(error.message || 'Error reordering sliders');
+      showError(error.message || 'Error reordering sliders');
     }
   };
 
