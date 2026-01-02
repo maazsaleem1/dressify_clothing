@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss } from '../services/api';
+import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales } from '../services/api';
 import { showInfo } from '../utils/toast';
 
 const Reports = () => {
@@ -9,6 +9,7 @@ const Reports = () => {
   const [salesStats, setSalesStats] = useState(null);
   const [inventoryStats, setInventoryStats] = useState(null);
   const [monthlyData, setMonthlyData] = useState(null);
+  const [outstandingCredits, setOutstandingCredits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -19,6 +20,7 @@ const Reports = () => {
 
   useEffect(() => {
     fetchStats();
+    fetchOutstandingCredits();
   }, [dateRange]);
 
   useEffect(() => {
@@ -49,6 +51,50 @@ const Reports = () => {
     } catch (error) {
       console.error('Error fetching monthly data:', error);
     }
+  };
+
+  const fetchOutstandingCredits = async () => {
+    try {
+      const salesRes = await getSales();
+      const allSales = salesRes.data;
+
+      // Filter sales with outstanding credit (remainingAmount > 0)
+      const outstanding = allSales
+        .filter(sale => (sale.remainingAmount || 0) > 0)
+        .sort((a, b) => {
+          // Sort by remaining amount (highest first), then by date (oldest first)
+          if (b.remainingAmount !== a.remainingAmount) {
+            return (b.remainingAmount || 0) - (a.remainingAmount || 0);
+          }
+          const dateA = a.saleDate?.toDate ? a.saleDate.toDate() : new Date(a.saleDate);
+          const dateB = b.saleDate?.toDate ? b.saleDate.toDate() : new Date(b.saleDate);
+          return dateA - dateB;
+        });
+
+      setOutstandingCredits(outstanding);
+    } catch (error) {
+      console.error('Error fetching outstanding credits:', error);
+    }
+  };
+
+  const formatDate = (dateValue) => {
+    if (!dateValue) return 'N/A';
+    let date;
+    if (dateValue instanceof Date) {
+      date = dateValue;
+    } else if (dateValue?.toDate) {
+      date = dateValue.toDate();
+    } else if (dateValue?.seconds) {
+      date = new Date(dateValue.seconds * 1000);
+    } else if (typeof dateValue === 'string' || typeof dateValue === 'number') {
+      date = new Date(dateValue);
+    } else {
+      return 'N/A';
+    }
+    if (isNaN(date.getTime())) {
+      return 'N/A';
+    }
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
   const handleExport = () => {
@@ -392,6 +438,117 @@ const Reports = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Outstanding Credit Details */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-orange-100 p-2 rounded-lg">
+              <CreditCard className="text-orange-600" size={24} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-gray-800">Outstanding Credit</h3>
+              <p className="text-sm text-gray-600">Details of all unpaid and partially paid sales</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold text-orange-600">
+              Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">{outstandingCredits.length} pending transactions</p>
+          </div>
+        </div>
+
+        {outstandingCredits.length === 0 ? (
+          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+            <CreditCard className="mx-auto text-gray-400 mb-3" size={48} />
+            <p className="text-gray-600 font-medium">No Outstanding Credit</p>
+            <p className="text-sm text-gray-500 mt-1">All sales have been fully paid</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gradient-to-r from-orange-50 to-amber-50 border-b-2 border-orange-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Invoice</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Customer</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Total Amount</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Paid Amount</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Remaining</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {outstandingCredits.map((sale) => {
+                  const remaining = parseFloat(sale.remainingAmount) || 0;
+                  const total = parseFloat(sale.totalAmount) || 0;
+                  const paid = parseFloat(sale.paidAmount) || 0;
+                  const paymentPercentage = total > 0 ? ((paid / total) * 100).toFixed(0) : 0;
+
+                  return (
+                    <tr key={sale.id || sale._id} className="hover:bg-orange-50/30 transition-colors">
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-semibold text-gray-900">{sale.invoiceNumber || 'N/A'}</span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className="text-gray-800 font-medium">{sale.customer?.name || 'N/A'}</span>
+                        {sale.customer?.phone && (
+                          <p className="text-xs text-gray-500 mt-0.5">{sale.customer.phone}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-gray-700">{formatDate(sale.saleDate)}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-medium text-gray-900">Rs. {total.toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-medium text-green-600">Rs. {paid.toLocaleString()}</span>
+                        <p className="text-xs text-gray-500 mt-0.5">{paymentPercentage}% paid</p>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-bold text-orange-600 text-lg">Rs. {remaining.toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${sale.paymentStatus === 'Partial'
+                          ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                          : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                          {sale.paymentStatus === 'Partial' ? (
+                            <span className="flex items-center gap-1">
+                              <AlertCircle size={12} />
+                              Partial
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <AlertCircle size={12} />
+                              Unpaid
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
+                <tr>
+                  <td colSpan="5" className="px-4 py-4 text-right font-bold text-gray-700">
+                    Total Outstanding:
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    <span className="font-bold text-orange-700 text-xl">
+                      Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

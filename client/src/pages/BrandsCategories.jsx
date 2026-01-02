@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Tag, Package } from 'lucide-react';
 import { getBrands, getCategories, createBrand, createCategory, updateBrand, updateCategory, deleteBrand, deleteCategory } from '../services/api';
+import { showSuccess, showError } from '../utils/toast';
 import ImageUpload from '../components/ImageUpload';
 
 const BrandsCategories = () => {
@@ -139,7 +140,8 @@ const BrandsCategories = () => {
           await deleteCategory(id);
           showSuccess('Category deleted successfully!');
         }
-        fetchData();
+        // Refresh data to get latest list
+        await fetchData();
       } catch (error) {
         showError(error.message || error.response?.data?.error || 'Error deleting item');
       } finally {

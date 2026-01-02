@@ -1,6 +1,6 @@
-﻿import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2 } from 'lucide-react';
-import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, deleteSale } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2 } from 'lucide-react';
+import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, deleteSale, createCustomer } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
 
@@ -14,6 +14,7 @@ const Sales = () => {
     const [showSaleModal, setShowSaleModal] = useState(false);
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showCustomerModal, setShowCustomerModal] = useState(false);
     const [editingSale, setEditingSale] = useState(null);
     const [selectedSale, setSelectedSale] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -42,6 +43,14 @@ const Sales = () => {
         notes: ''
     });
 
+    const [newCustomerData, setNewCustomerData] = useState({
+        name: '',
+        contact: '',
+        shopName: '',
+        address: '',
+        customerType: 'Walk-in'
+    });
+
     useEffect(() => {
         fetchData();
     }, [filterStatus]);
@@ -54,9 +63,9 @@ const Sales = () => {
                 getCustomers(),
                 getInventory()
             ]);
-            setSales(salesRes.data);
-            setCustomers(customersRes.data);
-            setInventory(inventoryRes.data);
+            setSales(salesRes.data || []);
+            setCustomers(customersRes.data || []);
+            setInventory(inventoryRes.data || []);
         } catch (error) {
             console.error('Error fetching sales:', error);
             showError(error.message || 'Error fetching data. Please check if Firestore index is created.');
@@ -99,6 +108,13 @@ const Sales = () => {
             paidAmount: '',
             saleType: 'Cash',
             notes: ''
+        });
+        setNewCustomerData({
+            name: '',
+            contact: '',
+            shopName: '',
+            address: '',
+            customerType: 'Walk-in'
         });
         setCurrentItem({
             inventory: '',
@@ -289,7 +305,7 @@ const Sales = () => {
     };
 
     const handleDeleteSale = async (id) => {
-        if (!window.confirm('Are you sure you want to delete this sale?')) {
+        if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
             return;
         }
 
@@ -297,11 +313,422 @@ const Sales = () => {
         try {
             await deleteSale(id);
             showSuccess('Sale deleted successfully!');
-            fetchData();
+
+            // Close any open modals that might be showing this sale
+            if (selectedSale && (selectedSale.id === id || selectedSale._id === id)) {
+                setShowDetailsModal(false);
+                setShowPaymentModal(false);
+                setSelectedSale(null);
+            }
+
+            // Refresh the data
+            await fetchData();
+
+            // Reset to first page if current page becomes empty
+            const [salesRes] = await Promise.all([getSales({ status: filterStatus })]);
+            const updatedSales = salesRes.data;
+            const filteredSales = updatedSales.filter(sale => {
+                const matchesSearch = !searchTerm ||
+                    sale.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    sale.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase());
+                return matchesSearch;
+            });
+
+            const totalPagesAfterDelete = Math.ceil(filteredSales.length / itemsPerPage);
+            if (currentPage > totalPagesAfterDelete && totalPagesAfterDelete > 0) {
+                setCurrentPage(totalPagesAfterDelete);
+            }
         } catch (error) {
-            showError(error.message || 'Error deleting sale');
+            console.error('Error deleting sale:', error);
+            showError(error.message || 'Error deleting sale. Please try again.');
         } finally {
             setDeleting(null);
+        }
+    };
+
+    const handleCreateCustomer = async (e) => {
+        e.preventDefault();
+        if (!newCustomerData.name.trim()) {
+            showError('Please enter customer name');
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const response = await createCustomer(newCustomerData);
+            const newCustomer = response.data;
+            showSuccess('Customer added successfully!');
+
+            // Refresh customers list
+            const customersRes = await getCustomers();
+            setCustomers(customersRes.data);
+
+            // Auto-select the newly created customer
+            setSaleFormData(prev => ({
+                ...prev,
+                customer: newCustomer.id || newCustomer._id
+            }));
+
+            // Close customer modal
+            setShowCustomerModal(false);
+            setNewCustomerData({
+                name: '',
+                contact: '',
+                shopName: '',
+                address: '',
+                customerType: 'Walk-in'
+            });
+        } catch (error) {
+            showError(error.message || 'Error creating customer');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handlePrintReceipt = (sale) => {
+        // Check if mobile device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            showError('Please allow popups to print receipt');
+            return;
+        }
+
+        const saleDate = formatDate(sale.saleDate);
+        const customerName = sale.customer?.name || 'Walk-in Customer';
+        const customerContact = sale.customer?.contact || '';
+        const customerAddress = sale.customer?.address || '';
+
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Invoice - ${sale.invoiceNumber}</title>
+                <style>
+                    @media print {
+                        @page { margin: 10mm; size: A4; }
+                        body { margin: 0; padding: 0; }
+                    }
+                    body {
+                        font-family: Arial, sans-serif;
+                        max-width: 800px;
+                        margin: 0 auto;
+                        padding: 20px;
+                        color: #333;
+                    }
+                    .header {
+                        text-align: center;
+                        border-bottom: 3px solid #000;
+                        padding-bottom: 20px;
+                        margin-bottom: 20px;
+                    }
+                    .header h1 {
+                        margin: 0;
+                        font-size: 28px;
+                        color: #000;
+                    }
+                    .header p {
+                        margin: 5px 0;
+                        color: #666;
+                    }
+                    .invoice-info {
+                        display: flex;
+                        justify-content: space-between;
+                        margin-bottom: 20px;
+                    }
+                    .info-section {
+                        flex: 1;
+                    }
+                    .info-section h3 {
+                        margin: 0 0 10px 0;
+                        font-size: 14px;
+                        color: #666;
+                        text-transform: uppercase;
+                    }
+                    .info-section p {
+                        margin: 5px 0;
+                        font-size: 14px;
+                    }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin: 20px 0;
+                    }
+                    th, td {
+                        padding: 12px;
+                        text-align: left;
+                        border-bottom: 1px solid #ddd;
+                    }
+                    th {
+                        background-color: #f5f5f5;
+                        font-weight: bold;
+                        text-transform: uppercase;
+                        font-size: 12px;
+                    }
+                    .text-right {
+                        text-align: right;
+                    }
+                    .totals {
+                        margin-top: 20px;
+                        border-top: 2px solid #000;
+                        padding-top: 10px;
+                    }
+                    .total-row {
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 8px 0;
+                        font-size: 16px;
+                    }
+                    .total-row.final {
+                        font-weight: bold;
+                        font-size: 18px;
+                        border-top: 1px solid #000;
+                        padding-top: 10px;
+                        margin-top: 10px;
+                    }
+                    .footer {
+                        margin-top: 40px;
+                        text-align: center;
+                        border-top: 1px solid #ddd;
+                        padding-top: 20px;
+                        color: #666;
+                        font-size: 12px;
+                    }
+                    .status-badge {
+                        display: inline-block;
+                        padding: 4px 12px;
+                        border-radius: 4px;
+                        font-size: 12px;
+                        font-weight: bold;
+                    }
+                    .status-paid { background-color: #d4edda; color: #155724; }
+                    .status-partial { background-color: #fff3cd; color: #856404; }
+                    .status-unpaid { background-color: #f8d7da; color: #721c24; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>DRESSIFY CLOTHING</h1>
+                    <p>Your Fashion Destination</p>
+                    <p>Invoice Receipt</p>
+                </div>
+
+                <div class="invoice-info">
+                    <div class="info-section">
+                        <h3>Invoice Details</h3>
+                        <p><strong>Invoice #:</strong> ${sale.invoiceNumber}</p>
+                        <p><strong>Date:</strong> ${saleDate}</p>
+                        <p><strong>Status:</strong> <span class="status-badge status-${sale.paymentStatus?.toLowerCase()}">${sale.paymentStatus || 'N/A'}</span></p>
+                    </div>
+                    <div class="info-section">
+                        <h3>Customer Information</h3>
+                        <p><strong>Name:</strong> ${customerName}</p>
+                        ${customerContact ? `<p><strong>Contact:</strong> ${customerContact}</p>` : ''}
+                        ${customerAddress ? `<p><strong>Address:</strong> ${customerAddress}</p>` : ''}
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Product</th>
+                            <th>Size</th>
+                            <th class="text-right">Qty</th>
+                            <th class="text-right">Unit Price</th>
+                            <th class="text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sale.items?.map((item, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${item.productName || 'N/A'}</td>
+                                <td>${item.size || 'N/A'}</td>
+                                <td class="text-right">${item.quantity || 0}</td>
+                                <td class="text-right">Rs. ${(parseFloat(item.unitPrice) || 0).toLocaleString()}</td>
+                                <td class="text-right">Rs. ${(parseFloat(item.totalPrice) || 0).toLocaleString()}</td>
+                            </tr>
+                        `).join('') || '<tr><td colspan="6" class="text-center">No items</td></tr>'}
+                    </tbody>
+                </table>
+
+                <div class="totals">
+                    <div class="total-row">
+                        <span>Subtotal:</span>
+                        <span>Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}</span>
+                    </div>
+                    <div class="total-row">
+                        <span>Paid Amount:</span>
+                        <span>Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}</span>
+                    </div>
+                    ${(parseFloat(sale.remainingAmount) || 0) > 0 ? `
+                    <div class="total-row">
+                        <span>Remaining Amount:</span>
+                        <span style="color: #dc3545; font-weight: bold;">Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}</span>
+                    </div>
+                    ` : ''}
+                    <div class="total-row final">
+                        <span>Total Amount:</span>
+                        <span>Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}</span>
+                    </div>
+                </div>
+
+                ${sale.notes ? `
+                <div style="margin-top: 20px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;">
+                    <strong>Notes:</strong> ${sale.notes}
+                </div>
+                ` : ''}
+
+                <div class="footer">
+                    <p>Thank you for your business!</p>
+                    <p>For inquiries, please contact us.</p>
+                    <p style="margin-top: 20px;">Generated on ${new Date().toLocaleString()}</p>
+                </div>
+
+                <script>
+                    window.onload = function() {
+                        // Create action buttons container
+                        const buttonContainer = document.createElement('div');
+                        buttonContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; display: flex; gap: 10px; z-index: 10000; flex-direction: column;';
+                        
+                        // Print button
+                        const printBtn = document.createElement('button');
+                        printBtn.innerHTML = '🖨️ Print Receipt';
+                        printBtn.style.cssText = 'padding: 15px 25px; background: #4F46E5; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
+                        printBtn.onclick = function() {
+                            window.print();
+                        };
+                        buttonContainer.appendChild(printBtn);
+                        
+                        // WhatsApp Share button
+                        const whatsappBtn = document.createElement('button');
+                        whatsappBtn.innerHTML = '📱 Share on WhatsApp';
+                        whatsappBtn.style.cssText = 'padding: 15px 25px; background: #25D366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
+                        whatsappBtn.onclick = function() {
+                            let receiptText = '*DRESSIFY CLOTHING*\\n';
+                            receiptText += '*Invoice Receipt*\\n\\n';
+                            receiptText += '*Invoice #:* ${sale.invoiceNumber}\\n';
+                            receiptText += '*Date:* ${saleDate}\\n';
+                            receiptText += '*Status:* ${sale.paymentStatus || 'N/A'}\\n\\n';
+                            receiptText += '*Customer:* ${customerName}\\n';
+                            ${customerContact ? `receiptText += '*Contact:* ${customerContact}\\n';` : ''}
+                            receiptText += '\\n*Items:*\\n';
+                            
+                            ${sale.items?.map((item, index) => `
+                            receiptText += '${index + 1}. ${(item.productName || 'N/A').replace(/'/g, "\\'")} (${(item.size || 'N/A').replace(/'/g, "\\'")})\\n';
+                            receiptText += '   Qty: ${item.quantity || 0} × Rs. ${(parseFloat(item.unitPrice) || 0).toLocaleString()} = Rs. ${(parseFloat(item.totalPrice) || 0).toLocaleString()}\\n';
+                            `).join('') || ''}
+                            
+                            receiptText += '\\n*Total Amount:* Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}\\n';
+                            receiptText += '*Paid Amount:* Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}\\n';
+                            
+                            ${(parseFloat(sale.remainingAmount) || 0) > 0 ? `
+                            receiptText += '*Remaining:* Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}\\n';
+                            ` : ''}
+                            
+                            ${sale.notes ? `
+                            receiptText += '\\n*Notes:* ${sale.notes.replace(/'/g, "\\'")}\\n';
+                            ` : ''}
+                            
+                            receiptText += '\\nThank you for your business!';
+                            
+                            const encodedText = encodeURIComponent(receiptText);
+                            const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                            
+                            if (isMobileDevice) {
+                                window.open('https://wa.me/?text=' + encodedText, '_blank');
+                            } else {
+                                window.open('https://web.whatsapp.com/send?text=' + encodedText, '_blank');
+                            }
+                        };
+                        buttonContainer.appendChild(whatsappBtn);
+                        
+                        document.body.appendChild(buttonContainer);
+                        
+                        // For mobile, don't auto-print
+                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                        
+                        if (!isMobile) {
+                            // Desktop: auto-print after a short delay
+                            setTimeout(function() {
+                                window.print();
+                                window.onafterprint = function() {
+                                    window.close();
+                                };
+                            }, 500);
+                        }
+                    };
+                </script>
+            </body>
+            </html>
+        `);
+        printWindow.document.close();
+
+        // Show success message
+        if (isMobile) {
+            showSuccess('Receipt opened. Use the print button or browser menu to print.');
+        }
+    };
+
+    const handleShareReceipt = async (sale) => {
+        const saleDate = formatDate(sale.saleDate);
+        const customerName = sale.customer?.name || 'Walk-in Customer';
+        const customerContact = sale.customer?.contact || '';
+
+        // Create receipt text for WhatsApp
+        let receiptText = `*DRESSIFY CLOTHING*\n`;
+        receiptText += `*Invoice Receipt*\n\n`;
+        receiptText += `*Invoice #:* ${sale.invoiceNumber}\n`;
+        receiptText += `*Date:* ${saleDate}\n`;
+        receiptText += `*Status:* ${sale.paymentStatus || 'N/A'}\n\n`;
+        receiptText += `*Customer:* ${customerName}\n`;
+        if (customerContact) {
+            receiptText += `*Contact:* ${customerContact}\n`;
+        }
+        receiptText += `\n*Items:*\n`;
+
+        sale.items?.forEach((item, index) => {
+            receiptText += `${index + 1}. ${item.productName || 'N/A'} (${item.size || 'N/A'})\n`;
+            receiptText += `   Qty: ${item.quantity || 0} × Rs. ${(parseFloat(item.unitPrice) || 0).toLocaleString()} = Rs. ${(parseFloat(item.totalPrice) || 0).toLocaleString()}\n`;
+        });
+
+        receiptText += `\n*Total Amount:* Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}\n`;
+        receiptText += `*Paid Amount:* Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}\n`;
+
+        if ((parseFloat(sale.remainingAmount) || 0) > 0) {
+            receiptText += `*Remaining:* Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}\n`;
+        }
+
+        if (sale.notes) {
+            receiptText += `\n*Notes:* ${sale.notes}\n`;
+        }
+
+        receiptText += `\nThank you for your business!`;
+
+        // Encode the text for WhatsApp URL
+        const encodedText = encodeURIComponent(receiptText);
+
+        // Check if mobile device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        if (isMobile) {
+            // For mobile, use WhatsApp API
+            const whatsappUrl = `https://wa.me/?text=${encodedText}`;
+            window.open(whatsappUrl, '_blank');
+            showSuccess('Opening WhatsApp to share receipt...');
+        } else {
+            // For desktop, copy to clipboard and show message
+            try {
+                await navigator.clipboard.writeText(receiptText);
+                showSuccess('Receipt copied to clipboard! You can paste it in WhatsApp.');
+            } catch (err) {
+                // Fallback: open WhatsApp web
+                const whatsappUrl = `https://web.whatsapp.com/send?text=${encodedText}`;
+                window.open(whatsappUrl, '_blank');
+                showSuccess('Opening WhatsApp Web to share receipt...');
+            }
         }
     };
 
@@ -416,6 +843,20 @@ const Sales = () => {
                                                         <Eye className="w-4 h-4" />
                                                     </button>
                                                     <button
+                                                        onClick={() => handlePrintReceipt(sale)}
+                                                        className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                                                        title="Print Receipt"
+                                                    >
+                                                        <Printer className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleShareReceipt(sale)}
+                                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                                        title="Share via WhatsApp"
+                                                    >
+                                                        <Share2 className="w-4 h-4" />
+                                                    </button>
+                                                    <button
                                                         onClick={() => handleEditSale(sale)}
                                                         className="p-1 text-green-600 hover:bg-green-50 rounded"
                                                         title="Edit Sale"
@@ -437,10 +878,14 @@ const Sales = () => {
                                                     <button
                                                         onClick={() => handleDeleteSale(sale.id || sale._id)}
                                                         disabled={deleting === (sale.id || sale._id)}
-                                                        className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                                        className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                                                         title="Delete Sale"
                                                     >
-                                                        <Trash2 className="w-4 h-4" />
+                                                        {deleting === (sale.id || sale._id) ? (
+                                                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent"></div>
+                                                        ) : (
+                                                            <Trash2 className="w-4 h-4" />
+                                                        )}
                                                     </button>
                                                 </div>
                                             </td>
@@ -508,7 +953,17 @@ const Sales = () => {
                         <form onSubmit={handleSubmitSale} className="p-6">
                             <div className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Customer *</label>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="block text-sm font-medium text-gray-700">Customer *</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCustomerModal(true)}
+                                            className="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-medium"
+                                        >
+                                            <UserPlus size={16} />
+                                            Add New Customer
+                                        </button>
+                                    </div>
                                     <select
                                         required
                                         value={saleFormData.customer}
@@ -518,7 +973,7 @@ const Sales = () => {
                                         <option value="">Select Customer</option>
                                         {customers.map(customer => (
                                             <option key={customer.id || customer._id} value={customer.id || customer._id}>
-                                                {customer.name} {customer.shopName ? `(${customer.shopName})` : ''}
+                                                {customer.name} {customer.shopName ? `(${customer.shopName})` : ''} {customer.contact ? `- ${customer.contact}` : ''}
                                             </option>
                                         ))}
                                     </select>
@@ -735,12 +1190,30 @@ const Sales = () => {
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-bold text-gray-800">Sale Details</h3>
-                                <button
-                                    onClick={() => setShowDetailsModal(false)}
-                                    className="text-gray-400 hover:text-gray-600"
-                                >
-                                    ✕
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => handlePrintReceipt(selectedSale)}
+                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                                        title="Print Receipt"
+                                    >
+                                        <Printer size={18} />
+                                        Print Receipt
+                                    </button>
+                                    <button
+                                        onClick={() => handleShareReceipt(selectedSale)}
+                                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors"
+                                        title="Share via WhatsApp"
+                                    >
+                                        <Share2 size={18} />
+                                        Share WhatsApp
+                                    </button>
+                                    <button
+                                        onClick={() => setShowDetailsModal(false)}
+                                        className="text-gray-400 hover:text-gray-600"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         <div className="p-6 space-y-4">
@@ -883,6 +1356,124 @@ const Sales = () => {
                                     className="btn-primary"
                                 >
                                     {saving ? 'Adding...' : 'Add Payment'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Add Customer Modal */}
+            {showCustomerModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                        <div className="p-6 border-b border-gray-200">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-xl font-bold text-gray-800">Add New Customer</h3>
+                                <button
+                                    onClick={() => {
+                                        setShowCustomerModal(false);
+                                        setNewCustomerData({
+                                            name: '',
+                                            contact: '',
+                                            shopName: '',
+                                            address: '',
+                                            customerType: 'Walk-in'
+                                        });
+                                    }}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                        <form onSubmit={handleCreateCustomer} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name *</label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={newCustomerData.name}
+                                    onChange={(e) => setNewCustomerData({ ...newCustomerData, name: e.target.value })}
+                                    className="input-field"
+                                    placeholder="Enter customer name"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
+                                <input
+                                    type="text"
+                                    value={newCustomerData.contact}
+                                    onChange={(e) => setNewCustomerData({ ...newCustomerData, contact: e.target.value })}
+                                    className="input-field"
+                                    placeholder="Phone number"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Shop Name</label>
+                                <input
+                                    type="text"
+                                    value={newCustomerData.shopName}
+                                    onChange={(e) => setNewCustomerData({ ...newCustomerData, shopName: e.target.value })}
+                                    className="input-field"
+                                    placeholder="Shop name (optional)"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                                <textarea
+                                    value={newCustomerData.address}
+                                    onChange={(e) => setNewCustomerData({ ...newCustomerData, address: e.target.value })}
+                                    className="input-field"
+                                    rows="2"
+                                    placeholder="Address (optional)"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Customer Type</label>
+                                <select
+                                    value={newCustomerData.customerType}
+                                    onChange={(e) => setNewCustomerData({ ...newCustomerData, customerType: e.target.value })}
+                                    className="input-field"
+                                >
+                                    <option value="Walk-in">Walk-in</option>
+                                    <option value="Credit">Credit</option>
+                                    <option value="Regular">Regular</option>
+                                </select>
+                            </div>
+                            <div className="flex justify-end gap-3 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowCustomerModal(false);
+                                        setNewCustomerData({
+                                            name: '',
+                                            contact: '',
+                                            shopName: '',
+                                            address: '',
+                                            customerType: 'Walk-in'
+                                        });
+                                    }}
+                                    className="btn-secondary"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={saving}
+                                    className="btn-primary"
+                                >
+                                    {saving ? (
+                                        <>
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                            <span>Adding...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <UserPlus size={18} />
+                                            <span>Add Customer</span>
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </form>

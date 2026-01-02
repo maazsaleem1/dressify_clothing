@@ -171,6 +171,34 @@ const Inventory = () => {
     return totalSold;
   };
 
+  // Format date for display
+  const formatDate = (dateValue) => {
+    if (!dateValue) return 'N/A';
+
+    let date;
+    if (dateValue instanceof Date) {
+      date = dateValue;
+    } else if (dateValue?.toDate) {
+      date = dateValue.toDate();
+    } else if (dateValue?.seconds) {
+      date = new Date(dateValue.seconds * 1000);
+    } else if (typeof dateValue === 'string' || typeof dateValue === 'number') {
+      date = new Date(dateValue);
+    } else {
+      return 'N/A';
+    }
+
+    if (isNaN(date.getTime())) {
+      return 'N/A';
+    }
+
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -391,28 +419,39 @@ const Inventory = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Dressify Clothing</h2>
-          <p className="text-sm sm:text-base text-gray-600 mt-1">Manage your stock and track availability</p>
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl shadow-lg p-6 sm:p-8 text-white">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="bg-white/20 p-2 rounded-lg">
+                <Package className="text-white" size={28} />
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-bold">Inventory Management</h2>
+            </div>
+            <p className="text-blue-100 text-sm sm:text-base ml-14">Manage your stock, track availability, and monitor profits</p>
+          </div>
+          <button
+            onClick={() => {
+              resetForm();
+              setShowModal(true);
+            }}
+            className="bg-white text-indigo-700 hover:bg-blue-50 font-semibold px-6 py-3 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 w-full sm:w-auto transform hover:scale-105"
+          >
+            <Plus size={20} />
+            <span>Add New Product</span>
+          </button>
         </div>
-        <button
-          onClick={() => {
-            resetForm();
-            setShowModal(true);
-          }}
-          className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
-        >
-          <Plus size={18} className="sm:w-5 sm:h-5" />
-          <span className="text-sm sm:text-base">Add Stock</span>
-        </button>
       </div>
 
       {/* Filters */}
-      <div className="card">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Filter className="text-gray-600" size={20} />
+          <h3 className="text-lg font-semibold text-gray-800">Filters & Search</h3>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="relative sm:col-span-2 lg:col-span-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
             <input
@@ -420,13 +459,13 @@ const Inventory = () => {
               placeholder="Search products..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field pl-10 w-full"
+              className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
             />
           </div>
           <select
             value={filterBrand}
             onChange={(e) => setFilterBrand(e.target.value)}
-            className="input-field w-full"
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none bg-white"
           >
             <option value="">All Brands</option>
             {brands.map(brand => (
@@ -436,27 +475,30 @@ const Inventory = () => {
           <select
             value={filterCategory}
             onChange={(e) => setFilterCategory(e.target.value)}
-            className="input-field w-full"
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none bg-white"
           >
             <option value="">All Categories</option>
             {categories.map(cat => (
               <option key={cat.id || cat._id} value={cat.id || cat._id}>{cat.name}</option>
             ))}
           </select>
-          <label className="flex items-center gap-2 cursor-pointer sm:col-span-2 lg:col-span-1">
+          <label className="flex items-center gap-2 cursor-pointer sm:col-span-2 lg:col-span-1 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 hover:bg-red-100 transition-colors">
             <input
               type="checkbox"
               checked={showLowStock}
               onChange={(e) => setShowLowStock(e.target.checked)}
-              className="w-4 h-4 text-primary-600 rounded"
+              className="w-4 h-4 text-red-600 rounded focus:ring-red-500"
             />
-            <span className="text-sm font-medium text-gray-700">Show Low Stock Only</span>
+            <span className="text-sm font-medium text-red-700 flex items-center gap-1">
+              <AlertCircle size={16} />
+              Low Stock Only
+            </span>
           </label>
         </div>
       </div>
 
       {/* Inventory Table */}
-      <div className="card overflow-hidden">
+      <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
         {loading ? (
           <>
             {/* Mobile Shimmer */}
@@ -471,7 +513,7 @@ const Inventory = () => {
             {/* Desktop Shimmer */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-200">
                   <tr>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
@@ -481,14 +523,15 @@ const Inventory = () => {
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Stock Value</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Total Profit</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {Array.from({ length: 10 }).map((_, i) => (
-                    <TableRowShimmer key={i} cols={11} />
+                    <TableRowShimmer key={i} cols={12} />
                   ))}
                 </tbody>
               </table>
@@ -527,11 +570,11 @@ const Inventory = () => {
                   const isExpanded = expandedItems.has(itemId);
 
                   return (
-                    <div key={itemId} className={`bg-white border rounded-lg overflow-hidden transition-all ${lowStock ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                    <div key={itemId} className={`bg-white border-2 rounded-xl overflow-hidden transition-all shadow-md hover:shadow-lg ${lowStock ? 'border-red-400 bg-gradient-to-br from-red-50 to-red-100/50' : 'border-gray-200 hover:border-indigo-300'}`}>
                       {/* Clickable Header */}
                       <div
                         onClick={() => toggleExpand(itemId)}
-                        className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                        className="p-5 cursor-pointer hover:bg-gradient-to-r hover:from-indigo-50/50 hover:to-blue-50/50 transition-all"
                       >
                         <div className="flex items-start gap-3">
                           {item.imageUrl ? (
@@ -561,6 +604,11 @@ const Inventory = () => {
                                 {item.brand?.name && (
                                   <p className="text-xs text-gray-600">{item.brand.name}</p>
                                 )}
+                                {item.createdAt && (
+                                  <p className="text-xs text-gray-500 mt-0.5">
+                                    Added: {formatDate(item.createdAt)}
+                                  </p>
+                                )}
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 {isExpanded ? (
@@ -576,54 +624,72 @@ const Inventory = () => {
 
                       {/* Expandable Details */}
                       {isExpanded && (
-                        <div className="px-4 pb-4 border-t border-gray-200 space-y-3 pt-3">
+                        <div className="px-5 pb-5 border-t-2 border-gray-200 space-y-4 pt-4 bg-gradient-to-b from-gray-50/50 to-white">
                           <div className="flex gap-2 justify-end">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleEdit(item);
                               }}
-                              className="text-primary-600 hover:text-primary-800 p-2 hover:bg-primary-50 rounded"
+                              className="px-4 py-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow"
                               disabled={deleting === itemId}
                               title="Edit"
                             >
                               <Edit2 size={18} />
+                              <span className="text-sm">Edit</span>
                             </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleDelete(itemId);
                               }}
-                              className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed p-2 hover:bg-red-50 rounded"
+                              className="px-4 py-2 text-red-600 hover:text-red-800 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow"
                               disabled={deleting === itemId}
                               title="Delete"
                             >
                               {deleting === itemId ? (
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                <>
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                  <span className="text-sm">Deleting...</span>
+                                </>
                               ) : (
-                                <Trash2 size={18} />
+                                <>
+                                  <Trash2 size={18} />
+                                  <span className="text-sm">Delete</span>
+                                </>
                               )}
                             </button>
                           </div>
                           {/* Badges */}
-                          <div className="flex gap-2 mb-2 flex-wrap">
+                          <div className="flex gap-2 mb-3 flex-wrap">
                             {isNew && (
-                              <span className="px-2 py-0.5 bg-black text-white text-xs font-semibold rounded uppercase tracking-wide">
+                              <span className="px-3 py-1 bg-gradient-to-r from-gray-900 to-black text-white text-xs font-bold rounded-full uppercase tracking-wide shadow-md">
                                 NEW
                               </span>
                             )}
                             {isSale && (
-                              <span className="px-2 py-0.5 bg-red-600 text-white text-xs font-semibold rounded uppercase tracking-wide">
+                              <span className="px-3 py-1 bg-gradient-to-r from-red-600 to-red-700 text-white text-xs font-bold rounded-full uppercase tracking-wide shadow-md">
                                 SALE
                               </span>
                             )}
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${item.onlineStatus
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-gray-100 text-gray-500'
+                            <span className={`px-3 py-1 rounded-full text-xs font-semibold shadow-sm ${item.onlineStatus
+                              ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white'
+                              : 'bg-gray-200 text-gray-600'
                               }`}>
                               {item.onlineStatus ? '🌐 Online' : '🔒 Hidden'}
                             </span>
                           </div>
+                          {/* Date Added */}
+                          {item.createdAt && (
+                            <div className="pt-3 border-t border-gray-200">
+                              <div className="text-sm text-gray-700 mb-2 font-semibold">Date Added</div>
+                              <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {formatDate(item.createdAt)}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                           {/* Detailed Sizes */}
                           <div className="pt-3 border-t border-gray-200">
                             <div className="text-sm text-gray-700 mb-2 font-semibold">Size Breakdown</div>
@@ -701,7 +767,7 @@ const Inventory = () => {
                               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                                 <div className="text-xs text-gray-600 mb-1.5 font-medium">Stock Value</div>
                                 <div className="text-base sm:text-lg font-bold text-blue-700 break-words" style={{ minHeight: '24px' }}>
-                                  Rs. {(isNaN(totalQty) || isNaN(item.costPerUnit)) ? '0' : (totalQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                  Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                                 </div>
                               </div>
                             </div>
@@ -760,6 +826,36 @@ const Inventory = () => {
                               </div>
                             );
                           })()}
+
+                          {/* Total Profit */}
+                          {(() => {
+                            const totalEarned = calculateTotalEarned(itemId);
+                            const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                            const onlineData = onlineSales[productKey];
+                            const totalRevenue = parseFloat(totalEarned || 0) + parseFloat(onlineData?.totalRevenue || 0);
+                            const stockValue = (isNaN(initialQty) || isNaN(item.costPerUnit)) ? 0 : (initialQty * parseFloat(item.costPerUnit || 0));
+                            const totalProfit = totalRevenue - stockValue;
+
+                            return (
+                              <div className="pt-3 border-t border-gray-200 mt-3">
+                                <div className="text-sm text-gray-700 mb-2 font-semibold">Total Profit</div>
+                                <div className={`bg-gradient-to-r p-4 rounded-lg border-2 ${totalProfit > 0 ? 'from-green-100 to-green-50 border-green-300' : totalProfit < 0 ? 'from-red-100 to-red-50 border-red-300' : 'from-gray-100 to-gray-50 border-gray-300'}`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm sm:text-base font-bold text-gray-800">
+                                      {totalProfit > 0 ? 'Profit:' : totalProfit < 0 ? 'Loss:' : 'Break Even:'}
+                                    </span>
+                                    <span className={`text-lg sm:text-xl font-bold break-words ${totalProfit > 0 ? 'text-green-700' : totalProfit < 0 ? 'text-red-700' : 'text-gray-500'}`} style={{ minHeight: '28px' }}>
+                                      Rs. {(isNaN(totalProfit) ? 0 : parseFloat(totalProfit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                  <div className="mt-2 text-xs text-gray-600">
+                                    <div>Revenue: Rs. {(isNaN(totalRevenue) ? 0 : parseFloat(totalRevenue || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</div>
+                                    <div>Stock Value: Rs. {(isNaN(stockValue) ? 0 : parseFloat(stockValue || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -769,21 +865,23 @@ const Inventory = () => {
             </div>
 
             {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto -mx-4 sm:mx-0">
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full min-w-[900px]">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className="bg-gradient-to-r from-gray-50 via-gray-100 to-gray-50 border-b-2 border-gray-300">
                   <tr>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Product</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden md:table-cell">Brand</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Category</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Sizes</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Stock</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Cost</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Price</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden md:table-cell">Online</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Stock Value</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Total Profit</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Date Added</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -794,8 +892,8 @@ const Inventory = () => {
                     const lowStock = isLowStock(item);
 
                     return (
-                      <tr key={item.id || item._id} className={lowStock ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                        <td className="px-3 sm:px-6 py-4">
+                      <tr key={item.id || item._id} className={`transition-colors ${lowStock ? 'bg-red-50/50 border-l-4 border-l-red-500' : 'hover:bg-indigo-50/30'} border-b border-gray-100`}>
+                        <td className="px-4 sm:px-6 py-5">
                           <div className="flex items-center gap-3">
                             {item.imageUrl ? (
                               <img
@@ -864,7 +962,7 @@ const Inventory = () => {
                             <span className="text-gray-400">—</span>
                           )}
                         </td>
-                        <td className="px-3 sm:px-6 py-4">
+                        <td className="px-4 sm:px-6 py-5">
                           <div className="flex flex-wrap gap-1">
                             {item.sizes.map((s, idx) => {
                               const sizeInitial = s.initialQuantity || s.quantity;
@@ -899,7 +997,18 @@ const Inventory = () => {
                           </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden xl:table-cell">
-                          Rs. {item.costPerUnit.toLocaleString()}
+                          <div className="flex flex-col gap-1">
+                            <div>
+                              <span className="text-xs text-gray-500">Cost/Unit: </span>
+                              <span className="font-medium">Rs. {parseFloat(item.costPerUnit || 0).toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-xs text-gray-500">Stock Value: </span>
+                              <span className="font-bold text-blue-700">
+                                Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm">
                           {(() => {
@@ -950,7 +1059,7 @@ const Inventory = () => {
                           </div>
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm font-medium text-gray-900 hidden xl:table-cell">
-                          Rs. {(totalQty * item.costPerUnit).toLocaleString()}
+                          Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
                           {(() => {
@@ -987,6 +1096,32 @@ const Inventory = () => {
                               </div>
                             );
                           })()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
+                          {(() => {
+                            const totalEarned = calculateTotalEarned(item.id || item._id);
+                            const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                            const onlineData = onlineSales[productKey];
+                            const totalRevenue = parseFloat(totalEarned || 0) + parseFloat(onlineData?.totalRevenue || 0);
+                            const stockValue = (isNaN(initialQty) || isNaN(item.costPerUnit)) ? 0 : (initialQty * parseFloat(item.costPerUnit || 0));
+                            const totalProfit = totalRevenue - stockValue;
+
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <span className={`font-bold text-base ${totalProfit > 0 ? 'text-green-600' : totalProfit < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                                  Rs. {(isNaN(totalProfit) ? 0 : parseFloat(totalProfit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                </span>
+                                {totalProfit !== 0 && (
+                                  <span className={`text-xs ${totalProfit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {totalProfit > 0 ? 'Profit' : 'Loss'}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden lg:table-cell">
+                          {item.createdAt ? formatDate(item.createdAt) : 'N/A'}
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm">
                           <div className="flex gap-2">
@@ -1026,19 +1161,19 @@ const Inventory = () => {
 
         {/* Pagination */}
         {!loading && filteredInventory.length > itemsPerPage && (
-          <div className="px-4 sm:px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-xs sm:text-sm text-gray-700 text-center sm:text-left">
-              Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
-              <span className="font-medium">{Math.min(endIndex, filteredInventory.length)}</span> of{' '}
-              <span className="font-medium">{filteredInventory.length}</span> items
+          <div className="px-6 py-5 bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-sm text-gray-700 text-center sm:text-left font-medium">
+              Showing <span className="font-bold text-indigo-700">{startIndex + 1}</span> to{' '}
+              <span className="font-bold text-indigo-700">{Math.min(endIndex, filteredInventory.length)}</span> of{' '}
+              <span className="font-bold text-indigo-700">{filteredInventory.length}</span> products
             </div>
-            <div className="flex items-center gap-1 sm:gap-2 flex-wrap justify-center">
+            <div className="flex items-center gap-2 flex-wrap justify-center">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                 disabled={currentPage === 1}
-                className="px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all shadow-sm hover:shadow"
               >
-                <ChevronLeft size={14} className="sm:w-4 sm:h-4" />
+                <ChevronLeft size={18} />
                 <span className="hidden sm:inline">Previous</span>
                 <span className="sm:hidden">Prev</span>
               </button>
@@ -1058,9 +1193,9 @@ const Inventory = () => {
                     <button
                       key={pageNum}
                       onClick={() => setCurrentPage(pageNum)}
-                      className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-lg ${currentPage === pageNum
-                        ? 'bg-primary-600 text-white'
-                        : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                      className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all shadow-sm hover:shadow ${currentPage === pageNum
+                        ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white shadow-md'
+                        : 'text-gray-700 bg-white border-2 border-gray-300 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700'
                         }`}
                     >
                       {pageNum}
@@ -1071,11 +1206,11 @@ const Inventory = () => {
               <button
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                 disabled={currentPage === totalPages}
-                className="px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all shadow-sm hover:shadow"
               >
                 <span className="hidden sm:inline">Next</span>
                 <span className="sm:hidden">Next</span>
-                <ChevronRight size={14} className="sm:w-4 sm:h-4" />
+                <ChevronRight size={18} />
               </button>
             </div>
           </div>
