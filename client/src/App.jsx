@@ -12,6 +12,7 @@ import Customers from './pages/Customers';
 import Sales from './pages/Sales';
 import Production from './pages/Production';
 import Reports from './pages/Reports';
+import Expenses from './pages/Expenses';
 import Slider from './pages/Slider';
 import Orders from './pages/Orders';
 import Reviews from './pages/Reviews';
@@ -77,6 +78,7 @@ function App() {
                     <Route path="/customers" element={<Customers />} />
                     <Route path="/sales" element={<Sales />} />
                     <Route path="/production" element={<Production />} />
+                    <Route path="/expenses" element={<Expenses />} />
                     <Route path="/reports" element={<Reports />} />
                     <Route path="/slider" element={<Slider />} />
                     <Route path="/orders" element={<Orders />} />

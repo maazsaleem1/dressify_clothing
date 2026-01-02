@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Image as ImageIcon, Eye, EyeOff, ArrowUp, ArrowDown, Package, Tag, ShoppingBag } from 'lucide-react';
 import { getSliders, createSlider, updateSlider, deleteSlider, reorderSliders, getInventory, getBrands, getCategories } from '../services/api';
+import { showSuccess, showError } from '../utils/toast';
 import ImageUpload from '../components/ImageUpload';
 
 const Slider = () => {

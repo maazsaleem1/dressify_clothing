@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
 import { showSuccess, showError } from '../utils/toast';
@@ -23,6 +23,7 @@ const Inventory = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [expandedItems, setExpandedItems] = useState(new Set()); // Track expanded items
   const itemsPerPage = 10;
   const [formData, setFormData] = useState({
     brand: '',
@@ -151,6 +152,23 @@ const Inventory = () => {
     });
 
     return totalEarned;
+  };
+
+  // Calculate sold quantity from sales records
+  const calculateSoldQuantity = (inventoryItemId) => {
+    let totalSold = 0;
+
+    sales.forEach(sale => {
+      if (sale.items && Array.isArray(sale.items)) {
+        sale.items.forEach(item => {
+          if (item.inventoryId === inventoryItemId) {
+            totalSold += item.quantity || 0;
+          }
+        });
+      }
+    });
+
+    return totalSold;
   };
 
   const handleSubmit = async (e) => {
@@ -290,6 +308,18 @@ const Inventory = () => {
     }
   };
 
+  const toggleExpand = (itemId) => {
+    setExpandedItems(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  };
+
   const resetForm = () => {
     setFormData({
       brand: '',
@@ -332,9 +362,12 @@ const Inventory = () => {
     setFormData({ ...formData, sizes: newSizes });
   };
 
+  // Filter inventory - onlineStatus does NOT affect admin inventory display
+  // onlineStatus only controls website visibility, not admin panel visibility
   const filteredInventory = inventory.filter(item => {
-    const matchesSearch = item.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.brand?.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = !searchTerm ||
+      item.productName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.brand?.name?.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesSearch;
   });
 
@@ -360,40 +393,40 @@ const Inventory = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Dressify Clothing</h2>
-          <p className="text-gray-600 mt-1">Manage your stock and track availability</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800">Dressify Clothing</h2>
+          <p className="text-sm sm:text-base text-gray-600 mt-1">Manage your stock and track availability</p>
         </div>
         <button
           onClick={() => {
             resetForm();
             setShowModal(true);
           }}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
         >
-          <Plus size={20} />
-          Add Stock
+          <Plus size={18} className="sm:w-5 sm:h-5" />
+          <span className="text-sm sm:text-base">Add Stock</span>
         </button>
       </div>
 
       {/* Filters */}
       <div className="card">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="relative">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="relative sm:col-span-2 lg:col-span-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
             <input
               type="text"
               placeholder="Search products..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="input-field pl-10"
+              className="input-field pl-10 w-full"
             />
           </div>
           <select
             value={filterBrand}
             onChange={(e) => setFilterBrand(e.target.value)}
-            className="input-field"
+            className="input-field w-full"
           >
             <option value="">All Brands</option>
             {brands.map(brand => (
@@ -403,14 +436,14 @@ const Inventory = () => {
           <select
             value={filterCategory}
             onChange={(e) => setFilterCategory(e.target.value)}
-            className="input-field"
+            className="input-field w-full"
           >
             <option value="">All Categories</option>
             {categories.map(cat => (
               <option key={cat.id || cat._id} value={cat.id || cat._id}>{cat.name}</option>
             ))}
           </select>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex items-center gap-2 cursor-pointer sm:col-span-2 lg:col-span-1">
             <input
               type="checkbox"
               checked={showLowStock}
@@ -425,306 +458,589 @@ const Inventory = () => {
       {/* Inventory Table */}
       <div className="card overflow-hidden">
         {loading ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <TableRowShimmer key={i} cols={11} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Mobile Shimmer */}
+            <div className="md:hidden space-y-4 p-4">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="bg-gray-100 rounded-lg p-4 animate-pulse">
+                  <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+                  <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                </div>
+              ))}
+            </div>
+            {/* Desktop Shimmer */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Array.from({ length: 10 }).map((_, i) => (
+                    <TableRowShimmer key={i} cols={11} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : filteredInventory.length === 0 ? (
           <div className="text-center py-12">
             <Package size={48} className="mx-auto text-gray-400 mb-4" />
             <p className="text-gray-500">No inventory items found</p>
           </div>
         ) : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0">
-            <table className="w-full min-w-[1200px]">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
-                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {paginatedInventory.map((item) => {
+          <>
+            {/* Mobile Card View - Shows ALL products regardless of onlineStatus */}
+            <div className="md:hidden space-y-4 p-4">
+              {paginatedInventory.length === 0 ? (
+                <div className="text-center py-8">
+                  <Package size={48} className="mx-auto text-gray-400 mb-4" />
+                  <p className="text-gray-500">No products found</p>
+                  <p className="text-xs text-gray-400 mt-2">Try adjusting your filters</p>
+                </div>
+              ) : (
+                paginatedInventory.map((item) => {
                   const totalQty = getTotalQuantity(item.sizes);
-                  const initialQty = item.initialQuantity || totalQty; // Fallback to current if no initial
-                  const soldQty = initialQty - totalQty;
+                  const soldQty = calculateSoldQuantity(item.id || item._id);
+                  const initialQty = item.initialQuantity || (totalQty + soldQty);
                   const lowStock = isLowStock(item);
+                  const sellingPrice = parseFloat(item.sellingPrice) || 0;
+                  const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
+                  const isSale = sellingPrice > onlinePrice && onlinePrice > 0;
+                  const hasSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
+                    item.isSale || item.sale || isSale;
+                  const isNew = item.tag === 'new' || item.status === 'new' ||
+                    item.isNew || item.new;
+
+                  const itemId = item.id || item._id;
+                  const isExpanded = expandedItems.has(itemId);
 
                   return (
-                    <tr key={item.id || item._id} className={lowStock ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                      <td className="px-3 sm:px-6 py-4">
-                        <div className="flex items-center gap-3">
+                    <div key={itemId} className={`bg-white border rounded-lg overflow-hidden transition-all ${lowStock ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                      {/* Clickable Header */}
+                      <div
+                        onClick={() => toggleExpand(itemId)}
+                        className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-start gap-3">
                           {item.imageUrl ? (
                             <img
                               src={item.imageUrl}
                               alt={item.productName}
-                              className="w-12 h-12 object-cover rounded-lg"
+                              className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
                               onError={(e) => {
                                 e.target.style.display = 'none';
                               }}
                             />
                           ) : (
-                            <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center">
-                              <Package size={20} className="text-gray-400" />
+                            <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                              <Package size={24} className="text-gray-400" />
                             </div>
                           )}
-                          <div className="flex-1">
-                            {lowStock && <AlertCircle className="text-red-500 mb-1" size={16} />}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium text-gray-900">{item.productName}</span>
-                              {item.sku && (
-                                <span className="text-xs text-gray-500">- {item.sku}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  {lowStock && <AlertCircle className="text-red-500" size={16} />}
+                                  <span className="font-semibold text-gray-900 text-base break-words">{item.productName || 'Unnamed Product'}</span>
+                                  {item.sku && (
+                                    <span className="text-xs text-gray-500 whitespace-nowrap">({item.sku})</span>
+                                  )}
+                                </div>
+                                {item.brand?.name && (
+                                  <p className="text-xs text-gray-600">{item.brand.name}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {isExpanded ? (
+                                  <ChevronUp size={20} className="text-gray-400" />
+                                ) : (
+                                  <ChevronDown size={20} className="text-gray-400" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expandable Details */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 border-t border-gray-200 space-y-3 pt-3">
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEdit(item);
+                              }}
+                              className="text-primary-600 hover:text-primary-800 p-2 hover:bg-primary-50 rounded"
+                              disabled={deleting === itemId}
+                              title="Edit"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(itemId);
+                              }}
+                              className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed p-2 hover:bg-red-50 rounded"
+                              disabled={deleting === itemId}
+                              title="Delete"
+                            >
+                              {deleting === itemId ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                              ) : (
+                                <Trash2 size={18} />
                               )}
-                            </div>
-                            {/* Badge indicators */}
-                            <div className="flex gap-2 mt-1">
-                              {(() => {
-                                const isNew = item.tag === 'new' || item.status === 'new' ||
-                                  item.isNew || item.new;
-                                const isSale = item.tag === 'sale' || item.status === 'sale' ||
-                                  item.isSale || item.sale ||
-                                  (item.sellingPrice > item.onlinePrice && item.onlinePrice > 0);
-                                return (
-                                  <>
-                                    {isNew && (
-                                      <span className="px-2 py-0.5 bg-black text-white text-xs font-medium rounded">
-                                        NEW
-                                      </span>
-                                    )}
-                                    {isSale && (
-                                      <span className="px-2 py-0.5 bg-black text-white text-xs font-medium rounded">
-                                        SALE
-                                      </span>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </div>
+                            </button>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm hidden md:table-cell">
-                        {item.brand?.name ? (
-                          <span className="text-gray-800 font-medium">{item.brand.name}</span>
-                        ) : item.brandId ? (
-                          <span className="text-gray-400 italic">Loading...</span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm hidden lg:table-cell">
-                        {item.category?.name ? (
-                          <span className="text-gray-800 font-medium">{item.category.name}</span>
-                        ) : item.categoryId ? (
-                          <span className="text-gray-400 italic">Loading...</span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {item.sizes.map((s, idx) => {
-                            const sizeInitial = s.initialQuantity || s.quantity;
-                            const sizeSold = sizeInitial - s.quantity;
-                            return (
-                              <span key={idx} className="px-2 py-1 bg-gray-100 text-xs rounded" title={`Initial: ${sizeInitial}, Current: ${s.quantity}, Sold: ${sizeSold}`}>
-                                {s.size}: {s.quantity}
-                                {sizeSold > 0 && <span className="text-red-500 ml-1">(-{sizeSold})</span>}
+                          {/* Badges */}
+                          <div className="flex gap-2 mb-2 flex-wrap">
+                            {isNew && (
+                              <span className="px-2 py-0.5 bg-black text-white text-xs font-semibold rounded uppercase tracking-wide">
+                                NEW
                               </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 hidden lg:table-cell">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">Initial:</span>
-                            <span className="font-semibold text-gray-700">{initialQty}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">Current:</span>
-                            <span className={`font-bold ${lowStock ? 'text-red-600' : 'text-green-600'}`}>
-                              {totalQty}
+                            )}
+                            {isSale && (
+                              <span className="px-2 py-0.5 bg-red-600 text-white text-xs font-semibold rounded uppercase tracking-wide">
+                                SALE
+                              </span>
+                            )}
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${item.onlineStatus
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-gray-100 text-gray-500'
+                              }`}>
+                              {item.onlineStatus ? '🌐 Online' : '🔒 Hidden'}
                             </span>
                           </div>
-                          {soldQty > 0 && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">Sold:</span>
-                              <span className="font-medium text-orange-600">{soldQty}</span>
+                          {/* Detailed Sizes */}
+                          <div className="pt-3 border-t border-gray-200">
+                            <div className="text-sm text-gray-700 mb-2 font-semibold">Size Breakdown</div>
+                            <div className="flex flex-wrap gap-2">
+                              {item.sizes.map((s, idx) => {
+                                const sizeInitial = s.initialQuantity || s.quantity;
+                                const sizeSold = sizeInitial - s.quantity;
+                                return (
+                                  <div key={idx} className="flex-1 min-w-[80px] bg-gray-50 p-2 rounded-lg border border-gray-200">
+                                    <div className="text-xs text-gray-500 mb-1">Size {s.size}</div>
+                                    <div className="text-sm font-bold text-gray-900">{s.quantity} units</div>
+                                    {sizeSold > 0 && (
+                                      <div className="text-xs text-red-500 mt-1">Sold: {sizeSold}</div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden xl:table-cell">
-                        Rs. {item.costPerUnit.toLocaleString()}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm">
-                        {(() => {
-                          const sellingPrice = item.sellingPrice || 0;
-                          const onlinePrice = item.onlinePrice || sellingPrice;
-                          const isSale = sellingPrice > onlinePrice && onlinePrice > 0;
+                          </div>
 
-                          // Check for sale badge
-                          const hasSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
-                            item.isSale || item.sale || isSale;
-
-                          if (hasSaleBadge && sellingPrice > onlinePrice) {
-                            return (
-                              <div>
-                                <div className="text-xs text-gray-500 line-through">
+                          {/* Price Details */}
+                          <div className="pt-3 border-t border-gray-200">
+                            <div className="text-sm text-gray-700 mb-2 font-semibold">Pricing</div>
+                            {hasSaleBadge && sellingPrice > onlinePrice && sellingPrice > 0 && onlinePrice > 0 ? (
+                              <div className="bg-red-50 p-3 rounded-lg border border-red-200 space-y-1">
+                                <div className="text-sm text-gray-600 line-through">
                                   Was Rs. {sellingPrice.toLocaleString()}
                                 </div>
-                                <div className="font-bold text-gray-900">
+                                <div className="font-bold text-red-700 text-lg">
                                   Now Rs. {onlinePrice.toLocaleString()}
                                 </div>
                               </div>
-                            );
-                          } else {
-                            return (
-                              <div className="text-gray-600">
-                                Rs. {onlinePrice.toLocaleString()}
-                                {item.onlinePrice && item.onlinePrice !== item.sellingPrice && (
-                                  <div className="text-xs text-blue-600 mt-1">
-                                    Online: Rs. {item.onlinePrice.toLocaleString()}
-                                  </div>
-                                )}
+                            ) : (
+                              <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                <div className="text-gray-700 font-semibold text-lg">
+                                  Rs. {onlinePrice.toLocaleString()}
+                                </div>
                               </div>
-                            );
-                          }
-                        })()}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 hidden md:table-cell">
-                        <div className="flex flex-col gap-1">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${item.onlineStatus
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-gray-100 text-gray-500'
-                            }`}>
-                            {item.onlineStatus ? '🌐 Online' : '🔒 Hidden'}
-                          </span>
-                          {item.onlineStatus && item.sku && (
-                            <span className="text-xs text-gray-500">SKU: {item.sku}</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm font-medium text-gray-900 hidden xl:table-cell">
-                        Rs. {(totalQty * item.costPerUnit).toLocaleString()}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
-                        {(() => {
-                          const totalEarned = calculateTotalEarned(item.id || item._id);
-                          const onlineSalesData = onlineSales[item.id || item._id];
-                          return (
-                            <div className="flex flex-col gap-1">
-                              <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                                Rs. {totalEarned.toLocaleString()}
-                              </span>
-                              {totalEarned > 0 && soldQty > 0 && (
-                                <span className="text-xs text-gray-500">
-                                  ({soldQty} sold)
+                            )}
+                          </div>
+
+                          {/* Stock Information - Detailed */}
+                          <div className="pt-3 border-t border-gray-200">
+                            <div className="text-sm text-gray-700 mb-2 font-semibold">Stock Details</div>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg">
+                                <span className="text-sm text-gray-700 font-medium">Initial Stock:</span>
+                                <span className="text-base font-bold text-gray-900">{initialQty} units</span>
+                              </div>
+                              <div className="flex items-center justify-between bg-green-50 p-2.5 rounded-lg border border-green-200">
+                                <span className="text-sm text-gray-700 font-medium">Current Stock:</span>
+                                <span className={`text-lg font-bold ${lowStock ? 'text-red-600' : 'text-green-700'}`}>
+                                  {totalQty} units
                                 </span>
+                              </div>
+                              {soldQty > 0 && (
+                                <div className="flex items-center justify-between bg-orange-50 p-2.5 rounded-lg border border-orange-200">
+                                  <span className="text-sm text-gray-700 font-medium">Sold:</span>
+                                  <span className="text-base font-bold text-orange-700">{soldQty} units</span>
+                                </div>
                               )}
-                              {(() => {
-                                // Find online sales for this product
-                                const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
-                                const onlineData = onlineSales[productKey];
-                                if (onlineData && onlineData.totalRevenue > 0) {
-                                  return (
-                                    <div className="mt-1 pt-1 border-t border-gray-200">
-                                      <span className="text-xs text-blue-600 font-semibold">
-                                        Online: Rs. {onlineData.totalRevenue.toLocaleString()}
-                                      </span>
-                                      <span className="text-xs text-gray-500 ml-1">
-                                        ({onlineData.totalQuantity} units)
+                            </div>
+                          </div>
+
+                          {/* Cost and Value */}
+                          <div className="pt-3 border-t border-gray-200">
+                            <div className="text-sm text-gray-700 mb-2 font-semibold">Financial Summary</div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                <div className="text-xs text-gray-600 mb-1.5 font-medium">Cost/Unit</div>
+                                <div className="text-base sm:text-lg font-bold text-gray-900 break-words">
+                                  Rs. {parseFloat(item.costPerUnit || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                              <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                                <div className="text-xs text-gray-600 mb-1.5 font-medium">Stock Value</div>
+                                <div className="text-base sm:text-lg font-bold text-blue-700 break-words" style={{ minHeight: '24px' }}>
+                                  Rs. {(isNaN(totalQty) || isNaN(item.costPerUnit)) ? '0' : (totalQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Revenue - Enhanced */}
+                          {(() => {
+                            const totalEarned = calculateTotalEarned(itemId);
+                            const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                            const onlineData = onlineSales[productKey];
+                            const totalRevenue = parseFloat(totalEarned || 0) + parseFloat(onlineData?.totalRevenue || 0);
+
+                            return (
+                              <div className="pt-3 border-t border-gray-200 mt-3">
+                                <div className="text-sm text-gray-700 mb-2 font-semibold">Revenue</div>
+                                <div className="space-y-3">
+                                  <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm text-gray-700 font-medium">Offline Sales:</span>
+                                      <div className="text-right">
+                                        <div className="text-base sm:text-lg font-bold text-green-700 break-words" style={{ minHeight: '24px' }}>
+                                          Rs. {(isNaN(totalEarned) ? 0 : parseFloat(totalEarned || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                        </div>
+                                        {soldQty > 0 && (
+                                          <div className="text-xs text-gray-600 mt-1">
+                                            ({soldQty} units sold)
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {onlineData && onlineData.totalRevenue > 0 ? (
+                                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-700 font-medium">Online Sales:</span>
+                                        <div className="text-right">
+                                          <div className="text-base sm:text-lg font-bold text-blue-700 break-words">
+                                            Rs. {parseFloat(onlineData.totalRevenue || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                          </div>
+                                          <div className="text-xs text-gray-600 mt-1">
+                                            ({onlineData.totalQuantity} units)
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  <div className="bg-gradient-to-r from-green-100 to-green-50 p-4 rounded-lg border-2 border-green-300">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm sm:text-base font-bold text-gray-800">Total Revenue:</span>
+                                      <span className={`text-lg sm:text-xl font-bold break-words ${totalRevenue > 0 ? 'text-green-700' : 'text-gray-500'}`} style={{ minHeight: '28px' }}>
+                                        Rs. {(isNaN(totalRevenue) ? 0 : parseFloat(totalRevenue || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                                       </span>
                                     </div>
-                                  );
-                                }
-                                return null;
-                              })()}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-3 sm:px-6 py-4 text-sm">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleEdit(item)}
-                            className="text-primary-600 hover:text-primary-800"
-                            disabled={deleting === (item.id || item._id)}
-                            title="Edit"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item.id || item._id)}
-                            className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                            disabled={deleting === (item.id || item._id)}
-                            title="Delete"
-                          >
-                            {deleting === (item.id || item._id) ? (
-                              <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                                <span className="text-xs">Deleting...</span>
-                              </>
-                            ) : (
-                              <Trash2 size={18} />
-                            )}
-                          </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
-                      </td>
-                    </tr>
+                      )}
+                    </div>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                })
+              )}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto -mx-4 sm:mx-0">
+              <table className="w-full min-w-[900px]">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Brand</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Category</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sizes</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">Stock</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Cost</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Online</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Value</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {paginatedInventory.map((item) => {
+                    const totalQty = getTotalQuantity(item.sizes);
+                    const soldQty = calculateSoldQuantity(item.id || item._id);
+                    const initialQty = item.initialQuantity || (totalQty + soldQty);
+                    const lowStock = isLowStock(item);
+
+                    return (
+                      <tr key={item.id || item._id} className={lowStock ? 'bg-red-50' : 'hover:bg-gray-50'}>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            {item.imageUrl ? (
+                              <img
+                                src={item.imageUrl}
+                                alt={item.productName}
+                                className="w-12 h-12 object-cover rounded-lg"
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center">
+                                <Package size={20} className="text-gray-400" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              {lowStock && <AlertCircle className="text-red-500 mb-1" size={16} />}
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                <span className="font-medium text-gray-900 break-words">{item.productName || 'Unnamed Product'}</span>
+                                {item.sku && (
+                                  <span className="text-xs text-gray-500 whitespace-nowrap">- {item.sku}</span>
+                                )}
+                              </div>
+                              {/* Badge indicators */}
+                              <div className="flex gap-2 mt-1 flex-wrap">
+                                {(() => {
+                                  const isNew = item.tag === 'new' || item.status === 'new' ||
+                                    item.isNew || item.new;
+                                  const isSale = item.tag === 'sale' || item.status === 'sale' ||
+                                    item.isSale || item.sale ||
+                                    (item.sellingPrice && item.onlinePrice && item.sellingPrice > item.onlinePrice && item.onlinePrice > 0);
+                                  return (
+                                    <>
+                                      {isNew && (
+                                        <span className="px-2 py-0.5 bg-black text-white text-xs font-semibold rounded uppercase tracking-wide">
+                                          NEW
+                                        </span>
+                                      )}
+                                      {isSale && (
+                                        <span className="px-2 py-0.5 bg-red-600 text-white text-xs font-semibold rounded uppercase tracking-wide">
+                                          SALE
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm hidden md:table-cell">
+                          {item.brand?.name ? (
+                            <span className="text-gray-800 font-medium">{item.brand.name}</span>
+                          ) : item.brandId ? (
+                            <span className="text-gray-400 italic">Loading...</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm hidden lg:table-cell">
+                          {item.category?.name ? (
+                            <span className="text-gray-800 font-medium">{item.category.name}</span>
+                          ) : item.categoryId ? (
+                            <span className="text-gray-400 italic">Loading...</span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {item.sizes.map((s, idx) => {
+                              const sizeInitial = s.initialQuantity || s.quantity;
+                              const sizeSold = sizeInitial - s.quantity;
+                              return (
+                                <span key={idx} className="px-2 py-1 bg-gray-100 text-xs rounded" title={`Initial: ${sizeInitial}, Current: ${s.quantity}, Sold: ${sizeSold}`}>
+                                  {s.size}: {s.quantity}
+                                  {sizeSold > 0 && <span className="text-red-500 ml-1">(-{sizeSold})</span>}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 hidden lg:table-cell">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Initial:</span>
+                              <span className="font-semibold text-gray-700">{initialQty}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Current:</span>
+                              <span className={`font-bold ${lowStock ? 'text-red-600' : 'text-green-600'}`}>
+                                {totalQty}
+                              </span>
+                            </div>
+                            {soldQty > 0 && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500">Sold:</span>
+                                <span className="font-medium text-orange-600">{soldQty}</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden xl:table-cell">
+                          Rs. {item.costPerUnit.toLocaleString()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm">
+                          {(() => {
+                            const sellingPrice = parseFloat(item.sellingPrice) || 0;
+                            const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
+                            const isSale = sellingPrice > onlinePrice && onlinePrice > 0;
+
+                            // Check for sale badge
+                            const hasSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
+                              item.isSale || item.sale || isSale;
+
+                            if (hasSaleBadge && sellingPrice > onlinePrice && sellingPrice > 0 && onlinePrice > 0) {
+                              return (
+                                <div className="space-y-0.5">
+                                  <div className="text-xs text-gray-500 line-through">
+                                    Was Rs. {sellingPrice.toLocaleString()}
+                                  </div>
+                                  <div className="font-bold text-red-600 text-base">
+                                    Now Rs. {onlinePrice.toLocaleString()}
+                                  </div>
+                                </div>
+                              );
+                            } else {
+                              return (
+                                <div className="text-gray-900 font-medium">
+                                  Rs. {onlinePrice.toLocaleString()}
+                                  {item.onlinePrice && item.onlinePrice !== item.sellingPrice && !hasSaleBadge && (
+                                    <div className="text-xs text-blue-600 mt-1 font-normal">
+                                      Online: Rs. {item.onlinePrice.toLocaleString()}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                          })()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 hidden md:table-cell">
+                          <div className="flex flex-col gap-1">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${item.onlineStatus
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-gray-100 text-gray-500'
+                              }`}>
+                              {item.onlineStatus ? '🌐 Online' : '🔒 Hidden'}
+                            </span>
+                            {item.onlineStatus && item.sku && (
+                              <span className="text-xs text-gray-500">SKU: {item.sku}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm font-medium text-gray-900 hidden xl:table-cell">
+                          Rs. {(totalQty * item.costPerUnit).toLocaleString()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
+                          {(() => {
+                            const totalEarned = calculateTotalEarned(item.id || item._id);
+                            const onlineSalesData = onlineSales[item.id || item._id];
+                            return (
+                              <div className="flex flex-col gap-1">
+                                <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                  Rs. {totalEarned.toLocaleString()}
+                                </span>
+                                {totalEarned > 0 && soldQty > 0 && (
+                                  <span className="text-xs text-gray-500">
+                                    ({soldQty} sold)
+                                  </span>
+                                )}
+                                {(() => {
+                                  // Find online sales for this product
+                                  const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                                  const onlineData = onlineSales[productKey];
+                                  if (onlineData && onlineData.totalRevenue > 0) {
+                                    return (
+                                      <div className="mt-1 pt-1 border-t border-gray-200">
+                                        <span className="text-xs text-blue-600 font-semibold">
+                                          Online: Rs. {onlineData.totalRevenue.toLocaleString()}
+                                        </span>
+                                        <span className="text-xs text-gray-500 ml-1">
+                                          ({onlineData.totalQuantity} units)
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleEdit(item)}
+                              className="text-primary-600 hover:text-primary-800"
+                              disabled={deleting === (item.id || item._id)}
+                              title="Edit"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(item.id || item._id)}
+                              className="text-red-600 hover:text-red-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                              disabled={deleting === (item.id || item._id)}
+                              title="Delete"
+                            >
+                              {deleting === (item.id || item._id) ? (
+                                <>
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                  <span className="text-xs">Deleting...</span>
+                                </>
+                              ) : (
+                                <Trash2 size={18} />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
         {/* Pagination */}
         {!loading && filteredInventory.length > itemsPerPage && (
-          <div className="px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-gray-700">
+          <div className="px-4 sm:px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-xs sm:text-sm text-gray-700 text-center sm:text-left">
               Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
               <span className="font-medium">{Math.min(endIndex, filteredInventory.length)}</span> of{' '}
               <span className="font-medium">{filteredInventory.length}</span> items
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 flex-wrap justify-center">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                 disabled={currentPage === 1}
-                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
-                <ChevronLeft size={16} />
-                Previous
+                <ChevronLeft size={14} className="sm:w-4 sm:h-4" />
+                <span className="hidden sm:inline">Previous</span>
+                <span className="sm:hidden">Prev</span>
               </button>
               <div className="flex items-center gap-1">
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -742,7 +1058,7 @@ const Inventory = () => {
                     <button
                       key={pageNum}
                       onClick={() => setCurrentPage(pageNum)}
-                      className={`px-3 py-2 text-sm font-medium rounded-lg ${currentPage === pageNum
+                      className={`px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium rounded-lg ${currentPage === pageNum
                         ? 'bg-primary-600 text-white'
                         : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
                         }`}
@@ -755,10 +1071,11 @@ const Inventory = () => {
               <button
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                 disabled={currentPage === totalPages}
-                className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                className="px-2 sm:px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
-                Next
-                <ChevronRight size={16} />
+                <span className="hidden sm:inline">Next</span>
+                <span className="sm:hidden">Next</span>
+                <ChevronRight size={14} className="sm:w-4 sm:h-4" />
               </button>
             </div>
           </div>

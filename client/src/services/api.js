@@ -18,6 +18,34 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase-config';
 
+// Helper function to safely convert Firestore Timestamp to Date
+const convertTimestamp = (timestamp) => {
+  if (!timestamp) return null;
+
+  // If it's already a Date object
+  if (timestamp instanceof Date) {
+    return timestamp;
+  }
+
+  // If it has toDate method (Firestore Timestamp)
+  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+    return timestamp.toDate();
+  }
+
+  // If it has seconds property (Firestore Timestamp format)
+  if (timestamp.seconds !== undefined) {
+    return new Date(timestamp.seconds * 1000);
+  }
+
+  // If it's a number (timestamp in milliseconds)
+  if (typeof timestamp === 'number') {
+    return new Date(timestamp);
+  }
+
+  // Return as-is if we can't convert it
+  return timestamp;
+};
+
 // Helper function to convert Firestore document to plain object
 const docToObject = (doc) => {
   const data = doc.data();
@@ -26,10 +54,11 @@ const docToObject = (doc) => {
     _id: doc.id, // Support both id and _id for compatibility
     ...data,
     // Convert Firestore Timestamps to Date objects
-    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
-    updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
-    saleDate: data.saleDate?.toDate ? data.saleDate.toDate() : data.saleDate,
-    expectedCompletionDate: data.expectedCompletionDate?.toDate ? data.expectedCompletionDate.toDate() : data.expectedCompletionDate,
+    createdAt: convertTimestamp(data.createdAt),
+    updatedAt: convertTimestamp(data.updatedAt),
+    saleDate: convertTimestamp(data.saleDate),
+    expectedCompletionDate: convertTimestamp(data.expectedCompletionDate),
+    orderDate: convertTimestamp(data.orderDate),
   };
 };
 
@@ -362,13 +391,15 @@ export const deleteCustomer = async (id) => {
 // ==================== SALES ====================
 export const getSales = async (filters = {}) => {
   try {
-    let q = collection(db, 'sales');
+    let q = query(collection(db, 'sales'));
 
-    if (filters.status) {
-      q = query(q, where('paymentStatus', '==', filters.status));
+    // Try to use server-side filtering if status is provided
+    if (filters.status && filters.status.trim() !== '') {
+      q = query(q, where('paymentStatus', '==', filters.status), orderBy('saleDate', 'desc'));
+    } else {
+      q = query(q, orderBy('saleDate', 'desc'));
     }
 
-    q = query(q, orderBy('saleDate', 'desc'));
     const snapshot = await getDocs(q);
     let sales = snapshot.docs.map(docToObject);
 
@@ -383,7 +414,34 @@ export const getSales = async (filters = {}) => {
 
     return { data: sales };
   } catch (error) {
+    // If the error is about missing index, try fetching all and filtering client-side
+    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
+      console.warn('Firestore index missing. Fetching all sales and filtering client-side.');
+      try {
+        // Fetch all sales without the status filter
+        let q = query(collection(db, 'sales'), orderBy('saleDate', 'desc'));
+        const snapshot = await getDocs(q);
+        let sales = snapshot.docs.map(docToObject);
 
+        // Client-side filtering
+        if (filters.status && filters.status.trim() !== '') {
+          sales = sales.filter(sale => sale.paymentStatus === filters.status);
+        }
+
+        // Populate customer references
+        const customersRes = await getCustomers();
+        const customers = customersRes.data;
+
+        sales = sales.map(sale => ({
+          ...sale,
+          customer: customers.find(c => (c.id || c._id) === sale.customerId)
+        }));
+
+        return { data: sales };
+      } catch (fallbackError) {
+        throw fallbackError;
+      }
+    }
     throw error;
   }
 };
@@ -442,6 +500,95 @@ export const createSale = async (saleData) => {
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
 
+    throw error;
+  }
+};
+
+export const updateSale = async (saleId, saleData) => {
+  try {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleDoc = await getDoc(saleRef);
+
+    if (!saleDoc.exists()) {
+      throw new Error('Sale not found');
+    }
+
+    const existingSale = saleDoc.data();
+
+    // Calculate new totals
+    const totalAmount = saleData.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const paidAmount = saleData.paidAmount || existingSale.paidAmount || 0;
+    const remainingAmount = totalAmount - paidAmount;
+    const paymentStatus = remainingAmount === 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+
+    // Get old items to restore inventory
+    const oldItems = existingSale.items || [];
+
+    // Restore inventory for old items
+    for (const item of oldItems) {
+      if (item.inventoryId) {
+        const inventoryRef = doc(db, 'inventory', item.inventoryId);
+        const inventoryDoc = await getDoc(inventoryRef);
+
+        if (inventoryDoc.exists()) {
+          const inventoryData = inventoryDoc.data();
+          const sizes = inventoryData.sizes || [];
+          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+          if (sizeIndex >= 0) {
+            const newSizes = [...sizes];
+            newSizes[sizeIndex] = {
+              ...newSizes[sizeIndex],
+              quantity: (newSizes[sizeIndex].quantity || 0) + (item.quantity || 0)
+            };
+            await updateDoc(inventoryRef, { sizes: newSizes });
+          }
+        }
+      }
+    }
+
+    // Update sale
+    const data = {
+      ...prepareData(saleData),
+      customerId: saleData.customer,
+      totalAmount,
+      paidAmount,
+      remainingAmount,
+      paymentStatus,
+      items: saleData.items.map(item => ({
+        ...item,
+        inventoryId: item.inventory
+      })),
+      updatedAt: Timestamp.now()
+    };
+
+    await updateDoc(saleRef, data);
+
+    // Update inventory for new items
+    for (const item of saleData.items) {
+      if (item.inventory) {
+        const inventoryRef = doc(db, 'inventory', item.inventory);
+        const inventoryDoc = await getDoc(inventoryRef);
+
+        if (inventoryDoc.exists()) {
+          const inventoryData = inventoryDoc.data();
+          const sizes = inventoryData.sizes || [];
+          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+
+          if (sizeIndex >= 0) {
+            const newSizes = [...sizes];
+            newSizes[sizeIndex] = {
+              ...newSizes[sizeIndex],
+              quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
+            };
+            await updateDoc(inventoryRef, { sizes: newSizes });
+          }
+        }
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
     throw error;
   }
 };
@@ -1265,5 +1412,189 @@ export const deleteReview = async (id) => {
   } catch (error) {
 
     throw error;
+  }
+};
+
+// ==================== EXPENSES ====================
+export const getExpenses = async (filters = {}) => {
+  try {
+    let q = collection(db, 'expenses');
+
+    if (filters.startDate && filters.endDate) {
+      const startTimestamp = Timestamp.fromDate(new Date(filters.startDate));
+      const endTimestamp = Timestamp.fromDate(new Date(filters.endDate));
+      endTimestamp.seconds += 86400; // Add 1 day to include the end date
+      q = query(q, where('expenseDate', '>=', startTimestamp), where('expenseDate', '<=', endTimestamp), orderBy('expenseDate', 'desc'));
+    } else if (filters.month && filters.year && !isNaN(filters.month) && !isNaN(filters.year)) {
+      // Filter by month and year
+      const startDate = new Date(filters.year, filters.month - 1, 1, 0, 0, 0, 0);
+      const endDate = new Date(filters.year, filters.month, 0, 23, 59, 59, 999);
+      const startTimestamp = Timestamp.fromDate(startDate);
+      const endTimestamp = Timestamp.fromDate(endDate);
+      q = query(q, where('expenseDate', '>=', startTimestamp), where('expenseDate', '<=', endTimestamp), orderBy('expenseDate', 'desc'));
+    } else {
+      // No filters, just order by date
+      q = query(q, orderBy('expenseDate', 'desc'));
+    }
+
+    const snapshot = await getDocs(q);
+    let expenses = snapshot.docs.map(docToObject);
+
+    return { data: expenses };
+  } catch (error) {
+    // If the error is about missing index, try fetching all and filtering client-side
+    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
+      console.warn('Firestore index missing for expenses. Using client-side filtering.');
+      try {
+        // Fetch all expenses without filter
+        let q = query(collection(db, 'expenses'), orderBy('expenseDate', 'desc'));
+        const snapshot = await getDocs(q);
+        let expenses = snapshot.docs.map(docToObject);
+
+        // Client-side filtering
+        if (filters.month && filters.year) {
+          expenses = expenses.filter(expense => {
+            const expenseDate = convertTimestamp(expense.expenseDate);
+            if (!expenseDate) return false;
+            return expenseDate.getFullYear() === filters.year && expenseDate.getMonth() === filters.month - 1;
+          });
+        } else if (filters.startDate && filters.endDate) {
+          const startDate = new Date(filters.startDate);
+          const endDate = new Date(filters.endDate);
+          endDate.setHours(23, 59, 59, 999);
+          expenses = expenses.filter(expense => {
+            const expenseDate = convertTimestamp(expense.expenseDate);
+            if (!expenseDate) return false;
+            return expenseDate >= startDate && expenseDate <= endDate;
+          });
+        }
+
+        return { data: expenses };
+      } catch (fallbackError) {
+        throw fallbackError;
+      }
+    }
+    throw error;
+  }
+};
+
+export const createExpense = async (expenseData) => {
+  try {
+    const data = {
+      ...prepareData(expenseData),
+      expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, 'expenses'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const updateExpense = async (id, expenseData) => {
+  try {
+    const data = {
+      ...prepareData(expenseData),
+      expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'expenses', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const deleteExpense = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'expenses', id));
+    return { success: true };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const getMonthlyProfitLoss = async (year, month) => {
+  try {
+    // Get sales for the month
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59);
+    const startTimestamp = Timestamp.fromDate(startDate);
+    const endTimestamp = Timestamp.fromDate(endDate);
+
+    const salesQuery = query(
+      collection(db, 'sales'),
+      where('saleDate', '>=', startTimestamp),
+      where('saleDate', '<=', endTimestamp),
+      orderBy('saleDate', 'desc')
+    );
+    const salesSnapshot = await getDocs(salesQuery);
+    const sales = salesSnapshot.docs.map(docToObject);
+    const totalSales = sales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0);
+
+    // Get expenses for the month
+    const expensesQuery = query(
+      collection(db, 'expenses'),
+      where('expenseDate', '>=', startTimestamp),
+      where('expenseDate', '<=', endTimestamp),
+      orderBy('expenseDate', 'desc')
+    );
+    const expensesSnapshot = await getDocs(expensesQuery);
+    const expenses = expensesSnapshot.docs.map(docToObject);
+    const totalExpenses = expenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+
+    const netProfit = totalSales - totalExpenses;
+
+    return {
+      data: {
+        month,
+        year,
+        totalSales: parseFloat(totalSales) || 0,
+        totalExpenses: parseFloat(totalExpenses) || 0,
+        netProfit: parseFloat(netProfit) || 0,
+        salesCount: sales.length,
+        expensesCount: expenses.length
+      }
+    };
+  } catch (error) {
+    // Fallback to client-side calculation if index doesn't exist
+    try {
+      const [salesRes, expensesRes] = await Promise.all([
+        getSales(),
+        getExpenses()
+      ]);
+
+      const sales = salesRes.data.filter(sale => {
+        const saleDate = convertTimestamp(sale.saleDate);
+        if (!saleDate) return false;
+        return saleDate.getFullYear() === year && saleDate.getMonth() === month - 1;
+      });
+
+      const expenses = expensesRes.data.filter(expense => {
+        const expenseDate = convertTimestamp(expense.expenseDate);
+        if (!expenseDate) return false;
+        return expenseDate.getFullYear() === year && expenseDate.getMonth() === month - 1;
+      });
+
+      const totalSales = sales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0);
+      const totalExpenses = expenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+      const netProfit = totalSales - totalExpenses;
+
+      return {
+        data: {
+          month,
+          year,
+          totalSales: parseFloat(totalSales) || 0,
+          totalExpenses: parseFloat(totalExpenses) || 0,
+          netProfit: parseFloat(netProfit) || 0,
+          salesCount: sales.length,
+          expensesCount: expenses.length
+        }
+      };
+    } catch (fallbackError) {
+      throw fallbackError;
+    }
   }
 };

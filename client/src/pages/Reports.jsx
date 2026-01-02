@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, TrendingUp, DollarSign, Package, Users } from 'lucide-react';
+import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getSalesStats, getInventoryStats, getDashboardStats } from '../services/api';
+import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss } from '../services/api';
+import { showInfo } from '../utils/toast';
 
 const Reports = () => {
   const [stats, setStats] = useState(null);
   const [salesStats, setSalesStats] = useState(null);
   const [inventoryStats, setInventoryStats] = useState(null);
+  const [monthlyData, setMonthlyData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -16,6 +20,10 @@ const Reports = () => {
   useEffect(() => {
     fetchStats();
   }, [dateRange]);
+
+  useEffect(() => {
+    fetchMonthlyData();
+  }, [selectedMonth, selectedYear]);
 
   const fetchStats = async () => {
     try {
@@ -31,6 +39,15 @@ const Reports = () => {
     } catch (error) {
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMonthlyData = async () => {
+    try {
+      const response = await getMonthlyProfitLoss(selectedYear, selectedMonth);
+      setMonthlyData(response.data);
+    } catch (error) {
+      console.error('Error fetching monthly data:', error);
     }
   };
 
@@ -112,6 +129,89 @@ const Reports = () => {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Monthly Profit/Loss Section */}
+      <div className="card bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div>
+            <h3 className="text-2xl font-bold mb-2">Monthly Profit & Loss</h3>
+            <p className="text-indigo-100">Track your monthly earnings and expenses</p>
+          </div>
+          <div className="flex gap-3">
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+              className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-white/50"
+            >
+              <option value="1">January</option>
+              <option value="2">February</option>
+              <option value="3">March</option>
+              <option value="4">April</option>
+              <option value="5">May</option>
+              <option value="6">June</option>
+              <option value="7">July</option>
+              <option value="8">August</option>
+              <option value="9">September</option>
+              <option value="10">October</option>
+              <option value="11">November</option>
+              <option value="12">December</option>
+            </select>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-white/50"
+            >
+              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {monthlyData ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white/10 rounded-lg p-6 backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-indigo-100 text-sm">Total Sales</p>
+                <ArrowUp className="w-5 h-5 text-green-300" />
+              </div>
+              <p className="text-3xl font-bold">Rs. {(parseFloat(monthlyData.totalSales) || 0).toLocaleString()}</p>
+              <p className="text-indigo-200 text-xs mt-1">{monthlyData.salesCount} transactions</p>
+            </div>
+
+            <div className="bg-white/10 rounded-lg p-6 backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-indigo-100 text-sm">Total Expenses</p>
+                <ArrowDown className="w-5 h-5 text-red-300" />
+              </div>
+              <p className="text-3xl font-bold">Rs. {(parseFloat(monthlyData.totalExpenses) || 0).toLocaleString()}</p>
+              <p className="text-indigo-200 text-xs mt-1">{monthlyData.expensesCount} expenses</p>
+            </div>
+
+            <div className={`bg-white/10 rounded-lg p-6 backdrop-blur-sm ${monthlyData.netProfit >= 0 ? 'border-2 border-green-300' : 'border-2 border-red-300'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-indigo-100 text-sm">Net Profit/Loss</p>
+                {monthlyData.netProfit >= 0 ? (
+                  <TrendingUp className="w-5 h-5 text-green-300" />
+                ) : (
+                  <TrendingDown className="w-5 h-5 text-red-300" />
+                )}
+              </div>
+              <p className={`text-3xl font-bold ${monthlyData.netProfit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                {monthlyData.netProfit >= 0 ? '+' : ''}Rs. {Math.abs(parseFloat(monthlyData.netProfit) || 0).toLocaleString()}
+              </p>
+              <p className="text-indigo-200 text-xs mt-1">
+                {monthlyData.netProfit >= 0 ? 'Profit' : 'Loss'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
+            <p className="text-indigo-100 mt-2">Loading monthly data...</p>
+          </div>
+        )}
       </div>
 
       {/* Summary Cards */}
