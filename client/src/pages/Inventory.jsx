@@ -237,9 +237,28 @@ const Inventory = () => {
       }
 
       if (editingItem) {
+        // Calculate new total quantity from sizes
+        const newTotalQty = useSizes
+          ? dataToSubmit.sizes.reduce((sum, s) => sum + (s.quantity || 0), 0)
+          : parseInt(dataToSubmit.quantity || 0);
+
+        // Calculate sold quantity (this won't change on edit)
+        const soldQty = calculateSoldQuantity(editingItem.id);
+
+        // Initial quantity should be: Current + Sold (total ever added)
+        // This ensures Initial - Sold = Current always makes sense
+        const newInitialQty = newTotalQty + soldQty;
+        dataToSubmit.initialQuantity = newInitialQty;
+
         await updateInventoryItem(editingItem.id, dataToSubmit);
         showSuccess('Inventory item updated successfully!');
       } else {
+        // For new items, set initialQuantity to the total quantity being added
+        const newTotalQty = useSizes
+          ? dataToSubmit.sizes.reduce((sum, s) => sum + (s.quantity || 0), 0)
+          : parseInt(dataToSubmit.quantity || 0);
+        dataToSubmit.initialQuantity = newTotalQty;
+
         await createInventoryItem(dataToSubmit);
         showSuccess('Inventory item added successfully!');
       }
@@ -556,7 +575,9 @@ const Inventory = () => {
                 paginatedInventory.map((item) => {
                   const totalQty = getTotalQuantity(item.sizes);
                   const soldQty = calculateSoldQuantity(item.id || item._id);
-                  const initialQty = item.initialQuantity || (totalQty + soldQty);
+                  // Initial = Current + Sold (total quantity ever added to inventory)
+                  // This ensures the math always works: Initial - Sold = Current
+                  const initialQty = totalQty + soldQty;
                   const lowStock = isLowStock(item);
                   const sellingPrice = parseFloat(item.sellingPrice) || 0;
                   const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
@@ -695,8 +716,13 @@ const Inventory = () => {
                             <div className="text-sm text-gray-700 mb-2 font-semibold">Size Breakdown</div>
                             <div className="flex flex-wrap gap-2">
                               {item.sizes.map((s, idx) => {
-                                const sizeInitial = s.initialQuantity || s.quantity;
-                                const sizeSold = sizeInitial - s.quantity;
+                                // For sizes, if current > stored initial, it means more items were added
+                                const storedInitial = s.initialQuantity;
+                                const sizeCurrent = s.quantity;
+                                const sizeInitial = storedInitial && sizeCurrent <= storedInitial
+                                  ? storedInitial
+                                  : sizeCurrent;
+                                const sizeSold = sizeInitial > sizeCurrent ? sizeInitial - sizeCurrent : 0;
                                 return (
                                   <div key={idx} className="flex-1 min-w-[80px] bg-gray-50 p-2 rounded-lg border border-gray-200">
                                     <div className="text-xs text-gray-500 mb-1">Size {s.size}</div>
@@ -888,7 +914,9 @@ const Inventory = () => {
                   {paginatedInventory.map((item) => {
                     const totalQty = getTotalQuantity(item.sizes);
                     const soldQty = calculateSoldQuantity(item.id || item._id);
-                    const initialQty = item.initialQuantity || (totalQty + soldQty);
+                    // Initial = Current + Sold (total quantity ever added to inventory)
+                    // This ensures the math always works: Initial - Sold = Current
+                    const initialQty = totalQty + soldQty;
                     const lowStock = isLowStock(item);
 
                     return (
@@ -965,11 +993,19 @@ const Inventory = () => {
                         <td className="px-4 sm:px-6 py-5">
                           <div className="flex flex-wrap gap-1">
                             {item.sizes.map((s, idx) => {
-                              const sizeInitial = s.initialQuantity || s.quantity;
-                              const sizeSold = sizeInitial - s.quantity;
+                              // For sizes, if current > stored initial, it means more items were added
+                              // Calculate size initial as: current + sold (if we can estimate sold)
+                              // For now, use stored initialQuantity if available, otherwise use current
+                              const storedInitial = s.initialQuantity;
+                              const sizeCurrent = s.quantity;
+                              // If current > stored initial, more items were added, so recalculate
+                              const sizeInitial = storedInitial && sizeCurrent <= storedInitial
+                                ? storedInitial
+                                : sizeCurrent; // If current > initial, assume no sold for this size yet
+                              const sizeSold = sizeInitial > sizeCurrent ? sizeInitial - sizeCurrent : 0;
                               return (
-                                <span key={idx} className="px-2 py-1 bg-gray-100 text-xs rounded" title={`Initial: ${sizeInitial}, Current: ${s.quantity}, Sold: ${sizeSold}`}>
-                                  {s.size}: {s.quantity}
+                                <span key={idx} className="px-2 py-1 bg-gray-100 text-xs rounded" title={`Initial: ${sizeInitial}, Current: ${sizeCurrent}, Sold: ${sizeSold}`}>
+                                  {s.size}: {sizeCurrent}
                                   {sizeSold > 0 && <span className="text-red-500 ml-1">(-{sizeSold})</span>}
                                 </span>
                               );

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Package,
-  DollarSign,
-  TrendingUp,
+import { 
+  Package, 
+  DollarSign, 
+  TrendingUp, 
   AlertTriangle,
   Users,
   ShoppingCart,
@@ -122,8 +122,8 @@ const Dashboard = () => {
         icon: ShoppingCart,
         color: 'bg-cyan-500',
         change: `${onlineSalesStats?.pendingOrders || 0} pending`,
-        positive: true
-      }
+      positive: true
+    }
     ] : [])
   ];
 
@@ -199,19 +199,19 @@ const Dashboard = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: '#fff', 
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px',
                   boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
                 }}
               />
               <Legend />
-              <Line
-                type="monotone"
-                dataKey="sales"
-                stroke="#0ea5e9"
+              <Line 
+                type="monotone" 
+                dataKey="sales" 
+                stroke="#0ea5e9" 
                 strokeWidth={2}
                 dot={{ fill: '#0ea5e9', r: 4 }}
                 activeDot={{ r: 6 }}
@@ -240,10 +240,10 @@ const Dashboard = () => {
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip
+              <Tooltip 
                 formatter={(value) => `Rs. ${value.toLocaleString()}`}
-                contentStyle={{
-                  backgroundColor: '#fff',
+                contentStyle={{ 
+                  backgroundColor: '#fff', 
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}
@@ -263,9 +263,9 @@ const Dashboard = () => {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" stroke="#6b7280" style={{ fontSize: '12px' }} />
               <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: '#fff', 
                   border: '1px solid #e5e7eb',
                   borderRadius: '8px'
                 }}

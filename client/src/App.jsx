@@ -70,27 +70,27 @@ function App() {
             path="/*"
             element={
               <ProtectedRoute>
-                <Layout>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/inventory" element={<Inventory />} />
-                    <Route path="/brands-categories" element={<BrandsCategories />} />
-                    <Route path="/customers" element={<Customers />} />
-                    <Route path="/sales" element={<Sales />} />
-                    <Route path="/production" element={<Production />} />
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/inventory" element={<Inventory />} />
+          <Route path="/brands-categories" element={<BrandsCategories />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/sales" element={<Sales />} />
+          <Route path="/production" element={<Production />} />
                     <Route path="/expenses" element={<Expenses />} />
-                    <Route path="/reports" element={<Reports />} />
+          <Route path="/reports" element={<Reports />} />
                     <Route path="/slider" element={<Slider />} />
                     <Route path="/orders" element={<Orders />} />
                     <Route path="/reviews" element={<Reviews />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </Layout>
+        </Routes>
+      </Layout>
               </ProtectedRoute>
             }
           />
         </Routes>
-      </Router>
+    </Router>
     </AuthProvider>
   );
 }

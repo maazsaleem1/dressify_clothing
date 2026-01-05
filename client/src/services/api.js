@@ -523,23 +523,49 @@ export const updateSale = async (saleId, saleData) => {
 
     // Get old items to restore inventory
     const oldItems = existingSale.items || [];
+    const newItems = saleData.items || [];
 
-    // Restore inventory for old items
+    // Create maps to track inventory changes by inventoryId + size
+    const inventoryChanges = new Map();
+
+    // Process old items: restore inventory (add back)
     for (const item of oldItems) {
       if (item.inventoryId) {
-        const inventoryRef = doc(db, 'inventory', item.inventoryId);
+        const key = `${item.inventoryId}_${item.size}`;
+        const currentChange = inventoryChanges.get(key) || { inventoryId: item.inventoryId, size: item.size, quantity: 0 };
+        currentChange.quantity += (item.quantity || 0); // Add back old quantity
+        inventoryChanges.set(key, currentChange);
+      }
+    }
+
+    // Process new items: deduct inventory (subtract)
+    for (const item of newItems) {
+      const inventoryId = item.inventory || item.inventoryId;
+      if (inventoryId) {
+        const key = `${inventoryId}_${item.size}`;
+        const currentChange = inventoryChanges.get(key) || { inventoryId, size: item.size, quantity: 0 };
+        currentChange.quantity -= (item.quantity || 0); // Subtract new quantity
+        inventoryChanges.set(key, currentChange);
+      }
+    }
+
+    // Apply inventory changes (net difference)
+    for (const change of inventoryChanges.values()) {
+      if (change.quantity !== 0) { // Only update if there's a change
+        const inventoryRef = doc(db, 'inventory', change.inventoryId);
         const inventoryDoc = await getDoc(inventoryRef);
 
         if (inventoryDoc.exists()) {
           const inventoryData = inventoryDoc.data();
           const sizes = inventoryData.sizes || [];
-          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+          const sizeIndex = sizes.findIndex(s => s.size === change.size);
 
           if (sizeIndex >= 0) {
             const newSizes = [...sizes];
+            const currentQty = newSizes[sizeIndex].quantity || 0;
             newSizes[sizeIndex] = {
               ...newSizes[sizeIndex],
-              quantity: (newSizes[sizeIndex].quantity || 0) + (item.quantity || 0)
+              quantity: Math.max(0, currentQty + change.quantity) // Add the net change
             };
             await updateDoc(inventoryRef, { sizes: newSizes });
           }
@@ -547,45 +573,40 @@ export const updateSale = async (saleId, saleData) => {
       }
     }
 
-    // Update sale
+    // Update sale - filter out undefined values
+    const preparedData = prepareData(saleData);
     const data = {
-      ...prepareData(saleData),
-      customerId: saleData.customer,
+      ...Object.fromEntries(
+        Object.entries(preparedData).filter(([_, value]) => value !== undefined)
+      ),
+      customerId: saleData.customer || existingSale.customerId || null,
       totalAmount,
       paidAmount,
       remainingAmount,
       paymentStatus,
       items: saleData.items.map(item => ({
-        ...item,
-        inventoryId: item.inventory
+        productName: item.productName || '',
+        size: item.size || '',
+        quantity: item.quantity || 0,
+        unitPrice: item.unitPrice || 0,
+        totalPrice: item.totalPrice || 0,
+        inventoryId: item.inventory || item.inventoryId || null,
+        inventorySellingPrice: item.inventorySellingPrice || null,
+        inventoryCostPrice: item.inventoryCostPrice || null,
+        profitPerUnit: item.profitPerUnit || null,
+        totalProfit: item.totalProfit || null
       })),
+      saleType: saleData.saleType || existingSale.saleType || 'Cash',
+      notes: saleData.notes !== undefined ? saleData.notes : (existingSale.notes || ''),
       updatedAt: Timestamp.now()
     };
 
-    await updateDoc(saleRef, data);
+    // Remove any remaining undefined values
+    const cleanData = Object.fromEntries(
+      Object.entries(data).filter(([_, value]) => value !== undefined)
+    );
 
-    // Update inventory for new items
-    for (const item of saleData.items) {
-      if (item.inventory) {
-        const inventoryRef = doc(db, 'inventory', item.inventory);
-        const inventoryDoc = await getDoc(inventoryRef);
-
-        if (inventoryDoc.exists()) {
-          const inventoryData = inventoryDoc.data();
-          const sizes = inventoryData.sizes || [];
-          const sizeIndex = sizes.findIndex(s => s.size === item.size);
-
-          if (sizeIndex >= 0) {
-            const newSizes = [...sizes];
-            newSizes[sizeIndex] = {
-              ...newSizes[sizeIndex],
-              quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
-            };
-            await updateDoc(inventoryRef, { sizes: newSizes });
-          }
-        }
-      }
-    }
+    await updateDoc(saleRef, cleanData);
 
     return { success: true };
   } catch (error) {

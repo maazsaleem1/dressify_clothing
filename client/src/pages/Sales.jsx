@@ -129,18 +129,29 @@ const Sales = () => {
         setEditingSale(sale);
         setSaleFormData({
             customer: sale.customerId || sale.customer?.id || sale.customer?._id || '',
-            items: sale.items?.map(item => ({
-                inventory: item.inventoryId || item.inventory,
-                productName: item.productName,
-                size: item.size,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
-                inventorySellingPrice: item.inventorySellingPrice,
-                inventoryCostPrice: item.inventoryCostPrice,
-                profitPerUnit: item.profitPerUnit,
-                totalProfit: item.totalProfit
-            })) || [],
+            items: sale.items?.map(item => {
+                // Find the inventory item to get the createdAt date
+                const inventoryItem = inventory.find(
+                    inv => (inv.id || inv._id) === (item.inventoryId || item.inventory)
+                );
+                const productAddedDate = inventoryItem?.createdAt
+                    ? formatDate(inventoryItem.createdAt)
+                    : 'N/A';
+
+                return {
+                    inventory: item.inventoryId || item.inventory,
+                    productName: item.productName,
+                    size: item.size,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
+                    inventorySellingPrice: item.inventorySellingPrice,
+                    inventoryCostPrice: item.inventoryCostPrice,
+                    profitPerUnit: item.profitPerUnit,
+                    totalProfit: item.totalProfit,
+                    productAddedDate
+                };
+            }) || [],
             paidAmount: sale.paidAmount || '',
             saleType: sale.saleType || 'Cash',
             notes: sale.notes || ''
@@ -217,7 +228,8 @@ const Sales = () => {
             inventorySellingPrice: selectedInventory.sellingPrice,
             inventoryCostPrice: costPrice,
             profitPerUnit,
-            totalProfit
+            totalProfit,
+            productAddedDate: selectedInventory.createdAt ? formatDate(selectedInventory.createdAt) : 'N/A'
         };
 
         setSaleFormData(prev => ({
@@ -589,64 +601,6 @@ const Sales = () => {
 
                 <script>
                     window.onload = function() {
-                        // Create action buttons container
-                        const buttonContainer = document.createElement('div');
-                        buttonContainer.style.cssText = 'position: fixed; top: 20px; right: 20px; display: flex; gap: 10px; z-index: 10000; flex-direction: column;';
-                        
-                        // Print button
-                        const printBtn = document.createElement('button');
-                        printBtn.innerHTML = '🖨️ Print Receipt';
-                        printBtn.style.cssText = 'padding: 15px 25px; background: #4F46E5; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-                        printBtn.onclick = function() {
-                            window.print();
-                        };
-                        buttonContainer.appendChild(printBtn);
-                        
-                        // WhatsApp Share button
-                        const whatsappBtn = document.createElement('button');
-                        whatsappBtn.innerHTML = '📱 Share on WhatsApp';
-                        whatsappBtn.style.cssText = 'padding: 15px 25px; background: #25D366; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-                        whatsappBtn.onclick = function() {
-                            let receiptText = '*DRESSIFY CLOTHING*\\n';
-                            receiptText += '*Invoice Receipt*\\n\\n';
-                            receiptText += '*Invoice #:* ${sale.invoiceNumber}\\n';
-                            receiptText += '*Date:* ${saleDate}\\n';
-                            receiptText += '*Status:* ${sale.paymentStatus || 'N/A'}\\n\\n';
-                            receiptText += '*Customer:* ${customerName}\\n';
-                            ${customerContact ? `receiptText += '*Contact:* ${customerContact}\\n';` : ''}
-                            receiptText += '\\n*Items:*\\n';
-                            
-                            ${sale.items?.map((item, index) => `
-                            receiptText += '${index + 1}. ${(item.productName || 'N/A').replace(/'/g, "\\'")} (${(item.size || 'N/A').replace(/'/g, "\\'")})\\n';
-                            receiptText += '   Qty: ${item.quantity || 0} × Rs. ${(parseFloat(item.unitPrice) || 0).toLocaleString()} = Rs. ${(parseFloat(item.totalPrice) || 0).toLocaleString()}\\n';
-                            `).join('') || ''}
-                            
-                            receiptText += '\\n*Total Amount:* Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}\\n';
-                            receiptText += '*Paid Amount:* Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}\\n';
-                            
-                            ${(parseFloat(sale.remainingAmount) || 0) > 0 ? `
-                            receiptText += '*Remaining:* Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}\\n';
-                            ` : ''}
-                            
-                            ${sale.notes ? `
-                            receiptText += '\\n*Notes:* ${sale.notes.replace(/'/g, "\\'")}\\n';
-                            ` : ''}
-                            
-                            receiptText += '\\nThank you for your business!';
-                            
-                            const encodedText = encodeURIComponent(receiptText);
-                            const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                            
-                            if (isMobileDevice) {
-                                window.open('https://wa.me/?text=' + encodedText, '_blank');
-                            } else {
-                                window.open('https://web.whatsapp.com/send?text=' + encodedText, '_blank');
-                            }
-                        };
-                        buttonContainer.appendChild(whatsappBtn);
-                        
-                        document.body.appendChild(buttonContainer);
-                        
                         // For mobile, don't auto-print
                         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
                         
@@ -739,10 +693,15 @@ const Sales = () => {
     };
 
     const filteredSales = sales.filter(sale => {
-        const matchesSearch = !searchTerm ||
-            sale.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            sale.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch;
+        if (!searchTerm) return true;
+
+        const searchLower = searchTerm.toLowerCase();
+        const matchesInvoice = sale.invoiceNumber?.toLowerCase().includes(searchLower);
+        const matchesCustomerName = sale.customer?.name?.toLowerCase().includes(searchLower);
+        const matchesCustomerContact = sale.customer?.contact?.toLowerCase().includes(searchLower);
+        const matchesShopName = sale.customer?.shopName?.toLowerCase().includes(searchLower);
+
+        return matchesInvoice || matchesCustomerName || matchesCustomerContact || matchesShopName;
     });
 
     const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
@@ -773,22 +732,24 @@ const Sales = () => {
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                         <input
                             type="text"
-                            placeholder="Search by invoice or customer..."
+                            placeholder="Search by invoice, customer name, contact, or shop..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="input-field pl-10 w-full"
+                            className="input-field pl-10 w-full text-gray-900 placeholder-gray-400"
                         />
                     </div>
-                    <select
-                        value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value)}
-                        className="input-field"
-                    >
-                        <option value="">All Status</option>
-                        <option value="Paid">Paid</option>
-                        <option value="Partial">Partial</option>
-                        <option value="Unpaid">Unpaid</option>
-                    </select>
+                    <div className="flex-1">
+                        <select
+                            value={filterStatus}
+                            onChange={(e) => setFilterStatus(e.target.value)}
+                            className="input-field w-full text-gray-900"
+                        >
+                            <option value="">All Status</option>
+                            <option value="Paid">Paid</option>
+                            <option value="Partial">Partial</option>
+                            <option value="Unpaid">Unpaid</option>
+                        </select>
+                    </div>
                 </div>
 
                 {loading ? (
@@ -988,11 +949,14 @@ const Sales = () => {
                                             className="input-field"
                                         >
                                             <option value="">Select Product</option>
-                                            {inventory.map(item => (
-                                                <option key={item.id || item._id} value={item.id || item._id}>
-                                                    {item.productName}
-                                                </option>
-                                            ))}
+                                            {inventory.map(item => {
+                                                const addedDate = item.createdAt ? formatDate(item.createdAt) : 'N/A';
+                                                return (
+                                                    <option key={item.id || item._id} value={item.id || item._id}>
+                                                        {item.productName} (Added: {addedDate})
+                                                    </option>
+                                                );
+                                            })}
                                         </select>
                                         <select
                                             value={currentItem.size}
@@ -1050,13 +1014,18 @@ const Sales = () => {
                                                         <th className="text-left py-2 px-3">Qty</th>
                                                         <th className="text-left py-2 px-3">Unit Price</th>
                                                         <th className="text-left py-2 px-3">Total</th>
+                                                        <th className="text-left py-2 px-3">Added Date</th>
                                                         <th className="text-left py-2 px-3">Actions</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     {saleFormData.items.map((item, index) => (
                                                         <tr key={index} className="border-b border-gray-100">
-                                                            <td className="py-2 px-3">{item.productName}</td>
+                                                            <td className="py-2 px-3">
+                                                                <div>
+                                                                    <div className="font-medium">{item.productName}</div>
+                                                                </div>
+                                                            </td>
                                                             <td className="py-2 px-3">{item.size}</td>
                                                             <td className="py-2 px-3">
                                                                 <input
@@ -1085,6 +1054,9 @@ const Sales = () => {
                                                                 />
                                                             </td>
                                                             <td className="py-2 px-3">Rs. {item.totalPrice?.toLocaleString() || 0}</td>
+                                                            <td className="py-2 px-3 text-xs text-gray-600">
+                                                                {item.productAddedDate || 'N/A'}
+                                                            </td>
                                                             <td className="py-2 px-3">
                                                                 <button
                                                                     type="button"
@@ -1242,42 +1214,61 @@ const Sales = () => {
                             </div>
                             <div className="border-t border-gray-200 pt-4">
                                 <h4 className="font-semibold mb-3">Items</h4>
-                                <table className="w-full text-sm">
-                                    <thead>
-                                        <tr className="border-b border-gray-200">
-                                            <th className="text-left py-2">Product</th>
-                                            <th className="text-left py-2">Size</th>
-                                            <th className="text-left py-2">Qty</th>
-                                            <th className="text-left py-2">Unit Price</th>
-                                            <th className="text-left py-2">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {selectedSale.items?.map((item, index) => (
-                                            <tr key={index} className="border-b border-gray-100">
-                                                <td className="py-2">{item.productName}</td>
-                                                <td className="py-2">{item.size}</td>
-                                                <td className="py-2">{item.quantity}</td>
-                                                <td className="py-2">Rs. {item.unitPrice?.toLocaleString()}</td>
-                                                <td className="py-2">Rs. {item.totalPrice?.toLocaleString()}</td>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="border-b border-gray-200">
+                                                <th className="text-left py-2">Product</th>
+                                                <th className="text-left py-2">Size</th>
+                                                <th className="text-left py-2">Qty</th>
+                                                <th className="text-left py-2">Unit Price</th>
+                                                <th className="text-left py-2">Total</th>
+                                                <th className="text-left py-2">Product Added</th>
+                                                <th className="text-left py-2">Sale Date</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                    <tfoot>
-                                        <tr>
-                                            <td colSpan="4" className="text-right py-2 font-semibold">Total Amount:</td>
-                                            <td className="py-2 font-semibold">Rs. {selectedSale.totalAmount?.toLocaleString()}</td>
-                                        </tr>
-                                        <tr>
-                                            <td colSpan="4" className="text-right py-2">Paid Amount:</td>
-                                            <td className="py-2">Rs. {selectedSale.paidAmount?.toLocaleString()}</td>
-                                        </tr>
-                                        <tr>
-                                            <td colSpan="4" className="text-right py-2 font-semibold">Remaining:</td>
-                                            <td className="py-2 font-semibold">Rs. {selectedSale.remainingAmount?.toLocaleString()}</td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            {selectedSale.items?.map((item, index) => {
+                                                // Find the inventory item for this sale item
+                                                const inventoryItem = inventory.find(
+                                                    inv => (inv.id || inv._id) === (item.inventoryId || item.inventory)
+                                                );
+                                                const productAddedDate = inventoryItem?.createdAt
+                                                    ? formatDate(inventoryItem.createdAt)
+                                                    : 'N/A';
+                                                const saleDate = selectedSale.saleDate
+                                                    ? formatDate(selectedSale.saleDate)
+                                                    : formatDate(selectedSale.createdAt);
+
+                                                return (
+                                                    <tr key={index} className="border-b border-gray-100">
+                                                        <td className="py-2">{item.productName}</td>
+                                                        <td className="py-2">{item.size}</td>
+                                                        <td className="py-2">{item.quantity}</td>
+                                                        <td className="py-2">Rs. {item.unitPrice?.toLocaleString()}</td>
+                                                        <td className="py-2">Rs. {item.totalPrice?.toLocaleString()}</td>
+                                                        <td className="py-2 text-xs text-gray-600">{productAddedDate}</td>
+                                                        <td className="py-2 text-xs text-gray-600">{saleDate}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr>
+                                                <td colSpan="4" className="text-right py-2 font-semibold">Total Amount:</td>
+                                                <td className="py-2 font-semibold" colSpan="3">Rs. {selectedSale.totalAmount?.toLocaleString()}</td>
+                                            </tr>
+                                            <tr>
+                                                <td colSpan="4" className="text-right py-2">Paid Amount:</td>
+                                                <td className="py-2" colSpan="3">Rs. {selectedSale.paidAmount?.toLocaleString()}</td>
+                                            </tr>
+                                            <tr>
+                                                <td colSpan="4" className="text-right py-2 font-semibold">Remaining:</td>
+                                                <td className="py-2 font-semibold" colSpan="3">Rs. {selectedSale.remainingAmount?.toLocaleString()}</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
