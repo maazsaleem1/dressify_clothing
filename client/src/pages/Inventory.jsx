@@ -236,6 +236,19 @@ const Inventory = () => {
         };
       }
 
+      // Remove undefined values before submitting - Firestore doesn't accept undefined
+      const cleanData = Object.fromEntries(
+        Object.entries(dataToSubmit).filter(([_, value]) => value !== undefined)
+      );
+      dataToSubmit = cleanData;
+
+      // Log to check for undefined values
+      console.log('🔍 [Inventory] Data before processing:', dataToSubmit);
+      const undefinedFields = Object.entries(dataToSubmit).filter(([key, value]) => value === undefined);
+      if (undefinedFields.length > 0) {
+        console.error('❌ [Inventory] Found undefined fields:', undefinedFields);
+      }
+
       if (editingItem) {
         // Calculate new total quantity from sizes
         const newTotalQty = useSizes
@@ -250,7 +263,19 @@ const Inventory = () => {
         const newInitialQty = newTotalQty + soldQty;
         dataToSubmit.initialQuantity = newInitialQty;
 
-        await updateInventoryItem(editingItem.id, dataToSubmit);
+        // Final cleanup before update
+        const finalData = Object.fromEntries(
+          Object.entries(dataToSubmit).filter(([_, value]) => value !== undefined)
+        );
+
+        // Log final data being sent
+        console.log('📤 [Inventory] Final data for UPDATE:', finalData);
+        const finalUndefined = Object.entries(finalData).filter(([key, value]) => value === undefined);
+        if (finalUndefined.length > 0) {
+          console.error('❌ [Inventory] Final data still has undefined:', finalUndefined);
+        }
+
+        await updateInventoryItem(editingItem.id, finalData);
         showSuccess('Inventory item updated successfully!');
       } else {
         // For new items, set initialQuantity to the total quantity being added
@@ -259,7 +284,19 @@ const Inventory = () => {
           : parseInt(dataToSubmit.quantity || 0);
         dataToSubmit.initialQuantity = newTotalQty;
 
-        await createInventoryItem(dataToSubmit);
+        // Final cleanup before create
+        const finalData = Object.fromEntries(
+          Object.entries(dataToSubmit).filter(([_, value]) => value !== undefined)
+        );
+
+        // Log final data being sent
+        console.log('📤 [Inventory] Final data for CREATE:', finalData);
+        const finalUndefined = Object.entries(finalData).filter(([key, value]) => value === undefined);
+        if (finalUndefined.length > 0) {
+          console.error('❌ [Inventory] Final data still has undefined:', finalUndefined);
+        }
+
+        await createInventoryItem(finalData);
         showSuccess('Inventory item added successfully!');
       }
       setShowModal(false);

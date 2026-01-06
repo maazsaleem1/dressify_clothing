@@ -81,6 +81,19 @@ const prepareData = (data) => {
   if (prepared.expectedCompletionDate && prepared.expectedCompletionDate instanceof Date) {
     prepared.expectedCompletionDate = Timestamp.fromDate(prepared.expectedCompletionDate);
   }
+
+  // Clean arrays - remove undefined, null, and empty string elements
+  Object.keys(prepared).forEach(key => {
+    if (Array.isArray(prepared[key])) {
+      prepared[key] = prepared[key].filter(item =>
+        item !== undefined &&
+        item !== null &&
+        item !== '' &&
+        !(typeof item === 'object' && Object.keys(item).length === 0)
+      );
+    }
+  });
+
   return prepared;
 };
 
@@ -250,34 +263,155 @@ export const getInventory = async (filters = {}) => {
 
 export const createInventoryItem = async (itemData) => {
   try {
+    console.log('🔍 [API] createInventoryItem - Received itemData:', itemData);
+
+    const prepared = prepareData(itemData);
+    console.log('🔍 [API] createInventoryItem - After prepareData:', prepared);
+
+    // Remove undefined values - Firestore doesn't accept undefined
+    const cleanData = Object.fromEntries(
+      Object.entries(prepared).filter(([_, value]) => value !== undefined)
+    );
+    console.log('🔍 [API] createInventoryItem - After removing undefined:', cleanData);
+
+    // Clean productImages array - remove empty/undefined/null elements
+    const cleanProductImages = Array.isArray(itemData.productImages)
+      ? itemData.productImages.filter(img => img && img !== '' && img !== undefined && img !== null)
+      : [];
+
     const data = {
-      ...prepareData(itemData),
+      ...cleanData,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
-      brandId: itemData.brand,
-      categoryId: itemData.category,
-      sizes: itemData.sizes || []
+      sizes: itemData.sizes || [],
+      productImages: cleanProductImages
     };
-    const docRef = await addDoc(collection(db, 'inventory'), data);
-    return { data: { id: docRef.id, ...data } };
-  } catch (error) {
 
+    // Only add brandId and categoryId if they are defined
+    if (itemData.brand !== undefined && itemData.brand !== null && itemData.brand !== '') {
+      data.brandId = itemData.brand;
+    }
+    if (itemData.category !== undefined && itemData.category !== null && itemData.category !== '') {
+      data.categoryId = itemData.category;
+    }
+
+    // Deep clean: Remove undefined from nested objects and arrays
+    const deepClean = (obj) => {
+      if (Array.isArray(obj)) {
+        return obj.map(item => deepClean(item)).filter(item => item !== undefined && item !== null && item !== '');
+      }
+      if (obj && typeof obj === 'object') {
+        const cleaned = {};
+        Object.keys(obj).forEach(key => {
+          const value = obj[key];
+          if (value !== undefined && value !== null) {
+            cleaned[key] = deepClean(value);
+          }
+        });
+        return cleaned;
+      }
+      return obj;
+    };
+
+    const cleanedData = deepClean(data);
+
+    // Final cleanup to remove any undefined values that might have been added
+    const finalData = Object.fromEntries(
+      Object.entries(cleanedData).filter(([_, value]) => value !== undefined)
+    );
+
+    // Check for undefined values before sending to Firestore
+    const undefinedFields = Object.entries(finalData).filter(([key, value]) => value === undefined);
+    if (undefinedFields.length > 0) {
+      console.error('❌ [API] createInventoryItem - Found undefined fields in finalData:', undefinedFields);
+      console.error('❌ [API] createInventoryItem - Full finalData:', finalData);
+    } else {
+      console.log('✅ [API] createInventoryItem - No undefined fields, sending to Firestore:', finalData);
+    }
+
+    const docRef = await addDoc(collection(db, 'inventory'), finalData);
+    return { data: { id: docRef.id, ...finalData } };
+  } catch (error) {
+    console.error('❌ [API] createInventoryItem - Error:', error);
+    console.error('❌ [API] createInventoryItem - Error message:', error.message);
     throw error;
   }
 };
 
 export const updateInventoryItem = async (id, itemData) => {
   try {
-    const data = {
-      ...prepareData(itemData),
-      updatedAt: Timestamp.now(),
-      brandId: itemData.brand || itemData.brandId,
-      categoryId: itemData.category || itemData.categoryId
-    };
-    await updateDoc(doc(db, 'inventory', id), data);
-    return { data: { id, ...data } };
-  } catch (error) {
+    console.log('🔍 [API] updateInventoryItem - Received itemData:', itemData);
+    console.log('🔍 [API] updateInventoryItem - Document ID:', id);
 
+    const prepared = prepareData(itemData);
+    console.log('🔍 [API] updateInventoryItem - After prepareData:', prepared);
+
+    // Remove undefined values - Firestore doesn't accept undefined
+    const cleanData = Object.fromEntries(
+      Object.entries(prepared).filter(([_, value]) => value !== undefined)
+    );
+    console.log('🔍 [API] updateInventoryItem - After removing undefined:', cleanData);
+
+    // Clean productImages array - remove empty/undefined/null elements
+    const cleanProductImages = Array.isArray(itemData.productImages)
+      ? itemData.productImages.filter(img => img && img !== '' && img !== undefined && img !== null)
+      : (itemData.productImages || []);
+
+    const data = {
+      ...cleanData,
+      updatedAt: Timestamp.now(),
+      productImages: cleanProductImages
+    };
+
+    // Only add brandId and categoryId if they are defined
+    const brandId = itemData.brand || itemData.brandId;
+    if (brandId !== undefined && brandId !== null && brandId !== '') {
+      data.brandId = brandId;
+    }
+    const categoryId = itemData.category || itemData.categoryId;
+    if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+      data.categoryId = categoryId;
+    }
+
+    // Deep clean: Remove undefined from nested objects and arrays
+    const deepClean = (obj) => {
+      if (Array.isArray(obj)) {
+        return obj.map(item => deepClean(item)).filter(item => item !== undefined && item !== null && item !== '');
+      }
+      if (obj && typeof obj === 'object') {
+        const cleaned = {};
+        Object.keys(obj).forEach(key => {
+          const value = obj[key];
+          if (value !== undefined && value !== null) {
+            cleaned[key] = deepClean(value);
+          }
+        });
+        return cleaned;
+      }
+      return obj;
+    };
+
+    const cleanedData = deepClean(data);
+
+    // Final cleanup to remove any undefined values that might have been added
+    const finalData = Object.fromEntries(
+      Object.entries(cleanedData).filter(([_, value]) => value !== undefined)
+    );
+
+    // Check for undefined values before sending to Firestore
+    const undefinedFields = Object.entries(finalData).filter(([key, value]) => value === undefined);
+    if (undefinedFields.length > 0) {
+      console.error('❌ [API] updateInventoryItem - Found undefined fields in finalData:', undefinedFields);
+      console.error('❌ [API] updateInventoryItem - Full finalData:', finalData);
+    } else {
+      console.log('✅ [API] updateInventoryItem - No undefined fields, sending to Firestore:', finalData);
+    }
+
+    await updateDoc(doc(db, 'inventory', id), finalData);
+    return { data: { id, ...finalData } };
+  } catch (error) {
+    console.error('❌ [API] updateInventoryItem - Error:', error);
+    console.error('❌ [API] updateInventoryItem - Error message:', error.message);
     throw error;
   }
 };
