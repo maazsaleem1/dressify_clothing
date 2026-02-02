@@ -84,6 +84,30 @@ const Orders = () => {
     }
   };
 
+  const formatDate = (dateValue) => {
+    if (dateValue == null) return 'N/A';
+    let date;
+    if (dateValue instanceof Date) {
+      date = dateValue;
+    } else if (typeof dateValue?.toDate === 'function') {
+      date = dateValue.toDate();
+    } else if (dateValue?.seconds != null) {
+      date = new Date(dateValue.seconds * 1000);
+    } else if (typeof dateValue === 'string' || typeof dateValue === 'number') {
+      date = new Date(dateValue);
+    } else {
+      return 'N/A';
+    }
+    if (isNaN(date.getTime())) return 'N/A';
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'Pending': return 'bg-yellow-100 text-yellow-700 border-yellow-300';
@@ -239,11 +263,7 @@ const Orders = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {order.orderDate ? (
-                          order.orderDate.toDate ?
-                            order.orderDate.toDate().toLocaleDateString() :
-                            new Date(order.orderDate.seconds * 1000).toLocaleDateString()
-                        ) : 'N/A'}
+                        {formatDate(order.orderDate)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                         {order.items?.length || 0} item(s)
@@ -461,13 +481,7 @@ const Orders = () => {
                 <div className="card">
                   <h4 className="font-semibold text-gray-800 mb-3">Order Information</h4>
                   <div className="space-y-2 text-sm">
-                    <p><span className="font-medium text-gray-600">Order Date:</span> {
-                      selectedOrder.orderDate ? (
-                        selectedOrder.orderDate.toDate ?
-                          selectedOrder.orderDate.toDate().toLocaleString() :
-                          new Date(selectedOrder.orderDate.seconds * 1000).toLocaleString()
-                      ) : 'N/A'
-                    }</p>
+                    <p><span className="font-medium text-gray-600">Order Date:</span> {formatDate(selectedOrder.orderDate)}</p>
                     <p><span className="font-medium text-gray-600">Payment Method:</span> {selectedOrder.paymentMethod || 'N/A'}</p>
                     <p><span className="font-medium text-gray-600">Payment Status:</span>
                       <span className={`ml-2 px-2 py-1 rounded text-xs ${selectedOrder.paymentStatus === 'Paid'
