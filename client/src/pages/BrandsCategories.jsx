@@ -15,6 +15,7 @@ const BrandsCategories = () => {
   const [editingItem, setEditingItem] = useState(null);
   const [modalType, setModalType] = useState('brand');
 
+  
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -49,6 +50,8 @@ const BrandsCategories = () => {
       setLoading(false);
     }
   };
+
+
 
   const fetchParentCategories = async (brandId) => {
     if (!brandId) {

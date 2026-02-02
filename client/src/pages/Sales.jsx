@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2 } from 'lucide-react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, deleteSale, createCustomer } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
@@ -15,12 +17,16 @@ const Sales = () => {
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [showCustomerModal, setShowCustomerModal] = useState(false);
+    const [paymentHistoryFilter, setPaymentHistoryFilter] = useState('All'); // For filtering payment history in sale details
     const [editingSale, setEditingSale] = useState(null);
     const [selectedSale, setSelectedSale] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
+
+
+
 
     const [saleFormData, setSaleFormData] = useState({
         customer: '',
@@ -686,6 +692,110 @@ const Sales = () => {
         }
     };
 
+    const generateInvoicePdf = (sale) => {
+        const saleDate = formatDate(sale.saleDate);
+        const customerName = sale.customer?.name || 'Walk-in Customer';
+        const customerContact = sale.customer?.contact || '';
+        const customerAddress = sale.customer?.address || '';
+
+        const doc = new jsPDF();
+        const pageWidth = doc.internal.pageSize.getWidth();
+
+        doc.setFontSize(22);
+        doc.text('DRESSIFY CLOTHING', pageWidth / 2, 20, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Your Fashion Destination - Invoice Receipt', pageWidth / 2, 28, { align: 'center' });
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(10);
+
+        doc.text(`Invoice #: ${sale.invoiceNumber}`, 14, 42);
+        doc.text(`Date: ${saleDate}`, 14, 48);
+        doc.text(`Status: ${sale.paymentStatus || 'N/A'}`, 14, 54);
+
+        doc.text(`Customer: ${customerName}`, 110, 42);
+        if (customerContact) doc.text(`Contact: ${customerContact}`, 110, 48);
+        if (customerAddress) doc.text(`Address: ${customerAddress}`, 110, 54);
+
+        const tableData = (sale.items || []).map((item, i) => [
+            i + 1,
+            item.productName || 'N/A',
+            item.size || 'N/A',
+            item.quantity || 0,
+            'Rs. ' + (parseFloat(item.unitPrice) || 0).toLocaleString(),
+            'Rs. ' + (parseFloat(item.totalPrice) || 0).toLocaleString()
+        ]);
+
+        autoTable(doc, {
+            startY: 62,
+            head: [['#', 'Product', 'Size', 'Qty', 'Unit Price', 'Total']],
+            body: tableData.length ? tableData : [['-', 'No items', '-', '-', '-', '-']],
+            theme: 'grid',
+            headStyles: { fillColor: [66, 66, 66] },
+            margin: { left: 14 }
+        });
+
+        const finalY = doc.lastAutoTable.finalY || 62;
+        doc.setFontSize(10);
+        doc.text(`Subtotal: Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}`, 14, finalY + 12);
+        doc.text(`Paid: Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}`, 14, finalY + 18);
+        if ((parseFloat(sale.remainingAmount) || 0) > 0) {
+            doc.setTextColor(220, 53, 69);
+            doc.text(`Remaining: Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}`, 14, finalY + 24);
+            doc.setTextColor(0, 0, 0);
+        }
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Total: Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}`, 14, finalY + (parseFloat(sale.remainingAmount) || 0) > 0 ? 32 : 24);
+        doc.setFont('helvetica', 'normal');
+
+        if (sale.notes) {
+            doc.setFontSize(9);
+            doc.text('Notes: ' + sale.notes, 14, finalY + 44);
+        }
+        doc.setFontSize(8);
+        doc.setTextColor(120, 120, 120);
+        doc.text('Thank you for your business! Generated on ' + new Date().toLocaleString(), pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: 'center' });
+
+        return doc;
+    };
+
+    const handleSharePdfWhatsApp = async (sale) => {
+        try {
+            const doc = generateInvoicePdf(sale);
+            const pdfBlob = doc.output('blob');
+            const fileName = `Invoice_${sale.invoiceNumber}.pdf`;
+            const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+            const message = `Hi! Please find your invoice *${sale.invoiceNumber}* from DRESSIFY CLOTHING attached. Thank you for your business!`;
+            const encodedMessage = encodeURIComponent(message);
+
+            if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
+                await navigator.share({
+                    title: fileName,
+                    files: [file],
+                    text: message
+                });
+                showSuccess('Share sheet opened. Choose WhatsApp to send the PDF.');
+            } else {
+                doc.save(fileName);
+                const contact = sale.customer?.contact || '';
+                const digitsOnly = contact.replace(/\D/g, '');
+                const phone = digitsOnly.length >= 10
+                    ? (digitsOnly.startsWith('92') ? digitsOnly : '92' + digitsOnly)
+                    : '';
+                const whatsappUrl = phone
+                    ? `https://wa.me/${phone}?text=${encodedMessage}`
+                    : `https://wa.me/?text=${encodedMessage}`;
+                window.open(whatsappUrl, '_blank');
+                showSuccess('PDF downloaded. WhatsApp opened – attach the downloaded PDF and send.');
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+            console.error(err);
+            showError(err.message || 'Could not share PDF to WhatsApp.');
+        }
+    };
+
     const getSelectedInventorySizes = () => {
         if (!currentItem.inventory) return [];
         const selectedInventory = inventory.find(inv => (inv.id || inv._id) === currentItem.inventory);
@@ -813,9 +923,16 @@ const Sales = () => {
                                                     <button
                                                         onClick={() => handleShareReceipt(sale)}
                                                         className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                                        title="Share via WhatsApp"
+                                                        title="Share text via WhatsApp"
                                                     >
                                                         <Share2 className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleSharePdfWhatsApp(sale)}
+                                                        className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                                                        title="Send PDF to WhatsApp"
+                                                    >
+                                                        <FileText className="w-4 h-4" />
                                                     </button>
                                                     <button
                                                         onClick={() => handleEditSale(sale)}
@@ -1174,10 +1291,18 @@ const Sales = () => {
                                     <button
                                         onClick={() => handleShareReceipt(selectedSale)}
                                         className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors"
-                                        title="Share via WhatsApp"
+                                        title="Share text via WhatsApp"
                                     >
                                         <Share2 size={18} />
                                         Share WhatsApp
+                                    </button>
+                                    <button
+                                        onClick={() => handleSharePdfWhatsApp(selectedSale)}
+                                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 transition-colors"
+                                        title="Send PDF to WhatsApp"
+                                    >
+                                        <FileText size={18} />
+                                        Send PDF to WhatsApp
                                     </button>
                                     <button
                                         onClick={() => setShowDetailsModal(false)}
@@ -1269,6 +1394,312 @@ const Sales = () => {
                                         </tfoot>
                                     </table>
                                 </div>
+                            </div>
+
+                            {/* Payment History Section */}
+                            <div className="border-t border-gray-200 pt-4 mt-4">
+                                <div className="flex justify-between items-center mb-4">
+                                    <div>
+                                        <h4 className="font-semibold text-lg">Payment History</h4>
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            Kis Kis Din Kitne Paise Mile (All Payments for This Sale)
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <select
+                                            value={paymentHistoryFilter}
+                                            onChange={(e) => setPaymentHistoryFilter(e.target.value)}
+                                            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="All">All Payments</option>
+                                            <option value="Paid">Paid</option>
+                                            <option value="Partial">Partial</option>
+                                            <option value="Unpaid">Unpaid</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {(() => {
+                                    const existingPayments = selectedSale.payments || [];
+                                    const totalAmount = parseFloat(selectedSale.totalAmount) || 0;
+                                    const paidAmount = parseFloat(selectedSale.paidAmount) || 0;
+                                    const remainingAmount = parseFloat(selectedSale.remainingAmount) || 0;
+
+                                    // Filter payments based on selected filter
+                                    let filteredPayments = [...existingPayments];
+
+                                    if (paymentHistoryFilter === 'Paid') {
+                                        // Show only if sale is fully paid
+                                        if (remainingAmount === 0 && paidAmount > 0) {
+                                            filteredPayments = existingPayments;
+                                        } else {
+                                            filteredPayments = [];
+                                        }
+                                    } else if (paymentHistoryFilter === 'Partial') {
+                                        // Show only if sale is partially paid
+                                        if (remainingAmount > 0 && paidAmount > 0) {
+                                            filteredPayments = existingPayments;
+                                        } else {
+                                            filteredPayments = [];
+                                        }
+                                    } else if (paymentHistoryFilter === 'Unpaid') {
+                                        // Show only if sale is unpaid
+                                        if (paidAmount === 0) {
+                                            filteredPayments = [];
+                                        } else {
+                                            filteredPayments = [];
+                                        }
+                                    }
+
+                                    // Sort payments by date (latest first)
+                                    filteredPayments.sort((a, b) => {
+                                        const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
+                                        const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
+                                        return dateB - dateA;
+                                    });
+
+                                    const totalFromPayments = existingPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+
+                                    if (paymentHistoryFilter === 'Unpaid' && paidAmount === 0) {
+                                        return (
+                                            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-red-600 font-semibold">⚠️ Unpaid Sale</span>
+                                                </div>
+                                                <p className="text-sm text-red-700 mt-2">
+                                                    No payments received yet. Total amount: Rs. {totalAmount.toLocaleString()}
+                                                </p>
+                                            </div>
+                                        );
+                                    }
+
+                                    if (filteredPayments.length === 0 && paymentHistoryFilter !== 'All') {
+                                        return (
+                                            <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
+                                                <p>No payments found for this status.</p>
+                                            </div>
+                                        );
+                                    }
+
+                                    if (existingPayments.length === 0) {
+                                        return (
+                                            <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
+                                                <p>No payment history found. Payments will be recorded when you add them.</p>
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div className="space-y-4">
+                                            {/* Payment Summary Info */}
+                                            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                                <div className="flex items-center justify-between flex-wrap gap-2">
+                                                    <div>
+                                                        <p className="text-sm font-semibold text-indigo-900 mb-1">
+                                                            📋 Payment Summary
+                                                        </p>
+                                                        <p className="text-xs text-indigo-700">
+                                                            Total <span className="font-bold">{existingPayments.length}</span> payment{existingPayments.length !== 1 ? 's' : ''} received
+                                                            {existingPayments.length > 0 && (
+                                                                <>
+                                                                    {' • '}
+                                                                    <span className="font-semibold">Rs. {totalFromPayments.toLocaleString()}</span> total received
+                                                                </>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    {existingPayments.length > 0 && (
+                                                        <div className="text-xs text-indigo-700">
+                                                            <span className="font-semibold">Status:</span>{' '}
+                                                            {remainingAmount === 0 && paidAmount > 0 ? (
+                                                                <span className="text-green-700 font-bold">✅ Fully Paid</span>
+                                                            ) : remainingAmount > 0 && paidAmount > 0 ? (
+                                                                <span className="text-yellow-700 font-bold">⚠️ Partial (Rs. {remainingAmount.toLocaleString()} remaining)</span>
+                                                            ) : (
+                                                                <span className="text-red-700 font-bold">❌ Unpaid</span>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Payment Status Summary */}
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                                <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 rounded-lg border border-green-200">
+                                                    <p className="text-xs text-gray-600 mb-1">Total Amount</p>
+                                                    <p className="text-lg font-bold text-green-700">
+                                                        Rs. {totalAmount.toLocaleString()}
+                                                    </p>
+                                                </div>
+                                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-lg border border-blue-200">
+                                                    <p className="text-xs text-gray-600 mb-1">Paid Amount</p>
+                                                    <p className="text-lg font-bold text-blue-700">
+                                                        Rs. {paidAmount.toLocaleString()}
+                                                    </p>
+                                                </div>
+                                                <div className={`p-3 rounded-lg border ${remainingAmount > 0
+                                                    ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200'
+                                                    : 'bg-gradient-to-r from-gray-50 to-gray-100 border-gray-200'
+                                                    }`}>
+                                                    <p className="text-xs text-gray-600 mb-1">Remaining</p>
+                                                    <p className={`text-lg font-bold ${remainingAmount > 0 ? 'text-yellow-700' : 'text-gray-700'
+                                                        }`}>
+                                                        Rs. {remainingAmount.toLocaleString()}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* Payment Status Badge and Count */}
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-sm text-gray-600">Payment Status:</span>
+                                                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${remainingAmount === 0 && paidAmount > 0
+                                                        ? 'bg-green-100 text-green-800'
+                                                        : remainingAmount > 0 && paidAmount > 0
+                                                            ? 'bg-yellow-100 text-yellow-800'
+                                                            : 'bg-red-100 text-red-800'
+                                                        }`}>
+                                                        {remainingAmount === 0 && paidAmount > 0 ? '✅ Paid' :
+                                                            remainingAmount > 0 && paidAmount > 0 ? '⚠️ Partial' :
+                                                                '❌ Unpaid'}
+                                                    </span>
+                                                </div>
+                                                <div className="text-sm text-gray-600">
+                                                    <span className="font-semibold text-gray-800">Total Payments:</span> {existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''}
+                                                </div>
+                                            </div>
+
+                                            {/* Payments Table */}
+                                            <div className="bg-gray-50 rounded-lg p-4">
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-sm">
+                                                        <thead>
+                                                            <tr className="border-b border-gray-300">
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">#</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Date & Time</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Amount</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Method</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Notes</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {(paymentHistoryFilter === 'All' ? existingPayments : filteredPayments)
+                                                                .sort((a, b) => {
+                                                                    const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
+                                                                    const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
+                                                                    return dateB - dateA;
+                                                                })
+                                                                .map((payment, index) => {
+                                                                    // Handle Firestore Timestamp format
+                                                                    let paymentDate;
+                                                                    if (payment.date?.toDate) {
+                                                                        // Firestore Timestamp object
+                                                                        paymentDate = payment.date.toDate();
+                                                                    } else if (payment.date?.seconds) {
+                                                                        // Firestore Timestamp with seconds
+                                                                        paymentDate = new Date(payment.date.seconds * 1000);
+                                                                    } else if (payment.date instanceof Date) {
+                                                                        paymentDate = payment.date;
+                                                                    } else if (payment.date) {
+                                                                        paymentDate = new Date(payment.date);
+                                                                    } else {
+                                                                        paymentDate = new Date();
+                                                                    }
+
+                                                                    const formattedDate = formatDate(paymentDate);
+                                                                    const formattedTime = paymentDate.toLocaleTimeString('en-US', {
+                                                                        hour: '2-digit',
+                                                                        minute: '2-digit',
+                                                                        hour12: true
+                                                                    });
+                                                                    const paymentAmount = parseFloat(payment.amount) || 0;
+
+                                                                    return (
+                                                                        <tr key={index} className="border-b border-gray-200 hover:bg-white transition-colors">
+                                                                            <td className="py-3 px-3 text-gray-600 font-medium">{index + 1}</td>
+                                                                            <td className="py-3 px-3">
+                                                                                <div className="font-semibold text-gray-900">{formattedDate}</div>
+                                                                                <div className="text-xs text-gray-500 mt-1">{formattedTime}</div>
+                                                                            </td>
+                                                                            <td className="py-3 px-3">
+                                                                                <span className="font-bold text-green-600 text-base">
+                                                                                    Rs. {paymentAmount.toLocaleString()}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="py-3 px-3">
+                                                                                <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium">
+                                                                                    {payment.paymentMethod || 'Cash'}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="py-3 px-3 text-gray-600 text-xs">
+                                                                                {payment.notes || <span className="text-gray-400">-</span>}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                        </tbody>
+                                                        <tfoot className="bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-300">
+                                                            <tr>
+                                                                <td colSpan="2" className="py-3 px-3 font-bold text-gray-900 text-base">
+                                                                    Total Payments ({existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''}):
+                                                                </td>
+                                                                <td className="py-3 px-3 font-bold text-green-600 text-lg">
+                                                                    Rs. {totalFromPayments.toLocaleString()}
+                                                                </td>
+                                                                <td colSpan="2" className="py-3 px-3"></td>
+                                                            </tr>
+                                                        </tfoot>
+                                                    </table>
+                                                </div>
+                                            </div>
+
+                                            {/* Payment Mismatch Warning */}
+                                            {Math.abs(totalFromPayments - paidAmount) > 0.01 && (
+                                                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="text-sm font-medium text-yellow-800">
+                                                                ⚠️ Payment History Mismatch
+                                                            </p>
+                                                            <p className="text-xs text-yellow-700 mt-1">
+                                                                Recorded paid amount (Rs. {paidAmount.toLocaleString()}) doesn't match payment history total (Rs. {totalFromPayments.toLocaleString()})
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (window.confirm(`Fix payment history by adding missing amount of Rs. ${(paidAmount - totalFromPayments).toLocaleString()}?`)) {
+                                                                    try {
+                                                                        setSaving(true);
+                                                                        await updateSale(selectedSale.id || selectedSale._id, {
+                                                                            ...selectedSale,
+                                                                            paidAmount: selectedSale.paidAmount,
+                                                                            saleType: selectedSale.saleType || 'Cash'
+                                                                        });
+                                                                        showSuccess('Payment history fixed!');
+                                                                        fetchData();
+                                                                        const updatedSales = await getSales();
+                                                                        const updatedSale = updatedSales.data.find(s => (s.id || s._id) === (selectedSale.id || selectedSale._id));
+                                                                        if (updatedSale) {
+                                                                            setSelectedSale(updatedSale);
+                                                                        }
+                                                                    } catch (error) {
+                                                                        showError(error.message || 'Error fixing payment history');
+                                                                    } finally {
+                                                                        setSaving(false);
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm font-medium"
+                                                            disabled={saving}
+                                                        >
+                                                            Fix History
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
