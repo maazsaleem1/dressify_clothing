@@ -278,6 +278,10 @@ const Sales = () => {
                     totalPrice: (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0)
                 }))
             };
+            if (!editingSale) {
+                const cust = customers.find(c => (c.id || c._id) === saleFormData.customer);
+                saleDataToSubmit.customerName = cust?.name || '';
+            }
 
             if (editingSale) {
                 await updateSale(editingSale.id || editingSale._id, saleDataToSubmit);
@@ -308,6 +312,7 @@ const Sales = () => {
         try {
             await addPayment(selectedSale.id || selectedSale._id, {
                 amount: parseFloat(paymentData.amount),
+                paymentMethod: paymentData.method,
                 method: paymentData.method,
                 notes: paymentData.notes
             });
@@ -1579,6 +1584,7 @@ const Sales = () => {
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Date & Time</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Amount</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Method</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Type</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Notes</th>
                                                             </tr>
                                                         </thead>
@@ -1631,6 +1637,11 @@ const Sales = () => {
                                                                                     {payment.paymentMethod || 'Cash'}
                                                                                 </span>
                                                                             </td>
+                                                                            <td className="py-3 px-3">
+                                                                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${payment.paymentType === 'Initial Sale' ? 'bg-indigo-100 text-indigo-800' : payment.paymentType === 'Recovery' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
+                                                                                    {payment.paymentType || 'Payment'}
+                                                                                </span>
+                                                                            </td>
                                                                             <td className="py-3 px-3 text-gray-600 text-xs">
                                                                                 {payment.notes || <span className="text-gray-400">-</span>}
                                                                             </td>
@@ -1646,7 +1657,7 @@ const Sales = () => {
                                                                 <td className="py-3 px-3 font-bold text-green-600 text-lg">
                                                                     Rs. {totalFromPayments.toLocaleString()}
                                                                 </td>
-                                                                <td colSpan="2" className="py-3 px-3"></td>
+                                                                <td colSpan="3" className="py-3 px-3"></td>
                                                             </tr>
                                                         </tfoot>
                                                     </table>

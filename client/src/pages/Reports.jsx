@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers } from '../services/api';
+import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers, getPayments } from '../services/api';
 import { showInfo } from '../utils/toast';
 
 const Reports = () => {
@@ -25,11 +25,90 @@ const Reports = () => {
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
   });
+  const [paymentsList, setPaymentsList] = useState([]);
 
+  // Load data once on mount; refetch only when user clicks Apply
   useEffect(() => {
     fetchStats();
     fetchOutstandingCredits();
-  }, [dateRange]);
+    fetchPaymentsReport();
+  }, []);
+
+  const fetchPaymentsReport = async () => {
+    try {
+      const [paymentsRes, salesRes] = await Promise.all([
+        getPayments({ startDate: dateRange.startDate, endDate: dateRange.endDate }),
+        getSales()
+      ]);
+      const fromCollection = paymentsRes.data || [];
+      const sales = salesRes.data || [];
+
+      const start = dateRange.startDate ? new Date(dateRange.startDate + 'T00:00:00') : null;
+      const end = dateRange.endDate ? new Date(dateRange.endDate + 'T23:59:59.999') : null;
+
+      const toDate = (val) => {
+        if (val == null) return null;
+        if (val instanceof Date) return val;
+        if (val?.toDate && typeof val.toDate === 'function') return val.toDate();
+        if (val?.seconds != null) return new Date(val.seconds * 1000);
+        return new Date(val);
+      };
+
+      const inRange = (dateObj) => {
+        if (!dateObj || isNaN(dateObj.getTime())) return false;
+        if (start && dateObj < start) return false;
+        if (end && dateObj > end) return false;
+        return true;
+      };
+
+      const collectionKeys = new Set(
+        fromCollection.map(p => {
+          const d = p.paymentDate;
+          const dateObj = d instanceof Date ? d : toDate(d);
+          const key = dateObj ? dateObj.toISOString().split('T')[0] : '';
+          return `${p.saleId || ''}_${p.amount}_${key}`;
+        })
+      );
+
+      const fromSales = [];
+      sales.forEach(sale => {
+        const saleId = sale.id || sale._id;
+        const invoiceNumber = sale.invoiceNumber || '';
+        const customerName = (sale.customer?.name || '').trim();
+        (sale.payments || []).forEach((p, index) => {
+          const paymentDate = toDate(p.date);
+          if (!inRange(paymentDate)) return;
+          const amount = parseFloat(p.amount) || 0;
+          const dateKey = paymentDate ? paymentDate.toISOString().split('T')[0] : '';
+          const dedupeKey = `${saleId}_${amount}_${dateKey}`;
+          if (collectionKeys.has(dedupeKey)) return;
+          fromSales.push({
+            id: `sale-${saleId}-${index}`,
+            _id: `sale-${saleId}-${index}`,
+            saleId,
+            invoiceNumber,
+            customerName,
+            amount,
+            paymentDate,
+            paymentType: p.paymentType || (index === 0 ? 'Initial Sale' : 'Recovery'),
+            paymentMethod: p.paymentMethod || 'Cash',
+            notes: p.notes || ''
+          });
+        });
+      });
+
+      const merged = [...fromCollection, ...fromSales].sort((a, b) => {
+        const da = a.paymentDate instanceof Date ? a.paymentDate : toDate(a.paymentDate);
+        const db = b.paymentDate instanceof Date ? b.paymentDate : toDate(b.paymentDate);
+        if (!da || !db) return 0;
+        return db.getTime() - da.getTime();
+      });
+      setPaymentsList(merged);
+    } catch (error) {
+      console.error('Error fetching payments:', error);
+      setPaymentsList([]);
+    }
+  };
 
   useEffect(() => {
     fetchMonthlyData();
@@ -341,6 +420,37 @@ const Reports = () => {
     { name: 'Credit Given', value: salesStats?.creditGiven || 0 }
   ];
 
+  // Payment report aggregates (from payments collection: initial + recovery)
+  const getPaymentDateKey = (p) => {
+    const d = p.paymentDate;
+    const date = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+    return date.toISOString().split('T')[0];
+  };
+  const todayStr = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const paymentsToday = paymentsList
+    .filter(p => getPaymentDateKey(p) === todayStr)
+    .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const paymentsThisMonth = paymentsList
+    .filter(p => {
+      const d = p.paymentDate;
+      const date = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+      return date >= monthStart;
+    })
+    .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const paymentsByDateMap = {};
+  paymentsList.forEach(p => {
+    const key = getPaymentDateKey(p);
+    if (!paymentsByDateMap[key]) paymentsByDateMap[key] = { total: 0, count: 0 };
+    paymentsByDateMap[key].total += parseFloat(p.amount) || 0;
+    paymentsByDateMap[key].count += 1;
+  });
+  const paymentsByDateData = Object.entries(paymentsByDateMap)
+    .map(([date, v]) => ({ date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), total: v.total, count: v.count, _sortKey: date }))
+    .sort((a, b) => b._sortKey.localeCompare(a._sortKey))
+    .slice(0, 31);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -382,11 +492,98 @@ const Reports = () => {
               />
             </div>
             <button
-              onClick={fetchStats}
+              onClick={() => { fetchStats(); fetchOutstandingCredits(); fetchPaymentsReport(); }}
               className="btn-primary mt-6"
             >
               Apply
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Payment Received (Initial + Recovery) */}
+      <div className="card border-2 border-emerald-100 bg-gradient-to-br from-emerald-50/50 to-white">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <DollarSign size={22} className="text-emerald-600" />
+          Payment Received
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          All money received in the selected period (initial sale payments and recovery payments on invoices).
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Today</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsToday.toLocaleString()}</p>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">This Month</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsThisMonth.toLocaleString()}</p>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">In Date Range</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">
+              Rs. {paymentsList.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0).toLocaleString()}
+            </p>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transactions</p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1">{paymentsList.length}</p>
+          </div>
+        </div>
+        {paymentsByDateData.length > 0 && (
+          <div className="mb-6">
+            <h4 className="font-medium text-gray-700 mb-3">Daily payment totals</h4>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={paymentsByDateData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '11px' }} />
+                <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
+                <Tooltip formatter={(value) => [`Rs. ${Number(value).toLocaleString()}`, 'Received']} />
+                <Bar dataKey="total" fill="#10b981" name="Received (Rs.)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div>
+          <h4 className="font-medium text-gray-700 mb-3">Payment breakdown by invoice</h4>
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            {paymentsList.length === 0 ? (
+              <p className="p-6 text-gray-500 text-center">No payments in the selected date range.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {paymentsList.map((p) => {
+                    const d = p.paymentDate;
+                    const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+                    const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
+                    return (
+                      <tr key={p.id || p._id}>
+                        <td className="px-4 py-2 text-gray-600 whitespace-nowrap">{dateStr}</td>
+                        <td className="px-4 py-2 font-medium text-gray-900">{p.invoiceNumber || '–'}</td>
+                        <td className="px-4 py-2 text-gray-700">{p.customerName || '–'}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-emerald-700">Rs. {(parseFloat(p.amount) || 0).toLocaleString()}</td>
+                        <td className="px-4 py-2">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${p.paymentType === 'Initial Sale' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'}`}>
+                            {p.paymentType || '–'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-gray-600">{p.paymentMethod || 'Cash'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       </div>

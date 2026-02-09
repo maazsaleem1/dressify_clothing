@@ -62,6 +62,16 @@ const docToObject = (doc) => {
   };
 };
 
+const paymentToObject = (docSnap) => {
+  const data = docSnap.data();
+  return {
+    id: docSnap.id,
+    _id: docSnap.id,
+    ...data,
+    paymentDate: convertTimestamp(data.paymentDate),
+  };
+};
+
 // Helper function to prepare data for Firestore
 const prepareData = (data) => {
   const prepared = { ...data };
@@ -610,6 +620,33 @@ export const createSale = async (saleData) => {
 
     const docRef = await addDoc(collection(db, 'sales'), data);
 
+    // If paid at sale time, record initial payment on sale and in payments collection for reporting
+    if (paidAmount > 0) {
+      const paymentMethod = saleData.saleType || 'Cash';
+      const initialPayment = {
+        amount: paidAmount,
+        paymentMethod,
+        notes: saleData.notes || '',
+        date: Timestamp.now(),
+        paymentType: 'Initial Sale'
+      };
+      await updateDoc(doc(db, 'sales', docRef.id), {
+        payments: [initialPayment],
+        updatedAt: Timestamp.now()
+      });
+      await addDoc(collection(db, 'payments'), {
+        saleId: docRef.id,
+        invoiceNumber,
+        customerId: saleData.customer || null,
+        customerName: saleData.customerName || '',
+        amount: paidAmount,
+        paymentDate: Timestamp.now(),
+        paymentType: 'Initial Sale',
+        paymentMethod,
+        notes: saleData.notes || ''
+      });
+    }
+
     // Update inventory quantities
     for (const item of saleData.items) {
       const inventoryRef = doc(db, 'inventory', item.inventory);
@@ -817,18 +854,30 @@ export const addPayment = async (saleId, paymentData) => {
 
     const saleData = saleDoc.data();
     const paymentAmount = paymentData.amount || 0;
+    const paymentMethod = paymentData.paymentMethod || paymentData.method || 'Cash';
     const newPaidAmount = (saleData.paidAmount || 0) + paymentAmount;
     const newRemainingAmount = (saleData.totalAmount || 0) - newPaidAmount;
     const newPaymentStatus = newRemainingAmount === 0 ? 'Paid' : newPaidAmount > 0 ? 'Partial' : 'Unpaid';
 
-    // Add payment to payments array
-    const payments = saleData.payments || [];
-    payments.push({
+    // Get customer name for payment record
+    let customerName = saleData.customerName || '';
+    if (saleData.customerId) {
+      try {
+        const custDoc = await getDoc(doc(db, 'customers', saleData.customerId));
+        if (custDoc.exists()) customerName = custDoc.data().name || customerName;
+      } catch (_) { }
+    }
+
+    const recoveryPayment = {
       amount: paymentAmount,
-      paymentMethod: paymentData.paymentMethod || 'Cash',
+      paymentMethod,
       notes: paymentData.notes || '',
-      date: Timestamp.now()
-    });
+      date: Timestamp.now(),
+      paymentType: 'Recovery'
+    };
+
+    const payments = saleData.payments || [];
+    payments.push(recoveryPayment);
 
     await updateDoc(saleRef, {
       paidAmount: newPaidAmount,
@@ -838,9 +887,78 @@ export const addPayment = async (saleId, paymentData) => {
       updatedAt: Timestamp.now()
     });
 
+    // Record in payments collection for reports (daily/monthly payment totals)
+    await addDoc(collection(db, 'payments'), {
+      saleId,
+      invoiceNumber: saleData.invoiceNumber || '',
+      customerId: saleData.customerId || null,
+      customerName,
+      amount: paymentAmount,
+      paymentDate: Timestamp.now(),
+      paymentType: 'Recovery',
+      paymentMethod,
+      notes: paymentData.notes || ''
+    });
+
     return { success: true };
   } catch (error) {
 
+    throw error;
+  }
+};
+
+/**
+ * Get all payment records (initial + recovery) for reporting.
+ * @param {Object} filters - Optional { startDate, endDate } as ISO date strings (YYYY-MM-DD)
+ * @returns Payments with saleId, invoiceNumber, customerName, amount, paymentDate, paymentType
+ */
+export const getPayments = async (filters = {}) => {
+  try {
+    const paymentsRef = collection(db, 'payments');
+    let q;
+
+    if (filters.startDate || filters.endDate) {
+      const start = filters.startDate
+        ? Timestamp.fromDate(new Date(filters.startDate + 'T00:00:00'))
+        : Timestamp.fromDate(new Date(0));
+      const end = filters.endDate
+        ? Timestamp.fromDate(new Date(filters.endDate + 'T23:59:59.999'))
+        : Timestamp.now();
+      q = query(
+        paymentsRef,
+        where('paymentDate', '>=', start),
+        where('paymentDate', '<=', end),
+        orderBy('paymentDate', 'desc')
+      );
+    } else {
+      q = query(paymentsRef, orderBy('paymentDate', 'desc'));
+    }
+
+    const snapshot = await getDocs(q);
+    const payments = snapshot.docs.map(paymentToObject);
+    return { data: payments };
+  } catch (error) {
+    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
+      console.warn('Payments index missing. Fetching all payments and filtering client-side.');
+      const snapshot = await getDocs(collection(db, 'payments'));
+      let payments = snapshot.docs.map(paymentToObject);
+      if (filters.startDate || filters.endDate) {
+        const startStr = filters.startDate || '1970-01-01';
+        const endStr = filters.endDate || '9999-12-31';
+        payments = payments.filter(p => {
+          const d = p.paymentDate;
+          const date = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+          const key = date.toISOString().split('T')[0];
+          return key >= startStr && key <= endStr;
+        });
+        payments.sort((a, b) => {
+          const da = a.paymentDate instanceof Date ? a.paymentDate : (a.paymentDate?.toDate?.() || new Date(a.paymentDate));
+          const db_ = b.paymentDate instanceof Date ? b.paymentDate : (b.paymentDate?.toDate?.() || new Date(b.paymentDate));
+          return db_.getTime() - da.getTime();
+        });
+      }
+      return { data: payments };
+    }
     throw error;
   }
 };
