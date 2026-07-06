@@ -340,7 +340,24 @@ export const createInventoryItem = async (itemData) => {
     }
 
     const docRef = await addDoc(collection(db, 'inventory'), finalData);
-    return { data: { id: docRef.id, ...finalData } };
+
+    // Set base purchase & landed cost fields for product costing
+    const totalQty = parseFloat(itemData.initialQuantity) ||
+      (itemData.sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+    const unitInput = parseFloat(itemData.costPerUnit) || 0;
+    const basePurchaseCost = parseFloat(itemData.basePurchaseCost) || (unitInput * totalQty) || 0;
+    const costPerUnit = totalQty > 0
+      ? Math.round(basePurchaseCost / totalQty)
+      : Math.round(unitInput);
+    await updateDoc(doc(db, 'inventory', docRef.id), {
+      initialQuantity: totalQty || finalData.initialQuantity,
+      basePurchaseCost,
+      productExpensesTotal: 0,
+      totalLandedCost: basePurchaseCost,
+      costPerUnit
+    });
+
+    return { data: { id: docRef.id, ...finalData, basePurchaseCost, costPerUnit } };
   } catch (error) {
     console.error('❌ [API] createInventoryItem - Error:', error);
     console.error('❌ [API] createInventoryItem - Error message:', error.message);
@@ -418,6 +435,15 @@ export const updateInventoryItem = async (id, itemData) => {
     }
 
     await updateDoc(doc(db, 'inventory', id), finalData);
+
+    if (itemData.basePurchaseCost != null && itemData.basePurchaseCost !== '') {
+      await recalculateInventoryLandedCost(id, {
+        basePurchaseCost: parseFloat(itemData.basePurchaseCost)
+      });
+    } else {
+      await recalculateInventoryLandedCost(id);
+    }
+
     return { data: { id, ...finalData } };
   } catch (error) {
     console.error('❌ [API] updateInventoryItem - Error:', error);
@@ -553,7 +579,11 @@ export const getSales = async (filters = {}) => {
 
     sales = sales.map(sale => ({
       ...sale,
-      customer: customers.find(c => (c.id || c._id) === sale.customerId)
+      customer: customers.find(c => (c.id || c._id) === sale.customerId),
+      items: sale.items?.map(it => ({
+        ...it,
+        addedToSaleAt: it.addedToSaleAt ? convertTimestamp(it.addedToSaleAt) : undefined
+      }))
     }));
 
     return { data: sales };
@@ -578,7 +608,11 @@ export const getSales = async (filters = {}) => {
 
         sales = sales.map(sale => ({
           ...sale,
-          customer: customers.find(c => (c.id || c._id) === sale.customerId)
+          customer: customers.find(c => (c.id || c._id) === sale.customerId),
+          items: sale.items?.map(it => ({
+            ...it,
+            addedToSaleAt: it.addedToSaleAt ? convertTimestamp(it.addedToSaleAt) : undefined
+          }))
         }));
 
         return { data: sales };
@@ -614,7 +648,8 @@ export const createSale = async (saleData) => {
       updatedAt: Timestamp.now(),
       items: saleData.items.map(item => ({
         ...item,
-        inventoryId: item.inventory
+        inventoryId: item.inventory,
+        addedToSaleAt: Timestamp.now()
       }))
     };
 
@@ -623,18 +658,7 @@ export const createSale = async (saleData) => {
     // If paid at sale time, record initial payment on sale and in payments collection for reporting
     if (paidAmount > 0) {
       const paymentMethod = saleData.saleType || 'Cash';
-      const initialPayment = {
-        amount: paidAmount,
-        paymentMethod,
-        notes: saleData.notes || '',
-        date: Timestamp.now(),
-        paymentType: 'Initial Sale'
-      };
-      await updateDoc(doc(db, 'sales', docRef.id), {
-        payments: [initialPayment],
-        updatedAt: Timestamp.now()
-      });
-      await addDoc(collection(db, 'payments'), {
+      const paymentDocRef = await addDoc(collection(db, 'payments'), {
         saleId: docRef.id,
         invoiceNumber,
         customerId: saleData.customer || null,
@@ -644,6 +668,19 @@ export const createSale = async (saleData) => {
         paymentType: 'Initial Sale',
         paymentMethod,
         notes: saleData.notes || ''
+      });
+      const initialPayment = {
+        amount: paidAmount,
+        paymentMethod,
+        notes: saleData.notes || '',
+        date: Timestamp.now(),
+        paymentType: 'Initial Sale',
+        paymentId: paymentDocRef.id,
+        collectionId: paymentDocRef.id
+      };
+      await updateDoc(doc(db, 'sales', docRef.id), {
+        payments: [initialPayment],
+        updatedAt: Timestamp.now()
       });
     }
 
@@ -746,6 +783,8 @@ export const updateSale = async (saleId, saleData) => {
 
     // Update sale - filter out undefined values
     const preparedData = prepareData(saleData);
+    const oldItemsList = existingSale.items || [];
+    const usedOldIndices = new Set();
     const data = {
       ...Object.fromEntries(
         Object.entries(preparedData).filter(([_, value]) => value !== undefined)
@@ -755,18 +794,35 @@ export const updateSale = async (saleId, saleData) => {
       paidAmount,
       remainingAmount,
       paymentStatus,
-      items: saleData.items.map(item => ({
-        productName: item.productName || '',
-        size: item.size || '',
-        quantity: item.quantity || 0,
-        unitPrice: item.unitPrice || 0,
-        totalPrice: item.totalPrice || 0,
-        inventoryId: item.inventory || item.inventoryId || null,
-        inventorySellingPrice: item.inventorySellingPrice || null,
-        inventoryCostPrice: item.inventoryCostPrice || null,
-        profitPerUnit: item.profitPerUnit || null,
-        totalProfit: item.totalProfit || null
-      })),
+      items: saleData.items.map(item => {
+        const invId = item.inventory || item.inventoryId;
+        const matchedIdx = oldItemsList.findIndex(
+          (oi, idx) =>
+            !usedOldIndices.has(idx) &&
+            oi.inventoryId === invId &&
+            oi.size === item.size
+        );
+        let addedToSaleAt;
+        if (matchedIdx >= 0) {
+          usedOldIndices.add(matchedIdx);
+          addedToSaleAt = oldItemsList[matchedIdx].addedToSaleAt || Timestamp.now();
+        } else {
+          addedToSaleAt = Timestamp.now();
+        }
+        return {
+          productName: item.productName || '',
+          size: item.size || '',
+          quantity: item.quantity || 0,
+          unitPrice: item.unitPrice || 0,
+          totalPrice: item.totalPrice || 0,
+          inventoryId: invId || null,
+          inventorySellingPrice: item.inventorySellingPrice || null,
+          inventoryCostPrice: item.inventoryCostPrice || null,
+          profitPerUnit: item.profitPerUnit || null,
+          totalProfit: item.totalProfit || null,
+          addedToSaleAt
+        };
+      }),
       saleType: saleData.saleType || existingSale.saleType || 'Cash',
       notes: saleData.notes !== undefined ? saleData.notes : (existingSale.notes || ''),
       updatedAt: Timestamp.now()
@@ -798,7 +854,8 @@ export const addItemsToSale = async (saleId, items) => {
     const existingItems = saleData.items || [];
     const newItems = items.map(item => ({
       ...item,
-      inventoryId: item.inventory
+      inventoryId: item.inventory,
+      addedToSaleAt: Timestamp.now()
     }));
 
     const updatedItems = [...existingItems, ...newItems];
@@ -877,18 +934,9 @@ export const addPayment = async (saleId, paymentData) => {
     };
 
     const payments = saleData.payments || [];
-    payments.push(recoveryPayment);
-
-    await updateDoc(saleRef, {
-      paidAmount: newPaidAmount,
-      remainingAmount: newRemainingAmount,
-      paymentStatus: newPaymentStatus,
-      payments,
-      updatedAt: Timestamp.now()
-    });
 
     // Record in payments collection for reports (daily/monthly payment totals)
-    await addDoc(collection(db, 'payments'), {
+    const paymentDocRef = await addDoc(collection(db, 'payments'), {
       saleId,
       invoiceNumber: saleData.invoiceNumber || '',
       customerId: saleData.customerId || null,
@@ -900,9 +948,142 @@ export const addPayment = async (saleId, paymentData) => {
       notes: paymentData.notes || ''
     });
 
+    recoveryPayment.paymentId = paymentDocRef.id;
+    recoveryPayment.collectionId = paymentDocRef.id;
+    payments.push(recoveryPayment);
+
+    await updateDoc(saleRef, {
+      paidAmount: newPaidAmount,
+      remainingAmount: newRemainingAmount,
+      paymentStatus: newPaymentStatus,
+      payments,
+      updatedAt: Timestamp.now()
+    });
+
     return { success: true };
   } catch (error) {
 
+    throw error;
+  }
+};
+
+const recalculateSalePaymentTotals = (totalAmount, payments) => {
+  const paidAmount = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const total = parseFloat(totalAmount) || 0;
+  const remainingAmount = Math.max(0, total - paidAmount);
+  const paymentStatus = remainingAmount <= 0 && paidAmount > 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+  return { paidAmount, remainingAmount, paymentStatus };
+};
+
+const findSalePaymentIndex = (payments, paymentKey) => {
+  if (typeof paymentKey === 'string' && paymentKey.startsWith('idx-')) {
+    const idx = parseInt(paymentKey.replace('idx-', ''), 10);
+    return Number.isNaN(idx) ? -1 : idx;
+  }
+  return payments.findIndex(p => p.paymentId === paymentKey || p.collectionId === paymentKey);
+};
+
+const findPaymentsCollectionDoc = async (saleId, salePayment) => {
+  const collId = salePayment.collectionId || salePayment.paymentId;
+  if (collId) {
+    const d = await getDoc(doc(db, 'payments', collId));
+    if (d.exists()) return d;
+  }
+  const snap = await getDocs(query(collection(db, 'payments'), where('saleId', '==', saleId)));
+  const payDate = salePayment.date?.toDate ? salePayment.date.toDate() : new Date(salePayment.date || 0);
+  const amount = parseFloat(salePayment.amount) || 0;
+  for (const d of snap.docs) {
+    const data = d.data();
+    const dDate = data.paymentDate?.toDate ? data.paymentDate.toDate() : new Date(data.paymentDate);
+    if (Math.abs((parseFloat(data.amount) || 0) - amount) < 0.01 &&
+      Math.abs(dDate.getTime() - payDate.getTime()) < 120000) {
+      return d;
+    }
+  }
+  return null;
+};
+
+export const updateSalePayment = async (saleId, paymentKey, paymentData) => {
+  try {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleDoc = await getDoc(saleRef);
+    if (!saleDoc.exists()) throw new Error('Sale not found');
+
+    const saleData = saleDoc.data();
+    const payments = [...(saleData.payments || [])];
+    const idx = findSalePaymentIndex(payments, paymentKey);
+    if (idx < 0 || idx >= payments.length) throw new Error('Payment not found');
+
+    const oldPayment = payments[idx];
+    const updatedPayment = {
+      ...oldPayment,
+      amount: parseFloat(paymentData.amount) || 0,
+      paymentMethod: paymentData.paymentMethod || paymentData.method || oldPayment.paymentMethod || 'Cash',
+      notes: paymentData.notes != null ? paymentData.notes : (oldPayment.notes || ''),
+      paymentType: oldPayment.paymentType || 'Recovery'
+    };
+    if (paymentData.date) {
+      updatedPayment.date = Timestamp.fromDate(new Date(paymentData.date));
+    }
+
+    payments[idx] = updatedPayment;
+    const { paidAmount, remainingAmount, paymentStatus } = recalculateSalePaymentTotals(saleData.totalAmount, payments);
+
+    await updateDoc(saleRef, {
+      payments,
+      paidAmount,
+      remainingAmount,
+      paymentStatus,
+      updatedAt: Timestamp.now()
+    });
+
+    const collDoc = await findPaymentsCollectionDoc(saleId, oldPayment);
+    if (collDoc) {
+      await updateDoc(doc(db, 'payments', collDoc.id), {
+        amount: updatedPayment.amount,
+        paymentMethod: updatedPayment.paymentMethod,
+        notes: updatedPayment.notes,
+        paymentDate: updatedPayment.date || oldPayment.date || Timestamp.now(),
+        updatedAt: Timestamp.now()
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const deleteSalePayment = async (saleId, paymentKey) => {
+  try {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleDoc = await getDoc(saleRef);
+    if (!saleDoc.exists()) throw new Error('Sale not found');
+
+    const saleData = saleDoc.data();
+    const payments = [...(saleData.payments || [])];
+    const idx = findSalePaymentIndex(payments, paymentKey);
+    if (idx < 0 || idx >= payments.length) throw new Error('Payment not found');
+
+    const removedPayment = payments[idx];
+    payments.splice(idx, 1);
+    const { paidAmount, remainingAmount, paymentStatus } = recalculateSalePaymentTotals(saleData.totalAmount, payments);
+
+    await updateDoc(saleRef, {
+      payments,
+      paidAmount,
+      remainingAmount,
+      paymentStatus,
+      updatedAt: Timestamp.now()
+    });
+
+    const collDoc = await findPaymentsCollectionDoc(saleId, removedPayment);
+    if (collDoc) {
+      await deleteDoc(doc(db, 'payments', collDoc.id));
+    }
+
+    return { success: true };
+  } catch (error) {
     throw error;
   }
 };
@@ -1689,6 +1870,86 @@ export const deleteReview = async (id) => {
 };
 
 // ==================== EXPENSES ====================
+
+/** Recalculate landed cost per piece: (basePurchase + product expenses) / initialQuantity */
+export const recalculateInventoryLandedCost = async (inventoryId, options = {}) => {
+  const invRef = doc(db, 'inventory', inventoryId);
+  const invDoc = await getDoc(invRef);
+  if (!invDoc.exists()) return;
+
+  const inv = invDoc.data();
+  const initialQuantity = parseFloat(inv.initialQuantity) ||
+    (inv.sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+
+  let basePurchaseCost = options.basePurchaseCost != null
+    ? parseFloat(options.basePurchaseCost)
+    : parseFloat(inv.basePurchaseCost);
+
+  if (!basePurchaseCost || isNaN(basePurchaseCost)) {
+    const cpu = parseFloat(inv.costPerUnit) || 0;
+    const pet = parseFloat(inv.productExpensesTotal) || 0;
+    basePurchaseCost = Math.max(0, cpu * initialQuantity - pet);
+    if ((!basePurchaseCost || isNaN(basePurchaseCost)) && cpu && initialQuantity) {
+      basePurchaseCost = cpu * initialQuantity;
+    }
+  }
+
+  let productExpensesTotal = 0;
+  try {
+    const expSnap = await getDocs(
+      query(collection(db, 'expenses'), where('inventoryId', '==', inventoryId))
+    );
+    productExpensesTotal = expSnap.docs.reduce(
+      (sum, d) => sum + (parseFloat(d.data().amount) || 0),
+      0
+    );
+  } catch (e) {
+    console.warn('Could not fetch product expenses for costing:', e);
+  }
+
+  const totalLandedCost = basePurchaseCost + productExpensesTotal;
+  const costPerUnit = initialQuantity > 0
+    ? Math.round(totalLandedCost / initialQuantity)
+    : Math.round(parseFloat(inv.costPerUnit) || 0);
+
+  await updateDoc(invRef, {
+    basePurchaseCost,
+    productExpensesTotal,
+    totalLandedCost,
+    costPerUnit,
+    initialQuantity: initialQuantity || inv.initialQuantity,
+    updatedAt: Timestamp.now()
+  });
+
+  return { basePurchaseCost, productExpensesTotal, totalLandedCost, costPerUnit, initialQuantity };
+};
+
+export const getProductExpenses = async (inventoryId) => {
+  try {
+    const q = query(
+      collection(db, 'expenses'),
+      where('inventoryId', '==', inventoryId),
+      orderBy('expenseDate', 'desc')
+    );
+    const snapshot = await getDocs(q);
+    return { data: snapshot.docs.map(docToObject) };
+  } catch (error) {
+    if (error.message?.includes('index')) {
+      const snapshot = await getDocs(collection(db, 'expenses'));
+      const expenses = snapshot.docs
+        .map(docToObject)
+        .filter(e => e.inventoryId === inventoryId)
+        .sort((a, b) => {
+          const da = convertTimestamp(a.expenseDate)?.getTime() || 0;
+          const db = convertTimestamp(b.expenseDate)?.getTime() || 0;
+          return db - da;
+        });
+      return { data: expenses };
+    }
+    throw error;
+  }
+};
+
 export const getExpenses = async (filters = {}) => {
   try {
     let q = collection(db, 'expenses');
@@ -1751,29 +2012,79 @@ export const getExpenses = async (filters = {}) => {
   }
 };
 
-export const createExpense = async (expenseData) => {
+export const createExpense = async (expenseData, options = {}) => {
   try {
+    const inventoryId = expenseData.inventoryId && expenseData.inventoryId !== ''
+      ? expenseData.inventoryId
+      : null;
     const data = {
-      ...prepareData(expenseData),
+      description: expenseData.description || '',
+      amount: parseFloat(expenseData.amount) || 0,
+      category: expenseData.category || 'Other',
+      notes: expenseData.notes || '',
+      expenseScope: inventoryId ? 'product' : 'general',
+      productName: expenseData.productName || '',
       expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now()
     };
+    if (inventoryId) data.inventoryId = inventoryId;
+
     const docRef = await addDoc(collection(db, 'expenses'), data);
-    return { data: { id: docRef.id, ...data } };
+    if (inventoryId && !options.skipRecalc) {
+      await recalculateInventoryLandedCost(inventoryId);
+    }
+    return { data: { id: docRef.id, ...data }, inventoryId };
   } catch (error) {
     throw error;
   }
 };
 
+/** Create multiple expenses in one go; recalculates product cost once at the end */
+export const createExpensesBatch = async (expensesList) => {
+  const inventoryIdsToRecalc = new Set();
+  const results = [];
+  for (const expenseData of expensesList) {
+    const { data, inventoryId } = await createExpense(expenseData, { skipRecalc: true });
+    results.push(data);
+    if (inventoryId) inventoryIdsToRecalc.add(inventoryId);
+  }
+  for (const invId of inventoryIdsToRecalc) {
+    await recalculateInventoryLandedCost(invId);
+  }
+  return { data: results };
+};
+
 export const updateExpense = async (id, expenseData) => {
   try {
+    const oldDoc = await getDoc(doc(db, 'expenses', id));
+    const oldInventoryId = oldDoc.exists() ? oldDoc.data().inventoryId : null;
+
+    const inventoryId = expenseData.inventoryId && expenseData.inventoryId !== ''
+      ? expenseData.inventoryId
+      : null;
     const data = {
-      ...prepareData(expenseData),
+      description: expenseData.description || '',
+      amount: parseFloat(expenseData.amount) || 0,
+      category: expenseData.category || 'Other',
+      notes: expenseData.notes || '',
+      expenseScope: inventoryId ? 'product' : 'general',
+      productName: expenseData.productName || '',
       expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
       updatedAt: Timestamp.now()
     };
+    if (inventoryId) {
+      data.inventoryId = inventoryId;
+    } else {
+      data.inventoryId = null;
+    }
+
     await updateDoc(doc(db, 'expenses', id), data);
+
+    const idsToRecalc = new Set([oldInventoryId, inventoryId].filter(Boolean));
+    for (const invId of idsToRecalc) {
+      await recalculateInventoryLandedCost(invId);
+    }
     return { data: { id, ...data } };
   } catch (error) {
     throw error;
@@ -1782,7 +2093,14 @@ export const updateExpense = async (id, expenseData) => {
 
 export const deleteExpense = async (id) => {
   try {
+    const oldDoc = await getDoc(doc(db, 'expenses', id));
+    const oldInventoryId = oldDoc.exists() ? oldDoc.data().inventoryId : null;
+
     await deleteDoc(doc(db, 'expenses', id));
+
+    if (oldInventoryId) {
+      await recalculateInventoryLandedCost(oldInventoryId);
+    }
     return { success: true };
   } catch (error) {
     throw error;

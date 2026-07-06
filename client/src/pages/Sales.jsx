@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, deleteSale, createCustomer } from '../services/api';
+import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, updateSalePayment, deleteSalePayment, deleteSale, createCustomer } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
 
@@ -16,6 +16,9 @@ const Sales = () => {
     const [showSaleModal, setShowSaleModal] = useState(false);
     const [showDetailsModal, setShowDetailsModal] = useState(false);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
+    const [editingPaymentKey, setEditingPaymentKey] = useState(null);
+    const [deletingPaymentKey, setDeletingPaymentKey] = useState(null);
     const [showCustomerModal, setShowCustomerModal] = useState(false);
     const [paymentHistoryFilter, setPaymentHistoryFilter] = useState('All'); // For filtering payment history in sale details
     const [editingSale, setEditingSale] = useState(null);
@@ -44,6 +47,12 @@ const Sales = () => {
     });
 
     const [paymentData, setPaymentData] = useState({
+        amount: '',
+        method: 'Cash',
+        notes: ''
+    });
+
+    const [editPaymentData, setEditPaymentData] = useState({
         amount: '',
         method: 'Cash',
         notes: ''
@@ -88,6 +97,8 @@ const Sales = () => {
             date = dateValue;
         } else if (dateValue?.toDate) {
             date = dateValue.toDate();
+        } else if (dateValue?.seconds != null) {
+            date = new Date(dateValue.seconds * 1000);
         } else if (typeof dateValue === 'string' || typeof dateValue === 'number') {
             date = new Date(dateValue);
         } else {
@@ -105,6 +116,15 @@ const Sales = () => {
             hour: '2-digit',
             minute: '2-digit'
         });
+    };
+
+    /** When this line was added to the sale (not inventory created date). */
+    const formatLineAddedToSale = (item, fallbackDate) => {
+        const v = item?.addedToSaleAt;
+        if (v != null && v !== '') {
+            return formatDate(v);
+        }
+        return fallbackDate ? formatDate(fallbackDate) : 'N/A';
     };
 
     const resetSaleForm = () => {
@@ -135,29 +155,19 @@ const Sales = () => {
         setEditingSale(sale);
         setSaleFormData({
             customer: sale.customerId || sale.customer?.id || sale.customer?._id || '',
-            items: sale.items?.map(item => {
-                // Find the inventory item to get the createdAt date
-                const inventoryItem = inventory.find(
-                    inv => (inv.id || inv._id) === (item.inventoryId || item.inventory)
-                );
-                const productAddedDate = inventoryItem?.createdAt
-                    ? formatDate(inventoryItem.createdAt)
-                    : 'N/A';
-
-                return {
-                    inventory: item.inventoryId || item.inventory,
-                    productName: item.productName,
-                    size: item.size,
-                    quantity: item.quantity,
-                    unitPrice: item.unitPrice,
-                    totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
-                    inventorySellingPrice: item.inventorySellingPrice,
-                    inventoryCostPrice: item.inventoryCostPrice,
-                    profitPerUnit: item.profitPerUnit,
-                    totalProfit: item.totalProfit,
-                    productAddedDate
-                };
-            }) || [],
+            items: sale.items?.map(item => ({
+                inventory: item.inventoryId || item.inventory,
+                productName: item.productName,
+                size: item.size,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
+                inventorySellingPrice: item.inventorySellingPrice,
+                inventoryCostPrice: item.inventoryCostPrice,
+                profitPerUnit: item.profitPerUnit,
+                totalProfit: item.totalProfit,
+                addedToSaleAt: item.addedToSaleAt ?? null
+            })) || [],
             paidAmount: sale.paidAmount || '',
             saleType: sale.saleType || 'Cash',
             notes: sale.notes || ''
@@ -235,7 +245,7 @@ const Sales = () => {
             inventoryCostPrice: costPrice,
             profitPerUnit,
             totalProfit,
-            productAddedDate: selectedInventory.createdAt ? formatDate(selectedInventory.createdAt) : 'N/A'
+            addedToSaleAt: new Date()
         };
 
         setSaleFormData(prev => ({
@@ -319,11 +329,71 @@ const Sales = () => {
             showSuccess('Payment added successfully!');
             setShowPaymentModal(false);
             setPaymentData({ amount: '', method: 'Cash', notes: '' });
-            fetchData();
+            await refreshSelectedSale();
         } catch (error) {
             showError(error.message || 'Error adding payment');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const refreshSelectedSale = async () => {
+        await fetchData();
+        if (!selectedSale) return;
+        const salesRes = await getSales({ status: filterStatus });
+        const updated = (salesRes.data || []).find(s => (s.id || s._id) === (selectedSale.id || selectedSale._id));
+        if (updated) setSelectedSale(updated);
+    };
+
+    const getPaymentKey = (payment, index) =>
+        payment.paymentId || payment.collectionId || `idx-${index}`;
+
+    const openEditPayment = (payment) => {
+        setEditingPaymentKey(payment._paymentKey || getPaymentKey(payment, 0));
+        setEditPaymentData({
+            amount: payment.amount != null ? String(payment.amount) : '',
+            method: payment.paymentMethod || 'Cash',
+            notes: payment.notes || ''
+        });
+        setShowEditPaymentModal(true);
+    };
+
+    const handleUpdatePayment = async (e) => {
+        e.preventDefault();
+        if (!editPaymentData.amount || !selectedSale || !editingPaymentKey) {
+            showError('Please enter payment amount');
+            return;
+        }
+        setSaving(true);
+        try {
+            await updateSalePayment(selectedSale.id || selectedSale._id, editingPaymentKey, {
+                amount: parseFloat(editPaymentData.amount),
+                paymentMethod: editPaymentData.method,
+                method: editPaymentData.method,
+                notes: editPaymentData.notes
+            });
+            showSuccess('Payment updated successfully!');
+            setShowEditPaymentModal(false);
+            setEditingPaymentKey(null);
+            await refreshSelectedSale();
+        } catch (error) {
+            showError(error.message || 'Error updating payment');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeletePayment = async (paymentKey) => {
+        if (!window.confirm('Delete this payment? Paid amount and remaining balance will be recalculated.')) return;
+        setDeletingPaymentKey(paymentKey);
+        try {
+            await deleteSalePayment(selectedSale.id || selectedSale._id, paymentKey);
+            showSuccess('Payment deleted successfully!');
+            await refreshSelectedSale();
+        } catch (error) {
+            showError(error.message || 'Error deleting payment');
+        } finally {
+            setDeletingPaymentKey(null);
         }
     };
 
@@ -1136,7 +1206,7 @@ const Sales = () => {
                                                         <th className="text-left py-2 px-3">Qty</th>
                                                         <th className="text-left py-2 px-3">Unit Price</th>
                                                         <th className="text-left py-2 px-3">Total</th>
-                                                        <th className="text-left py-2 px-3">Added Date</th>
+                                                        <th className="text-left py-2 px-3">Added on sale</th>
                                                         <th className="text-left py-2 px-3">Actions</th>
                                                     </tr>
                                                 </thead>
@@ -1177,7 +1247,7 @@ const Sales = () => {
                                                             </td>
                                                             <td className="py-2 px-3">Rs. {item.totalPrice?.toLocaleString() || 0}</td>
                                                             <td className="py-2 px-3 text-xs text-gray-600">
-                                                                {item.productAddedDate || 'N/A'}
+                                                                {formatLineAddedToSale(item, editingSale?.saleDate)}
                                                             </td>
                                                             <td className="py-2 px-3">
                                                                 <button
@@ -1353,48 +1423,35 @@ const Sales = () => {
                                                 <th className="text-left py-2">Qty</th>
                                                 <th className="text-left py-2">Unit Price</th>
                                                 <th className="text-left py-2">Total</th>
-                                                <th className="text-left py-2">Product Added</th>
-                                                <th className="text-left py-2">Sale Date</th>
+                                                <th className="text-left py-2">Added on sale</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {selectedSale.items?.map((item, index) => {
-                                                // Find the inventory item for this sale item
-                                                const inventoryItem = inventory.find(
-                                                    inv => (inv.id || inv._id) === (item.inventoryId || item.inventory)
-                                                );
-                                                const productAddedDate = inventoryItem?.createdAt
-                                                    ? formatDate(inventoryItem.createdAt)
-                                                    : 'N/A';
-                                                const saleDate = selectedSale.saleDate
-                                                    ? formatDate(selectedSale.saleDate)
-                                                    : formatDate(selectedSale.createdAt);
-
-                                                return (
-                                                    <tr key={index} className="border-b border-gray-100">
-                                                        <td className="py-2">{item.productName}</td>
-                                                        <td className="py-2">{item.size}</td>
-                                                        <td className="py-2">{item.quantity}</td>
-                                                        <td className="py-2">Rs. {item.unitPrice?.toLocaleString()}</td>
-                                                        <td className="py-2">Rs. {item.totalPrice?.toLocaleString()}</td>
-                                                        <td className="py-2 text-xs text-gray-600">{productAddedDate}</td>
-                                                        <td className="py-2 text-xs text-gray-600">{saleDate}</td>
-                                                    </tr>
-                                                );
-                                            })}
+                                            {selectedSale.items?.map((item, index) => (
+                                                <tr key={index} className="border-b border-gray-100">
+                                                    <td className="py-2">{item.productName}</td>
+                                                    <td className="py-2">{item.size}</td>
+                                                    <td className="py-2">{item.quantity}</td>
+                                                    <td className="py-2">Rs. {item.unitPrice?.toLocaleString()}</td>
+                                                    <td className="py-2">Rs. {item.totalPrice?.toLocaleString()}</td>
+                                                    <td className="py-2 text-xs text-gray-600">
+                                                        {formatLineAddedToSale(item, selectedSale.saleDate)}
+                                                    </td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                         <tfoot>
                                             <tr>
                                                 <td colSpan="4" className="text-right py-2 font-semibold">Total Amount:</td>
-                                                <td className="py-2 font-semibold" colSpan="3">Rs. {selectedSale.totalAmount?.toLocaleString()}</td>
+                                                <td className="py-2 font-semibold" colSpan="2">Rs. {selectedSale.totalAmount?.toLocaleString()}</td>
                                             </tr>
                                             <tr>
                                                 <td colSpan="4" className="text-right py-2">Paid Amount:</td>
-                                                <td className="py-2" colSpan="3">Rs. {selectedSale.paidAmount?.toLocaleString()}</td>
+                                                <td className="py-2" colSpan="2">Rs. {selectedSale.paidAmount?.toLocaleString()}</td>
                                             </tr>
                                             <tr>
                                                 <td colSpan="4" className="text-right py-2 font-semibold">Remaining:</td>
-                                                <td className="py-2 font-semibold" colSpan="3">Rs. {selectedSale.remainingAmount?.toLocaleString()}</td>
+                                                <td className="py-2 font-semibold" colSpan="2">Rs. {selectedSale.remainingAmount?.toLocaleString()}</td>
                                             </tr>
                                         </tfoot>
                                     </table>
@@ -1586,10 +1643,20 @@ const Sales = () => {
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Method</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Type</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Notes</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Actions</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {(paymentHistoryFilter === 'All' ? existingPayments : filteredPayments)
+                                                            {(() => {
+                                                                const baseList = paymentHistoryFilter === 'All' ? existingPayments : filteredPayments;
+                                                                const paymentsWithKeys = baseList.map((p, i) => {
+                                                                    const origIdx = existingPayments.indexOf(p);
+                                                                    return {
+                                                                        ...p,
+                                                                        _paymentKey: p.paymentId || p.collectionId || `idx-${origIdx >= 0 ? origIdx : i}`
+                                                                    };
+                                                                });
+                                                                return paymentsWithKeys
                                                                 .sort((a, b) => {
                                                                     const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
                                                                     const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
@@ -1621,7 +1688,7 @@ const Sales = () => {
                                                                     const paymentAmount = parseFloat(payment.amount) || 0;
 
                                                                     return (
-                                                                        <tr key={index} className="border-b border-gray-200 hover:bg-white transition-colors">
+                                                                        <tr key={payment._paymentKey} className="border-b border-gray-200 hover:bg-white transition-colors">
                                                                             <td className="py-3 px-3 text-gray-600 font-medium">{index + 1}</td>
                                                                             <td className="py-3 px-3">
                                                                                 <div className="font-semibold text-gray-900">{formattedDate}</div>
@@ -1645,9 +1712,31 @@ const Sales = () => {
                                                                             <td className="py-3 px-3 text-gray-600 text-xs">
                                                                                 {payment.notes || <span className="text-gray-400">-</span>}
                                                                             </td>
+                                                                            <td className="py-3 px-3">
+                                                                                <div className="flex items-center gap-1">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => openEditPayment(payment)}
+                                                                                        className="p-1.5 text-green-600 hover:bg-green-50 rounded"
+                                                                                        title="Edit payment"
+                                                                                    >
+                                                                                        <Edit2 className="w-4 h-4" />
+                                                                                    </button>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => handleDeletePayment(payment._paymentKey)}
+                                                                                        disabled={deletingPaymentKey === payment._paymentKey}
+                                                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                                                                        title="Delete payment"
+                                                                                    >
+                                                                                        <Trash2 className="w-4 h-4" />
+                                                                                    </button>
+                                                                                </div>
+                                                                            </td>
                                                                         </tr>
                                                                     );
-                                                                })}
+                                                                });
+                                                            })()}
                                                         </tbody>
                                                         <tfoot className="bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-300">
                                                             <tr>
@@ -1657,7 +1746,7 @@ const Sales = () => {
                                                                 <td className="py-3 px-3 font-bold text-green-600 text-lg">
                                                                     Rs. {totalFromPayments.toLocaleString()}
                                                                 </td>
-                                                                <td colSpan="3" className="py-3 px-3"></td>
+                                                                <td colSpan="4" className="py-3 px-3"></td>
                                                             </tr>
                                                         </tfoot>
                                                     </table>
@@ -1789,6 +1878,88 @@ const Sales = () => {
                                     className="btn-primary"
                                 >
                                     {saving ? 'Adding...' : 'Add Payment'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Payment Modal */}
+            {showEditPaymentModal && selectedSale && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                        <div className="p-6 border-b border-gray-200">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-xl font-bold text-gray-800">Edit Payment</h3>
+                                <button
+                                    onClick={() => {
+                                        setShowEditPaymentModal(false);
+                                        setEditingPaymentKey(null);
+                                    }}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                        <form onSubmit={handleUpdatePayment} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={editPaymentData.amount}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                            setEditPaymentData({ ...editPaymentData, amount: value });
+                                        }
+                                    }}
+                                    className="input-field"
+                                    placeholder="0"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                                <select
+                                    value={editPaymentData.method}
+                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                    className="input-field"
+                                >
+                                    <option value="Cash">Cash</option>
+                                    <option value="Bank Transfer">Bank Transfer</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                                <textarea
+                                    value={editPaymentData.notes}
+                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, notes: e.target.value })}
+                                    className="input-field"
+                                    rows="3"
+                                    placeholder="Payment notes..."
+                                />
+                            </div>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowEditPaymentModal(false);
+                                        setEditingPaymentKey(null);
+                                    }}
+                                    className="btn-secondary"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={saving}
+                                    className="btn-primary"
+                                >
+                                    {saving ? 'Saving...' : 'Save Changes'}
                                 </button>
                             </div>
                         </form>

@@ -15,7 +15,7 @@ const BrandsCategories = () => {
   const [editingItem, setEditingItem] = useState(null);
   const [modalType, setModalType] = useState('brand');
 
-  
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',

@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit2, Trash2, DollarSign, Calendar, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getExpenses, createExpense, updateExpense, deleteExpense } from '../services/api';
+import { Plus, Search, Edit2, Trash2, DollarSign, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { getExpenses, createExpensesBatch, updateExpense, deleteExpense, getInventory } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
 
 const Expenses = () => {
   const [expenses, setExpenses] = useState([]);
+  const [inventoryList, setInventoryList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [originalGroupExpenseIds, setOriginalGroupExpenseIds] = useState([]);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
@@ -20,23 +24,42 @@ const Expenses = () => {
   const expenseCategories = [
     'Tea & Food',
     'Labour',
+    'Rafu',
+    'Wash',
+    'Weaving',
     'Electricity',
     'Rent',
     'Transport',
     'Maintenance',
+    'Partner / Personal',
     'Other'
   ];
+
+  const newExpenseLine = (overrides = {}) => ({
+    key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    category: 'Labour',
+    description: '',
+    amount: '',
+    expenseId: null,
+    isOriginal: false,
+    ...overrides
+  });
+
+  const [expenseLines, setExpenseLines] = useState([newExpenseLine()]);
 
   const [formData, setFormData] = useState({
     description: '',
     amount: '',
     category: 'Tea & Food',
     expenseDate: new Date().toISOString().split('T')[0],
-    notes: ''
+    notes: '',
+    expenseScope: 'general',
+    inventoryId: ''
   });
 
   useEffect(() => {
     fetchData();
+    getInventory().then(res => setInventoryList(res.data || [])).catch(() => {});
   }, [filterMonth, filterYear]);
 
   const fetchData = async () => {
@@ -92,44 +115,237 @@ const Expenses = () => {
       amount: '',
       category: 'Tea & Food',
       expenseDate: new Date().toISOString().split('T')[0],
-      notes: ''
+      notes: '',
+      expenseScope: 'general',
+      inventoryId: ''
     });
+    setExpenseLines([newExpenseLine()]);
     setEditingExpense(null);
+    setEditingGroupId(null);
+    setOriginalGroupExpenseIds([]);
+  };
+
+  const getExpenseTimestamp = (expense) => {
+    if (!expense?.expenseDate) return 0;
+    const d = expense.expenseDate?.toDate ? expense.expenseDate.toDate() : new Date(expense.expenseDate);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  };
+
+  const getProductName = (expense) =>
+    inventoryList.find(p => (p.id || p._id) === expense.inventoryId)?.productName ||
+    expense.productName ||
+    '—';
+
+  const groupExpensesForDisplay = (expenseList) => {
+    const generalRows = [];
+    const productGroups = new Map();
+
+    expenseList.forEach(expense => {
+      if (expense.inventoryId) {
+        const key = expense.inventoryId;
+        if (!productGroups.has(key)) productGroups.set(key, []);
+        productGroups.get(key).push(expense);
+      } else {
+        generalRows.push({ type: 'general', expense });
+      }
+    });
+
+    const rows = [];
+    productGroups.forEach((items, inventoryId) => {
+      const sorted = [...items].sort((a, b) => getExpenseTimestamp(b) - getExpenseTimestamp(a));
+      rows.push({
+        type: 'product-group',
+        inventoryId,
+        items: sorted,
+        totalAmount: sorted.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0),
+        latestDate: sorted[0]?.expenseDate,
+        productName: getProductName(sorted[0])
+      });
+    });
+
+    generalRows.forEach(row => rows.push(row));
+
+    rows.sort((a, b) => {
+      const tsA = a.type === 'product-group' ? getExpenseTimestamp({ expenseDate: a.latestDate }) : getExpenseTimestamp(a.expense);
+      const tsB = b.type === 'product-group' ? getExpenseTimestamp({ expenseDate: b.latestDate }) : getExpenseTimestamp(b.expense);
+      return tsB - tsA;
+    });
+
+    return rows;
+  };
+
+  const toggleGroupExpand = (inventoryId) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(inventoryId)) next.delete(inventoryId);
+      else next.add(inventoryId);
+      return next;
+    });
+  };
+
+  const openProductGroupModal = (group) => {
+    const first = group.items[0];
+    const expenseDate = first.expenseDate?.toDate ? first.expenseDate.toDate() : new Date(first.expenseDate);
+    setEditingExpense(null);
+    setEditingGroupId(group.inventoryId);
+    setOriginalGroupExpenseIds(group.items.map(e => e.id || e._id));
+    setFormData({
+      description: '',
+      amount: '',
+      category: 'Tea & Food',
+      expenseDate: expenseDate.toISOString().split('T')[0],
+      notes: '',
+      expenseScope: 'product',
+      inventoryId: group.inventoryId
+    });
+    setExpenseLines(group.items.map(exp => newExpenseLine({
+      key: `edit-${exp.id || exp._id}`,
+      category: exp.category || 'Other',
+      description: exp.description || '',
+      amount: exp.amount != null ? String(exp.amount) : '',
+      expenseId: exp.id || exp._id,
+      isOriginal: true
+    })));
+    setShowModal(true);
+  };
+
+  const updateExpenseLine = (key, field, value) => {
+    setExpenseLines(lines => lines.map(l => (l.key === key ? { ...l, [field]: value } : l)));
+  };
+
+  const addExpenseLine = () => {
+    setExpenseLines(lines => [...lines, newExpenseLine()]);
+  };
+
+  const removeExpenseLine = (key) => {
+    setExpenseLines(lines => {
+      if (lines.length <= 1) return lines;
+      const line = lines.find(l => l.key === key);
+      if (!editingGroupId && line?.isOriginal) return lines;
+      return lines.filter(l => l.key !== key);
+    });
+  };
+
+  const buildLinePayload = (line) => {
+    const selectedProduct = inventoryList.find(p => (p.id || p._id) === formData.inventoryId);
+    return {
+      description: line.description.trim() || line.category,
+      amount: parseFloat(line.amount) || 0,
+      category: line.category,
+      expenseDate: formData.expenseDate,
+      notes: formData.notes,
+      inventoryId: formData.expenseScope === 'product' ? formData.inventoryId : '',
+      productName: selectedProduct?.productName || ''
+    };
   };
 
   const handleEdit = (expense) => {
-    setEditingExpense(expense);
+    if (expense.inventoryId) {
+      const groupItems = expenses.filter(e => e.inventoryId === expense.inventoryId);
+      openProductGroupModal({
+        inventoryId: expense.inventoryId,
+        items: groupItems
+      });
+      return;
+    }
+
+    const expenseId = expense.id || expense._id;
     const expenseDate = expense.expenseDate?.toDate ? expense.expenseDate.toDate() : new Date(expense.expenseDate);
+    setEditingGroupId(null);
+    setOriginalGroupExpenseIds([]);
+    setEditingExpense(expense);
     setFormData({
-      description: expense.description || '',
-      amount: expense.amount || '',
-      category: expense.category || 'Tea & Food',
+      description: '',
+      amount: '',
+      category: 'Tea & Food',
       expenseDate: expenseDate.toISOString().split('T')[0],
-      notes: expense.notes || ''
+      notes: expense.notes || '',
+      expenseScope: expense.inventoryId ? 'product' : 'general',
+      inventoryId: expense.inventoryId || ''
     });
+    setExpenseLines([newExpenseLine({
+      key: `edit-${expenseId}`,
+      category: expense.category || 'Tea & Food',
+      description: expense.description || '',
+      amount: expense.amount != null ? String(expense.amount) : '',
+      expenseId,
+      isOriginal: true
+    })]);
     setShowModal(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!formData.description || !formData.amount) {
-      showError('Please fill all required fields');
+    const validLines = expenseLines.filter(l => parseFloat(l.amount) > 0);
+    if (validLines.length === 0) {
+      showError('Add at least one expense with an amount');
+      return;
+    }
+    if (formData.expenseScope === 'product' && !formData.inventoryId) {
+      showError('Please select a product for product expense');
       return;
     }
 
     setSaving(true);
     try {
-      if (editingExpense) {
-        await updateExpense(editingExpense.id || editingExpense._id, formData);
-        showSuccess('Expense updated successfully!');
+      if (editingGroupId) {
+        const validLines = expenseLines.filter(l => parseFloat(l.amount) > 0);
+        if (validLines.length === 0) {
+          showError('Add at least one expense with an amount');
+          setSaving(false);
+          return;
+        }
+
+        for (const line of validLines.filter(l => l.expenseId)) {
+          await updateExpense(line.expenseId, buildLinePayload(line));
+        }
+
+        const newLines = validLines.filter(l => !l.expenseId);
+        if (newLines.length > 0) {
+          await createExpensesBatch(newLines.map(line => buildLinePayload(line)));
+        }
+
+        const keptIds = new Set(validLines.map(l => l.expenseId).filter(Boolean));
+        for (const id of originalGroupExpenseIds) {
+          if (!keptIds.has(id)) {
+            await deleteExpense(id);
+          }
+        }
+
+        showSuccess('Product expenses updated successfully!');
+      } else if (editingExpense) {
+        const editId = editingExpense.id || editingExpense._id;
+        const originalLine = expenseLines.find(l => l.expenseId === editId);
+        if (!originalLine || parseFloat(originalLine.amount) <= 0) {
+          showError('The expense being edited must have an amount');
+          setSaving(false);
+          return;
+        }
+        await updateExpense(editId, buildLinePayload(originalLine));
+
+        const newLines = validLines.filter(l => !l.expenseId);
+        if (newLines.length > 0) {
+          await createExpensesBatch(newLines.map(line => buildLinePayload(line)));
+        }
+
+        showSuccess(
+          newLines.length > 0
+            ? `Expense updated and ${newLines.length} new expense(s) added!`
+            : 'Expense updated successfully!'
+        );
       } else {
-        await createExpense(formData);
-        showSuccess('Expense added successfully!');
+        await createExpensesBatch(validLines.map(line => buildLinePayload(line)));
+        showSuccess(
+          validLines.length === 1
+            ? 'Expense added successfully!'
+            : `${validLines.length} expenses added successfully!`
+        );
       }
       setShowModal(false);
       resetForm();
       fetchData();
+      getInventory().then(res => setInventoryList(res.data || [])).catch(() => {});
     } catch (error) {
       showError(error.message || 'Error saving expense');
     } finally {
@@ -155,16 +371,20 @@ const Expenses = () => {
   };
 
   const filteredExpenses = expenses.filter(expense => {
-    const matchesSearch = !searchTerm ||
-      expense.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      expense.category?.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSearch;
+    if (!searchTerm) return true;
+    const term = searchTerm.toLowerCase();
+    return expense.description?.toLowerCase().includes(term) ||
+      expense.category?.toLowerCase().includes(term) ||
+      expense.productName?.toLowerCase().includes(term) ||
+      getProductName(expense).toLowerCase().includes(term);
   });
+
+  const displayRows = groupExpensesForDisplay(filteredExpenses);
 
   const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
 
-  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
-  const paginatedExpenses = filteredExpenses.slice(
+  const totalPages = Math.ceil(displayRows.length / itemsPerPage);
+  const paginatedRows = displayRows.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
@@ -266,51 +486,138 @@ const Expenses = () => {
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Description</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Category</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Type</th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Product</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Amount</th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedExpenses.length === 0 ? (
+                  {paginatedRows.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="text-center py-8 text-gray-500">
+                      <td colSpan="7" className="text-center py-8 text-gray-500">
                         No expenses found. Add your first expense to get started.
                       </td>
                     </tr>
                   ) : (
-                    paginatedExpenses.map((expense) => (
-                      <tr key={expense.id || expense._id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-4">{formatDate(expense.expenseDate)}</td>
-                        <td className="py-3 px-4">{expense.description}</td>
-                        <td className="py-3 px-4">
-                          <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
-                            {expense.category}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-red-600">
-                          Rs. {parseFloat(expense.amount || 0).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleEdit(expense)}
-                              className="p-1 text-green-600 hover:bg-green-50 rounded"
-                              title="Edit Expense"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(expense.id || expense._id)}
-                              disabled={deleting === (expense.id || expense._id)}
-                              className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                              title="Delete Expense"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                    paginatedRows.map((row) => {
+                      if (row.type === 'product-group') {
+                        const isExpanded = expandedGroups.has(row.inventoryId);
+                        const categories = [...new Set(row.items.map(e => e.category).filter(Boolean))];
+                        return (
+                          <React.Fragment key={`group-${row.inventoryId}`}>
+                            <tr className="border-b border-gray-100 hover:bg-amber-50/40 bg-amber-50/20">
+                              <td className="py-3 px-4">{formatDate(row.latestDate)}</td>
+                              <td className="py-3 px-4">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroupExpand(row.inventoryId)}
+                                  className="flex items-center gap-2 text-left font-medium text-gray-800 hover:text-amber-800"
+                                >
+                                  {isExpanded ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                                  <span>{categories.join(', ')}</span>
+                                  <span className="text-xs font-normal text-gray-500">({row.items.length} items)</span>
+                                </button>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex flex-wrap gap-1">
+                                  {categories.map(cat => (
+                                    <span key={cat} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                                      {cat}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                                  Product
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-sm font-medium text-gray-800">
+                                {row.productName}
+                              </td>
+                              <td className="py-3 px-4 font-semibold text-red-600">
+                                Rs. {row.totalAmount.toLocaleString()}
+                              </td>
+                              <td className="py-3 px-4">
+                                <button
+                                  onClick={() => openProductGroupModal(row)}
+                                  className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                  title="Manage all expenses for this product"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                            {isExpanded && row.items.map(expense => (
+                              <tr key={expense.id || expense._id} className="border-b border-gray-50 bg-gray-50/80">
+                                <td className="py-2 px-4 pl-10 text-sm text-gray-500">{formatDate(expense.expenseDate)}</td>
+                                <td className="py-2 px-4 text-sm text-gray-700">{expense.description}</td>
+                                <td className="py-2 px-4">
+                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs">{expense.category}</span>
+                                </td>
+                                <td className="py-2 px-4" />
+                                <td className="py-2 px-4" />
+                                <td className="py-2 px-4 text-sm font-medium text-red-600">
+                                  Rs. {parseFloat(expense.amount || 0).toLocaleString()}
+                                </td>
+                                <td className="py-2 px-4">
+                                  <button
+                                    onClick={() => handleDelete(expense.id || expense._id)}
+                                    disabled={deleting === (expense.id || expense._id)}
+                                    className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                    title="Delete this line"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      }
+
+                      const expense = row.expense;
+                      return (
+                        <tr key={expense.id || expense._id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-3 px-4">{formatDate(expense.expenseDate)}</td>
+                          <td className="py-3 px-4">{expense.description}</td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                              {expense.category}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                              General
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-gray-600">—</td>
+                          <td className="py-3 px-4 font-semibold text-red-600">
+                            Rs. {parseFloat(expense.amount || 0).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleEdit(expense)}
+                                className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                title="Edit Expense"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(expense.id || expense._id)}
+                                disabled={deleting === (expense.id || expense._id)}
+                                className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                title="Delete Expense"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -346,12 +653,26 @@ const Expenses = () => {
       {/* Expense Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          <div className="bg-white rounded-lg shadow-xl w-full max-h-[90vh] overflow-y-auto max-w-2xl">
             <div className="p-6 border-b border-gray-200">
               <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-800">
-                  {editingExpense ? 'Edit Expense' : 'Add New Expense'}
-                </h3>
+                <div>
+                  <h3 className="text-xl font-bold text-gray-800">
+                    {editingGroupId
+                      ? 'Manage Product Expenses'
+                      : editingExpense
+                        ? 'Edit Expense'
+                        : 'Add New Expense'}
+                  </h3>
+                  {editingGroupId && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      All expenses for {inventoryList.find(p => (p.id || p._id) === editingGroupId)?.productName || 'this product'} — edit, add or remove lines
+                    </p>
+                  )}
+                  {editingExpense && !editingGroupId && (
+                    <p className="text-sm text-gray-500 mt-1">Edit this expense and add more lines below if needed</p>
+                  )}
+                </div>
                 <button
                   onClick={() => {
                     setShowModal(false);
@@ -366,48 +687,42 @@ const Expenses = () => {
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
-                <input
-                  type="text"
-                  required
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expense type *</label>
+                <select
+                  value={formData.expenseScope}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    expenseScope: e.target.value,
+                    inventoryId: e.target.value === 'general' ? '' : formData.inventoryId
+                  })}
                   className="input-field"
-                  placeholder="e.g., Tea for staff, Labour payment"
-                />
+                  disabled={!!editingGroupId}
+                >
+                  <option value="general">General (shop / home / partner — not linked to product)</option>
+                  <option value="product">Product (adds to product cost per piece)</option>
+                </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {formData.expenseScope === 'product' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs.) *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.amount}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                        setFormData({ ...formData, amount: value });
-                      }
-                    }}
-                    className="input-field"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Link to product *</label>
                   <select
                     required
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    value={formData.inventoryId}
+                    onChange={(e) => setFormData({ ...formData, inventoryId: e.target.value })}
                     className="input-field"
+                    disabled={!!editingGroupId}
                   >
-                    {expenseCategories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
+                    <option value="">Select product</option>
+                    {inventoryList.map(item => (
+                      <option key={item.id || item._id} value={item.id || item._id}>
+                        {item.productName} (Qty: {item.initialQuantity || item.sizes?.reduce((s, x) => s + (x.quantity || 0), 0) || 0})
+                      </option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-500 mt-1">Cost per piece will update: (purchase + expenses) ÷ original quantity</p>
                 </div>
-              </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
@@ -420,14 +735,106 @@ const Expenses = () => {
                 />
               </div>
 
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700">Expense lines *</label>
+                  <button
+                    type="button"
+                    onClick={addExpenseLine}
+                    className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add line
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {editingGroupId
+                    ? 'All lines for this product. Remove a line to delete that expense on save.'
+                    : editingExpense
+                      ? 'First line is the expense you are editing. Add more lines for Labour, Transport, etc.'
+                      : 'Add Labour, Transport, etc. — all saved together in one click'}
+                </p>
+
+                <div className="space-y-2">
+                  {expenseLines.map((line) => (
+                    <div
+                      key={line.key}
+                      className={`grid grid-cols-12 gap-2 items-start p-3 rounded-lg border ${
+                        line.isOriginal ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      {line.isOriginal && !editingGroupId && (
+                        <div className="col-span-12">
+                          <span className="text-xs font-medium text-blue-700 bg-blue-100 px-2 py-0.5 rounded">Editing this expense</span>
+                        </div>
+                      )}
+                      <div className="col-span-12 sm:col-span-3">
+                        <label className="text-xs text-gray-500 mb-1 block">Category</label>
+                        <select
+                          value={line.category}
+                          onChange={(e) => updateExpenseLine(line.key, 'category', e.target.value)}
+                          className="input-field text-sm"
+                        >
+                          {expenseCategories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-6 sm:col-span-3">
+                        <label className="text-xs text-gray-500 mb-1 block">Amount (Rs.)</label>
+                        <input
+                          type="text"
+                          value={line.amount}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                              updateExpenseLine(line.key, 'amount', value);
+                            }
+                          }}
+                          className="input-field text-sm"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="col-span-6 sm:col-span-5">
+                        <label className="text-xs text-gray-500 mb-1 block">Description (optional)</label>
+                        <input
+                          type="text"
+                          value={line.description}
+                          onChange={(e) => updateExpenseLine(line.key, 'description', e.target.value)}
+                          className="input-field text-sm"
+                          placeholder={line.category}
+                        />
+                      </div>
+                      <div className="col-span-12 sm:col-span-1 flex sm:justify-end sm:pt-6">
+                        <button
+                          type="button"
+                          onClick={() => removeExpenseLine(line.key)}
+                          disabled={expenseLines.length <= 1 || (!editingGroupId && line.isOriginal)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded disabled:opacity-30"
+                          title={!editingGroupId && line.isOriginal ? 'Cannot remove the expense being edited' : 'Remove line'}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {expenseLines.some(l => parseFloat(l.amount) > 0) && (
+                  <p className="text-sm font-medium text-gray-700 text-right">
+                    Total: Rs. {expenseLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0).toLocaleString()}
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                 <textarea
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   className="input-field"
-                  rows="3"
-                  placeholder="Additional notes (optional)"
+                  rows="2"
+                  placeholder="Additional notes (optional, applies to all lines)"
                 />
               </div>
 
@@ -450,10 +857,24 @@ const Expenses = () => {
                   {saving ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      <span>{editingExpense ? 'Updating...' : 'Adding...'}</span>
+                      <span>{editingGroupId ? 'Saving...' : editingExpense ? 'Saving...' : 'Adding...'}</span>
                     </>
                   ) : (
-                    <span>{editingExpense ? 'Update Expense' : 'Add Expense'}</span>
+                    <span>
+                      {editingGroupId
+                        ? 'Save Product Expenses'
+                        : editingExpense
+                          ? (() => {
+                              const newCount = expenseLines.filter(l => !l.expenseId && parseFloat(l.amount) > 0).length;
+                              if (newCount > 0) return `Update & Add ${newCount} More`;
+                              return 'Update Expense';
+                            })()
+                          : (() => {
+                              const n = expenseLines.filter(l => parseFloat(l.amount) > 0).length;
+                              if (n > 1) return `Save ${n} Expenses`;
+                              return 'Add Expense';
+                            })()}
+                    </span>
                   )}
                 </button>
               </div>

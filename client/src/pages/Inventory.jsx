@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
-import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats } from '../services/api';
+import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';
+import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats, getProductExpenses, createExpensesBatch, deleteExpense } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
 import { showSuccess, showError } from '../utils/toast';
 import { TableRowShimmer } from '../components/Shimmer';
@@ -24,6 +24,22 @@ const Inventory = () => {
   const [deleting, setDeleting] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedItems, setExpandedItems] = useState(new Set()); // Track expanded items
+  const [showCostingModal, setShowCostingModal] = useState(false);
+  const [costingItem, setCostingItem] = useState(null);
+  const [productExpenses, setProductExpenses] = useState([]);
+  const [loadingCosting, setLoadingCosting] = useState(false);
+  const [savingProductExpense, setSavingProductExpense] = useState(false);
+  const newProductExpenseLine = () => ({
+    key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    category: 'Labour',
+    description: '',
+    amount: ''
+  });
+  const [productExpenseLines, setProductExpenseLines] = useState([newProductExpenseLine()]);
+  const [productExpenseDate, setProductExpenseDate] = useState(new Date().toISOString().split('T')[0]);
+  const productExpenseCategories = [
+    'Tea & Food', 'Labour', 'Rafu', 'Wash', 'Weaving', 'Rent', 'Transport', 'Maintenance', 'Other'
+  ];
   const itemsPerPage = 10;
   const [formData, setFormData] = useState({
     brand: '',
@@ -31,6 +47,7 @@ const Inventory = () => {
     subcategory: '',
     productName: '',
     quantity: '',
+    basePurchaseCost: '',
     costPerUnit: '',
     sellingPrice: '', // Original price (Was price for sale items)
     onlinePrice: '', // Online/website price (Now price for sale items)
@@ -262,6 +279,11 @@ const Inventory = () => {
         // This ensures Initial - Sold = Current always makes sense
         const newInitialQty = newTotalQty + soldQty;
         dataToSubmit.initialQuantity = newInitialQty;
+        const baseCost = parseFloat(formData.basePurchaseCost);
+        const unitCost = parseFloat(formData.costPerUnit) || 0;
+        dataToSubmit.basePurchaseCost = !isNaN(baseCost) && baseCost > 0
+          ? baseCost
+          : unitCost * newInitialQty;
 
         // Final cleanup before update
         const finalData = Object.fromEntries(
@@ -283,6 +305,11 @@ const Inventory = () => {
           ? dataToSubmit.sizes.reduce((sum, s) => sum + (s.quantity || 0), 0)
           : parseInt(dataToSubmit.quantity || 0);
         dataToSubmit.initialQuantity = newTotalQty;
+        const baseCost = parseFloat(formData.basePurchaseCost);
+        const unitCost = parseFloat(formData.costPerUnit) || 0;
+        dataToSubmit.basePurchaseCost = !isNaN(baseCost) && baseCost > 0
+          ? baseCost
+          : unitCost * newTotalQty;
 
         // Final cleanup before create
         const finalData = Object.fromEntries(
@@ -337,7 +364,12 @@ const Inventory = () => {
       subcategory: isSubcategory ? categoryId : '',
       productName: item.productName,
       quantity: isOneSize ? item.sizes[0].quantity : '',
-      costPerUnit: item.costPerUnit,
+      basePurchaseCost: item.basePurchaseCost || (item.initialQuantity && item.costPerUnit
+        ? Math.round(item.initialQuantity * parseFloat(item.costPerUnit))
+        : ''),
+      costPerUnit: item.costPerUnit != null && item.costPerUnit !== ''
+        ? Math.round(parseFloat(item.costPerUnit) || 0)
+        : '',
       sellingPrice: item.sellingPrice,
       onlinePrice: item.onlinePrice || '',
       sku: item.sku || '',
@@ -404,6 +436,129 @@ const Inventory = () => {
     });
   };
 
+
+  const getItemInitialQty = (item) => {
+    if (!item) return 0;
+    return parseFloat(item.initialQuantity) ||
+      (item.sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+  };
+
+  const getFormTotalQty = (data = formData, withSizes = useSizes) => {
+    if (withSizes) {
+      return data.sizes.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0);
+    }
+    return parseFloat(data.quantity) || 0;
+  };
+
+  const computeCostPerUnitFromPurchase = (basePurchaseCost, qty) => {
+    const base = parseFloat(basePurchaseCost);
+    if (qty > 0 && base > 0 && !isNaN(base)) {
+      return String(Math.round(base / qty));
+    }
+    return null;
+  };
+
+  const applyPurchaseCostSync = (updates) => {
+    const merged = { ...formData, ...updates };
+    const computed = computeCostPerUnitFromPurchase(merged.basePurchaseCost, getFormTotalQty(merged));
+    if (computed != null) {
+      merged.costPerUnit = computed;
+    }
+    return merged;
+  };
+
+  const openCostingModal = async (item) => {
+    setCostingItem(item);
+    setShowCostingModal(true);
+    setProductExpenseLines([newProductExpenseLine()]);
+    setProductExpenseDate(new Date().toISOString().split('T')[0]);
+    await loadProductExpenses(item.id || item._id, item);
+  };
+
+  const updateProductExpenseLine = (key, field, value) => {
+    setProductExpenseLines(lines => lines.map(l => (l.key === key ? { ...l, [field]: value } : l)));
+  };
+
+  const addProductExpenseLine = () => {
+    setProductExpenseLines(lines => [...lines, newProductExpenseLine()]);
+  };
+
+  const removeProductExpenseLine = (key) => {
+    setProductExpenseLines(lines => (lines.length <= 1 ? lines : lines.filter(l => l.key !== key)));
+  };
+
+  const loadProductExpenses = async (itemId, itemOverride) => {
+    setLoadingCosting(true);
+    try {
+      const res = await getProductExpenses(itemId);
+      setProductExpenses(res.data || []);
+      if (itemOverride) setCostingItem(itemOverride);
+      else {
+        const fresh = await getInventory();
+        const updated = (fresh.data || []).find(i => (i.id || i._id) === itemId);
+        if (updated) setCostingItem(updated);
+      }
+    } catch (e) {
+      showError(e.message || 'Could not load product expenses');
+    } finally {
+      setLoadingCosting(false);
+    }
+  };
+
+  const handleAddProductExpense = async (e) => {
+    e.preventDefault();
+    if (!costingItem) return;
+    const validLines = productExpenseLines.filter(l => parseFloat(l.amount) > 0);
+    if (validLines.length === 0) {
+      showError('Add at least one expense with an amount');
+      return;
+    }
+    setSavingProductExpense(true);
+    try {
+      const payloads = validLines.map(line => ({
+        description: line.description.trim() || line.category,
+        amount: parseFloat(line.amount) || 0,
+        category: line.category,
+        expenseDate: productExpenseDate,
+        inventoryId: costingItem.id || costingItem._id,
+        productName: costingItem.productName
+      }));
+      await createExpensesBatch(payloads);
+      showSuccess(
+        validLines.length === 1
+          ? 'Product expense added — cost per piece updated'
+          : `${validLines.length} expenses added — cost per piece updated`
+      );
+      setProductExpenseLines([newProductExpenseLine()]);
+      await fetchData();
+      const fresh = await getInventory();
+      const updated = (fresh.data || []).find(i => (i.id || i._id) === (costingItem.id || costingItem._id));
+      if (updated) setCostingItem(updated);
+      await loadProductExpenses(costingItem.id || costingItem._id, updated);
+    } catch (err) {
+      showError(err.message || 'Error adding expense');
+    } finally {
+      setSavingProductExpense(false);
+    }
+  };
+
+  const handleDeleteProductExpense = async (expenseId) => {
+    if (!window.confirm('Delete this product expense? Cost per piece will be recalculated.')) return;
+    try {
+      await deleteExpense(expenseId);
+      showSuccess('Expense deleted');
+      await fetchData();
+      if (costingItem) {
+        const fresh = await getInventory();
+        const updated = (fresh.data || []).find(i => (i.id || i._id) === (costingItem.id || costingItem._id));
+        if (updated) setCostingItem(updated);
+        await loadProductExpenses(costingItem.id || costingItem._id, updated);
+      }
+    } catch (err) {
+      showError(err.message || 'Error deleting expense');
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       brand: '',
@@ -411,6 +566,7 @@ const Inventory = () => {
       subcategory: '',
       productName: '',
       quantity: '',
+      basePurchaseCost: '',
       costPerUnit: '',
       sellingPrice: '',
       onlinePrice: '',
@@ -443,7 +599,7 @@ const Inventory = () => {
   const handleSizeChange = (index, value) => {
     const newSizes = [...formData.sizes];
     newSizes[index].quantity = parseInt(value) || 0;
-    setFormData({ ...formData, sizes: newSizes });
+    setFormData(applyPurchaseCostSync({ sizes: newSizes }));
   };
 
   // Filter inventory - onlineStatus does NOT affect admin inventory display
@@ -695,6 +851,17 @@ const Inventory = () => {
                             >
                               <Edit2 size={18} />
                               <span className="text-sm">Edit</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCostingModal(item);
+                              }}
+                              className="px-4 py-2 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow"
+                              title="Product costing and expenses"
+                            >
+                              <DollarSign size={18} />
+                              <span className="text-sm">Costing</span>
                             </button>
                             <button
                               onClick={(e) => {
@@ -1427,13 +1594,50 @@ const Inventory = () => {
                     required={!useSizes}
                     min="0"
                     value={formData.quantity}
-                    onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                    onChange={(e) => setFormData(applyPurchaseCostSync({ quantity: e.target.value }))}
                     className="input-field"
                     placeholder="e.g., 100"
                   />
                   <p className="text-xs text-gray-500 mt-1">Total number of items in stock</p>
                 </div>
               )}
+
+              <div className="border border-amber-100 bg-amber-50/50 rounded-lg p-4 mb-4">
+                <p className="text-sm font-semibold text-amber-900 mb-2">Purchase and landed cost</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Total purchase cost (Rs.)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.basePurchaseCost}
+                      onChange={(e) => setFormData(applyPurchaseCostSync({ basePurchaseCost: e.target.value }))}
+                      className="input-field"
+                      placeholder="e.g. 2000000 for full batch"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Total amount paid for this stock (all pieces)</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Cost per piece (estimate)</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={(() => {
+                        const qty = useSizes
+                          ? formData.sizes.reduce((s, x) => s + (parseFloat(x.quantity) || 0), 0)
+                          : parseFloat(formData.quantity) || 0;
+                        const base = parseFloat(formData.basePurchaseCost);
+                        const unit = parseFloat(formData.costPerUnit) || 0;
+                        if (qty > 0 && base > 0) return 'Rs. ' + Math.round(base / qty).toLocaleString();
+                        if (unit > 0) return 'Rs. ' + unit.toLocaleString();
+                        return '—';
+                      })()}
+                      className="input-field bg-gray-50"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Updates when you add product expenses via Costing</p>
+                  </div>
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
@@ -1442,12 +1646,17 @@ const Inventory = () => {
                     type="number"
                     required
                     min="0"
+                    readOnly={!!(parseFloat(formData.basePurchaseCost) > 0 && getFormTotalQty() > 0)}
                     value={formData.costPerUnit}
                     onChange={(e) => setFormData({ ...formData, costPerUnit: e.target.value })}
-                    className="input-field"
-                    placeholder="1200"
+                    className={`input-field ${parseFloat(formData.basePurchaseCost) > 0 && getFormTotalQty() > 0 ? 'bg-gray-50' : ''}`}
+                    placeholder="e.g. 233"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Your purchase/production cost</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {parseFloat(formData.basePurchaseCost) > 0 && getFormTotalQty() > 0
+                      ? 'Auto: purchase cost ÷ quantity. Updates via Costing when you add expenses.'
+                      : 'Enter manually, or fill total purchase cost above to auto-calculate'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Selling Price (Original/Was) *</label>
@@ -1709,6 +1918,111 @@ const Inventory = () => {
           </div>
         </div>
       )}
+      {/* Product Costing Modal */}
+      {showCostingModal && costingItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">Product Costing</h3>
+                <p className="text-sm text-gray-600">{costingItem.productName}</p>
+              </div>
+              <button onClick={() => { setShowCostingModal(false); setCostingItem(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              {(() => {
+                const qty = getItemInitialQty(costingItem);
+                const base = parseFloat(costingItem.basePurchaseCost) || 0;
+                const expTotal = parseFloat(costingItem.productExpensesTotal) || productExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+                const total = parseFloat(costingItem.totalLandedCost) || base + expTotal;
+                const perPiece = qty > 0 ? total / qty : parseFloat(costingItem.costPerUnit) || 0;
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Original qty</p><p className="font-bold">{qty.toLocaleString()}</p></div>
+                    <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Base purchase</p><p className="font-bold">Rs. {base.toLocaleString()}</p></div>
+                    <div className="bg-amber-50 p-3 rounded-lg border border-amber-100"><p className="text-xs text-gray-500">Product expenses</p><p className="font-bold text-amber-800">Rs. {expTotal.toLocaleString()}</p></div>
+                    <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200"><p className="text-xs text-gray-500">Cost / piece</p><p className="font-bold text-emerald-800">Rs. {Math.round(perPiece).toLocaleString()}</p></div>
+                  </div>
+                );
+              })()}
+              <p className="text-xs text-gray-500">Formula: (Base purchase + product expenses) / original quantity. Sales do not change per-piece cost.</p>
+
+              <form onSubmit={handleAddProductExpense} className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-gray-800">Add expenses to this product</h4>
+                  <button type="button" onClick={addProductExpenseLine} className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+                    <Plus size={16} /> Add line
+                  </button>
+                </div>
+                <input type="date" className="input-field max-w-xs" value={productExpenseDate} onChange={(e) => setProductExpenseDate(e.target.value)} />
+                <div className="space-y-2">
+                  {productExpenseLines.map(line => (
+                    <div key={line.key} className="grid grid-cols-12 gap-2 items-start">
+                      <div className="col-span-12 sm:col-span-3">
+                        <select className="input-field text-sm" value={line.category} onChange={(e) => updateProductExpenseLine(line.key, 'category', e.target.value)}>
+                          {productExpenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-span-6 sm:col-span-3">
+                        <input className="input-field text-sm" placeholder="Amount (Rs.)" value={line.amount} onChange={(e) => { const v = e.target.value; if (v === '' || /^\d*\.?\d*$/.test(v)) updateProductExpenseLine(line.key, 'amount', v); }} />
+                      </div>
+                      <div className="col-span-5 sm:col-span-5">
+                        <input className="input-field text-sm" placeholder="Description (optional)" value={line.description} onChange={(e) => updateProductExpenseLine(line.key, 'description', e.target.value)} />
+                      </div>
+                      <div className="col-span-1 flex justify-end">
+                        <button type="button" onClick={() => removeProductExpenseLine(line.key)} disabled={productExpenseLines.length <= 1} className="p-2 text-red-600 hover:bg-red-50 rounded disabled:opacity-30">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {productExpenseLines.some(l => parseFloat(l.amount) > 0) && (
+                  <p className="text-sm font-medium text-gray-700 text-right">
+                    Total: Rs. {productExpenseLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0).toLocaleString()}
+                  </p>
+                )}
+                <button type="submit" disabled={savingProductExpense} className="btn-primary">
+                  {savingProductExpense ? 'Saving...' : (() => {
+                    const n = productExpenseLines.filter(l => parseFloat(l.amount) > 0).length;
+                    if (n > 1) return `Save ${n} expenses and update cost`;
+                    return 'Add expense and update cost';
+                  })()}
+                </button>
+              </form>
+
+              <div>
+                <h4 className="font-semibold text-gray-800 mb-2">Expense history</h4>
+                {loadingCosting ? (
+                  <p className="text-gray-500 text-sm">Loading...</p>
+                ) : productExpenses.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No product expenses yet.</p>
+                ) : (
+                  <div className="overflow-x-auto border rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50"><tr>
+                        <th className="text-left p-2">Date</th><th className="text-left p-2">Description</th><th className="text-left p-2">Category</th><th className="text-right p-2">Amount</th><th className="p-2"></th>
+                      </tr></thead>
+                      <tbody>
+                        {productExpenses.map(exp => (
+                          <tr key={exp.id || exp._id} className="border-t">
+                            <td className="p-2">{exp.expenseDate ? new Date(exp.expenseDate?.toDate ? exp.expenseDate.toDate() : exp.expenseDate).toLocaleDateString() : '—'}</td>
+                            <td className="p-2">{exp.description}</td>
+                            <td className="p-2">{exp.category}</td>
+                            <td className="p-2 text-right font-medium">Rs. {(parseFloat(exp.amount) || 0).toLocaleString()}</td>
+                            <td className="p-2"><button type="button" onClick={() => handleDeleteProductExpense(exp.id || exp._id)} className="text-red-600 hover:text-red-800"><Trash2 size={16} /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
