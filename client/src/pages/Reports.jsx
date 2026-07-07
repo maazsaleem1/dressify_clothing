@@ -92,7 +92,9 @@ const Reports = () => {
             paymentDate,
             paymentType: p.paymentType || (index === 0 ? 'Initial Sale' : 'Recovery'),
             paymentMethod: p.paymentMethod || 'Cash',
-            notes: p.notes || ''
+            notes: p.notes || '',
+            addedBy: p.addedBy || (index === 0 && p.paymentType === 'Initial Sale' ? sale.addedBy : p.addedBy) || '',
+            editedBy: p.editedBy || ''
           });
         });
       });
@@ -103,7 +105,15 @@ const Reports = () => {
         if (!da || !db) return 0;
         return db.getTime() - da.getTime();
       });
-      setPaymentsList(merged);
+
+      const saleAddedByMap = Object.fromEntries(
+        sales.map(s => [s.id || s._id, s.addedBy || ''])
+      );
+      const enriched = merged.map(p => ({
+        ...p,
+        saleAddedBy: saleAddedByMap[p.saleId] || ''
+      }));
+      setPaymentsList(enriched);
     } catch (error) {
       console.error('Error fetching payments:', error);
       setPaymentsList([]);
@@ -559,6 +569,7 @@ const Reports = () => {
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">By</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-100">
@@ -578,6 +589,17 @@ const Reports = () => {
                           </span>
                         </td>
                         <td className="px-4 py-2 text-gray-600">{p.paymentMethod || 'Cash'}</td>
+                        <td className="px-4 py-2 text-gray-700 text-xs">
+                          {p.editedBy ? (
+                            <span>Edited: <strong>{p.editedBy}</strong></span>
+                          ) : p.addedBy ? (
+                            <span>Added: <strong>{p.addedBy}</strong></span>
+                          ) : p.saleAddedBy ? (
+                            <span>Sale: <strong>{p.saleAddedBy}</strong></span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -921,6 +943,7 @@ const Reports = () => {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Paid Amount</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Remaining</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Added By</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-100">
@@ -975,13 +998,22 @@ const Reports = () => {
                           )}
                         </span>
                       </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        {sale.addedBy ? (
+                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            {sale.addedBy}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-sm">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
                 <tr>
-                  <td colSpan="5" className="px-4 py-4 text-right font-bold text-gray-700">
+                  <td colSpan="6" className="px-4 py-4 text-right font-bold text-gray-700">
                     Total Outstanding (Paise Lene Hain):
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
@@ -989,6 +1021,7 @@ const Reports = () => {
                       Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
                     </span>
                   </td>
+                  <td className="px-4 py-4"></td>
                   <td className="px-4 py-4"></td>
                 </tr>
               </tfoot>
@@ -1064,6 +1097,7 @@ const Reports = () => {
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Total Qty</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Total Amount</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Added By</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
@@ -1122,6 +1156,15 @@ const Reports = () => {
                                   {sale.paymentStatus || 'N/A'}
                                 </span>
                               </td>
+                              <td className="px-4 py-4 whitespace-nowrap">
+                                {sale.addedBy ? (
+                                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                    {sale.addedBy}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400 text-sm">—</span>
+                                )}
+                              </td>
                             </tr>
                           );
                         })}
@@ -1144,6 +1187,7 @@ const Reports = () => {
                               Rs. {monthlySalesDetail.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0).toLocaleString()}
                             </span>
                           </td>
+                          <td className="px-4 py-4"></td>
                           <td className="px-4 py-4"></td>
                         </tr>
                       </tfoot>

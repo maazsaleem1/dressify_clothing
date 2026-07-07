@@ -36,16 +36,16 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-100 bg-grid-pattern px-4">
       <div className="max-w-md w-full">
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          {/* Logo/Header */}
+        <div className="bg-white rounded-2xl shadow-elevated p-8 border border-neutral-200">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full mb-4">
-              <Lock className="text-white" size={32} />
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-ink rounded-2xl mb-4 shadow-card">
+              <Lock className="text-white" size={28} />
             </div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Dressify Admin</h1>
-            <p className="text-gray-600">Sign in to access the admin panel</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 mb-2">Dressify Clothing</p>
+            <h1 className="text-3xl font-bold text-ink mb-2 tracking-tight">Admin</h1>
+            <p className="text-neutral-500 text-sm">Sign in to your dashboard</p>
           </div>
 
           {/* Error Message */}
@@ -69,7 +69,7 @@ const Login = () => {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+                  className="input-field pl-10"
                   placeholder="admin@dressify.com"
                   required
                   autoComplete="email"
@@ -88,7 +88,7 @@ const Login = () => {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition"
+                  className="input-field pl-10"
                   placeholder="Enter your password"
                   required
                   autoComplete="current-password"
@@ -99,7 +99,7 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-primary-600 to-primary-700 text-white py-3 rounded-lg font-semibold hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl"
+              className="w-full btn-primary py-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

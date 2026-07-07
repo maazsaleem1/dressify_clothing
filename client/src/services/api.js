@@ -18,7 +18,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase-config';
 
-// Helper function to safely convert Firestore Timestamp to Date
+// Helper function to safely convert Firestore Timestamp to Date 
 const convertTimestamp = (timestamp) => {
   if (!timestamp) return null;
 
@@ -643,6 +643,7 @@ export const createSale = async (saleData) => {
       paidAmount,
       remainingAmount,
       paymentStatus,
+      addedBy: saleData.addedBy || '',
       saleDate: Timestamp.now(),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
@@ -667,7 +668,8 @@ export const createSale = async (saleData) => {
         paymentDate: Timestamp.now(),
         paymentType: 'Initial Sale',
         paymentMethod,
-        notes: saleData.notes || ''
+        notes: saleData.notes || '',
+        addedBy: saleData.addedBy || ''
       });
       const initialPayment = {
         amount: paidAmount,
@@ -676,7 +678,8 @@ export const createSale = async (saleData) => {
         date: Timestamp.now(),
         paymentType: 'Initial Sale',
         paymentId: paymentDocRef.id,
-        collectionId: paymentDocRef.id
+        collectionId: paymentDocRef.id,
+        addedBy: saleData.addedBy || ''
       };
       await updateDoc(doc(db, 'sales', docRef.id), {
         payments: [initialPayment],
@@ -930,7 +933,8 @@ export const addPayment = async (saleId, paymentData) => {
       paymentMethod,
       notes: paymentData.notes || '',
       date: Timestamp.now(),
-      paymentType: 'Recovery'
+      paymentType: 'Recovery',
+      addedBy: paymentData.addedBy || ''
     };
 
     const payments = saleData.payments || [];
@@ -945,7 +949,8 @@ export const addPayment = async (saleId, paymentData) => {
       paymentDate: Timestamp.now(),
       paymentType: 'Recovery',
       paymentMethod,
-      notes: paymentData.notes || ''
+      notes: paymentData.notes || '',
+      addedBy: paymentData.addedBy || ''
     });
 
     recoveryPayment.paymentId = paymentDocRef.id;
@@ -1020,7 +1025,8 @@ export const updateSalePayment = async (saleId, paymentKey, paymentData) => {
       amount: parseFloat(paymentData.amount) || 0,
       paymentMethod: paymentData.paymentMethod || paymentData.method || oldPayment.paymentMethod || 'Cash',
       notes: paymentData.notes != null ? paymentData.notes : (oldPayment.notes || ''),
-      paymentType: oldPayment.paymentType || 'Recovery'
+      paymentType: oldPayment.paymentType || 'Recovery',
+      editedBy: paymentData.editedBy || paymentData.addedBy || oldPayment.editedBy || ''
     };
     if (paymentData.date) {
       updatedPayment.date = Timestamp.fromDate(new Date(paymentData.date));
@@ -1044,6 +1050,7 @@ export const updateSalePayment = async (saleId, paymentKey, paymentData) => {
         paymentMethod: updatedPayment.paymentMethod,
         notes: updatedPayment.notes,
         paymentDate: updatedPayment.date || oldPayment.date || Timestamp.now(),
+        editedBy: updatedPayment.editedBy || '',
         updatedAt: Timestamp.now()
       });
     }

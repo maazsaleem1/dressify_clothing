@@ -20,12 +20,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { showSuccess, showError } from '../utils/toast';
 
 const Layout = ({ children }) => {
-  const [sidebarOpen, setSidebarOpen] = useState(false); // Closed by default on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Open sidebar on desktop, close on mobile
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 768) {
@@ -66,36 +65,39 @@ const Layout = ({ children }) => {
     { path: '/reviews', icon: Star, label: 'Reviews' },
   ];
 
-  const isActive = (path) => {
-    return location.pathname === path;
-  };
+  const isActive = (path) => location.pathname === path;
+  const currentPage = menuItems.find(item => item.path === location.pathname)?.label || 'Dashboard';
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-neutral-100">
       {/* Sidebar */}
       <aside
-        className={`${sidebarOpen ? 'w-64' : 'w-0 md:w-20'
-          } bg-gradient-to-b from-primary-800 to-primary-900 text-white transition-all duration-300 flex flex-col shadow-xl fixed md:relative h-full z-40 overflow-hidden`}
+        className={`${sidebarOpen ? 'w-64' : 'w-0 md:w-[72px]'
+          } bg-ink text-white transition-all duration-300 flex flex-col fixed md:relative h-full z-40 overflow-hidden border-r border-neutral-800`}
       >
         {/* Logo */}
-        <div className="p-4 sm:p-6 flex items-center justify-between border-b border-primary-700">
-          {sidebarOpen && (
-            <div className="flex-1">
-              <h1 className="text-lg sm:text-xl font-bold">Dressify</h1>
-              <p className="text-xs text-primary-200">Clothing</p>
+        <div className="p-4 sm:p-5 flex items-center justify-between border-b border-white/10 min-h-[72px]">
+          {sidebarOpen ? (
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg font-bold tracking-tight">Dressify</h1>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-400 mt-0.5">Clothing Co.</p>
+            </div>
+          ) : (
+            <div className="hidden md:flex w-full justify-center">
+              <span className="text-lg font-black">D</span>
             </div>
           )}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-primary-700 rounded-lg transition-colors flex-shrink-0"
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors flex-shrink-0 text-neutral-300 hover:text-white"
             aria-label="Toggle sidebar"
           >
-            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+            {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-2 sm:p-4 space-y-2 overflow-y-auto">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {menuItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.path);
@@ -105,19 +107,17 @@ const Layout = ({ children }) => {
                 key={item.path}
                 to={item.path}
                 onClick={() => {
-                  // Close sidebar on mobile when navigating
-                  if (window.innerWidth < 768) {
-                    setSidebarOpen(false);
-                  }
+                  if (window.innerWidth < 768) setSidebarOpen(false);
                 }}
-                className={`flex items-center gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg transition-all ${active
-                  ? 'bg-white text-primary-800 shadow-lg'
-                  : 'hover:bg-primary-700 text-primary-100'
-                  }`}
+                title={!sidebarOpen ? item.label : undefined}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group ${active
+                  ? 'bg-white text-ink shadow-elevated'
+                  : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                  } ${!sidebarOpen ? 'md:justify-center md:px-2' : ''}`}
               >
-                <Icon size={18} className="sm:w-5 sm:h-5 flex-shrink-0" />
+                <Icon size={18} className={`flex-shrink-0 ${active ? 'text-ink' : 'group-hover:text-white'}`} />
                 {sidebarOpen && (
-                  <span className="font-medium text-sm sm:text-base whitespace-nowrap">{item.label}</span>
+                  <span className="font-medium text-sm whitespace-nowrap">{item.label}</span>
                 )}
               </Link>
             );
@@ -125,76 +125,76 @@ const Layout = ({ children }) => {
         </nav>
 
         {/* Footer */}
-        {sidebarOpen && (
-          <div className="p-3 sm:p-4 border-t border-primary-700 space-y-2">
-            <button
-              onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg hover:bg-primary-700 text-primary-100 transition-all"
-            >
-              <LogOut size={18} className="sm:w-5 sm:h-5" />
-              <span className="font-medium text-sm sm:text-base">Logout</span>
-            </button>
-            <p className="text-xs text-primary-200 text-center hidden sm:block">
-              © 2025 Dressify Clothing
+        <div className={`p-3 border-t border-white/10 space-y-1 ${!sidebarOpen ? 'md:px-2' : ''}`}>
+          <button
+            onClick={handleLogout}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 text-neutral-400 hover:text-white transition-all ${!sidebarOpen ? 'md:justify-center md:px-2' : ''}`}
+            title="Logout"
+          >
+            <LogOut size={18} className="flex-shrink-0" />
+            {sidebarOpen && <span className="font-medium text-sm">Logout</span>}
+          </button>
+          {sidebarOpen && (
+            <p className="text-[10px] text-neutral-500 text-center pt-2 tracking-wide">
+              © 2025 Dressify
             </p>
-          </div>
-        )}
+          )}
+        </div>
       </aside>
 
-      {/* Mobile Sidebar Overlay */}
+      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden md:ml-0">
-        {/* Header */}
-        <header className="bg-white shadow-sm border-b border-gray-200 px-4 sm:px-6 md:px-8 py-3 sm:py-4">
-          <div className="flex items-center justify-between">
+      {/* Main */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <header className="bg-white/80 backdrop-blur-md border-b border-neutral-200 px-4 sm:px-6 md:px-8 py-4 sticky top-0 z-20">
+          <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="md:hidden p-2 hover:bg-neutral-100 rounded-xl transition-colors"
                 aria-label="Toggle menu"
               >
-                <Menu size={24} className="text-gray-700" />
+                <Menu size={22} className="text-ink" />
               </button>
               <div className="flex-1 min-w-0">
-                <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-800 truncate">
-                  {menuItems.find(item => item.path === location.pathname)?.label || 'Dashboard'}
-                </h2>
-                <p className="text-xs sm:text-sm text-gray-500 mt-1 hidden sm:block">
-                  Welcome back! Here's what's happening today.
+                <p className="text-[10px] uppercase tracking-[0.15em] text-neutral-400 font-semibold hidden sm:block">
+                  Admin Panel
                 </p>
+                <h2 className="text-xl sm:text-2xl font-bold text-ink truncate tracking-tight">
+                  {currentPage}
+                </h2>
               </div>
             </div>
-            <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0 ml-2">
+            <div className="flex items-center gap-3 flex-shrink-0">
               <div className="text-right hidden sm:block">
-                <p className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[120px] sm:max-w-none">
-                  {currentUser?.email || 'Admin User'}
+                <p className="text-sm font-semibold text-ink truncate max-w-[160px]">
+                  {currentUser?.email?.split('@')[0] || 'Admin'}
                 </p>
-                <p className="text-xs text-gray-500 hidden md:block">
+                <p className="text-xs text-neutral-400">
                   {new Date().toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric'
                   })}
                 </p>
               </div>
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-base">
+              <div className="w-10 h-10 bg-ink rounded-xl flex items-center justify-center text-white font-bold text-sm ring-2 ring-neutral-200 ring-offset-2">
                 {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
               </div>
             </div>
           </div>
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
-          {children}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-grid-pattern bg-neutral-50">
+          <div className="max-w-[1600px] mx-auto animate-fade-in">
+            {children}
+          </div>
         </main>
       </div>
     </div>
@@ -202,4 +202,3 @@ const Layout = ({ children }) => {
 };
 
 export default Layout;
-

@@ -8,12 +8,23 @@ import {
   ShoppingCart,
   Factory,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Activity
 } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getDashboardStats, getOnlineSalesStats } from '../services/api';
 import HomepageSlider from '../components/HomepageSlider';
 import { StatCardShimmer, CardShimmer } from '../components/Shimmer';
+
+const CHART_COLORS = ['#0a0a0a', '#404040', '#737373', '#a3a3a3', '#d4d4d4'];
+
+const tooltipStyle = {
+  backgroundColor: '#fff',
+  border: '1px solid #e5e5e5',
+  borderRadius: '12px',
+  boxShadow: '0 12px 40px -12px rgb(0 0 0 / 0.15)',
+  fontSize: '13px'
+};
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -33,6 +44,7 @@ const Dashboard = () => {
       setStats(dashboardRes.data);
       setOnlineSalesStats(onlineSalesRes.data);
     } catch (error) {
+      // silent
     } finally {
       setLoading(false);
     }
@@ -54,134 +66,99 @@ const Dashboard = () => {
     );
   }
 
-  // Check if there are any products available
   const hasProducts = stats?.inventory?.totalProducts > 0;
 
   const statCards = [
-    {
-      title: 'Total Stock',
-      value: stats?.inventory?.totalStock || 0,
-      icon: Package,
-      color: 'bg-blue-500',
-      change: '+12%',
-      positive: true
-    },
-    {
-      title: 'Total Sales',
-      value: `Rs. ${(stats?.sales?.totalSales || 0).toLocaleString()}`,
-      icon: DollarSign,
-      color: 'bg-green-500',
-      change: '+8%',
-      positive: true
-    },
-    {
-      title: 'Outstanding Credit',
-      value: `Rs. ${(stats?.sales?.totalCredit || 0).toLocaleString()}`,
-      icon: TrendingUp,
-      color: 'bg-orange-500',
-      change: '-5%',
-      positive: false
-    },
-    {
-      title: 'Low Stock Items',
-      value: stats?.inventory?.lowStockItems?.length || 0,
-      icon: AlertTriangle,
-      color: 'bg-red-500',
-      change: '3 items',
-      positive: false
-    },
-    {
-      title: 'Total Customers',
-      value: stats?.customers?.total || 0,
-      icon: Users,
-      color: 'bg-purple-500',
-      change: '+15',
-      positive: true
-    },
-    {
-      title: 'In Production',
-      value: stats?.production?.inProcess || 0,
-      icon: Factory,
-      color: 'bg-indigo-500',
-      change: '2 batches',
-      positive: true
-    },
-    // Only show online stats if products are available
+    { title: 'Total Stock', value: stats?.inventory?.totalStock || 0, icon: Package, change: 'units in warehouse', positive: true },
+    { title: 'Total Sales', value: `Rs. ${(stats?.sales?.totalSales || 0).toLocaleString()}`, icon: DollarSign, change: 'lifetime revenue', positive: true },
+    { title: 'Outstanding Credit', value: `Rs. ${(stats?.sales?.totalCredit || 0).toLocaleString()}`, icon: TrendingUp, change: 'pending collection', positive: false },
+    { title: 'Low Stock Items', value: stats?.inventory?.lowStockItems?.length || 0, icon: AlertTriangle, change: 'need attention', positive: false },
+    { title: 'Total Customers', value: stats?.customers?.total || 0, icon: Users, change: 'registered', positive: true },
+    { title: 'In Production', value: stats?.production?.inProcess || 0, icon: Factory, change: 'active batches', positive: true },
     ...(hasProducts ? [
-      {
-        title: 'Online Revenue',
-        value: `Rs. ${(onlineSalesStats?.totalRevenue || 0).toLocaleString()}`,
-        icon: DollarSign,
-        color: 'bg-emerald-500',
-        change: `${onlineSalesStats?.deliveredOrders || 0} orders`,
-        positive: true
-      },
-      {
-        title: 'Online Orders',
-        value: onlineSalesStats?.totalOrders || 0,
-        icon: ShoppingCart,
-        color: 'bg-cyan-500',
-        change: `${onlineSalesStats?.pendingOrders || 0} pending`,
-        positive: true
-      }
+      { title: 'Online Revenue', value: `Rs. ${(onlineSalesStats?.totalRevenue || 0).toLocaleString()}`, icon: DollarSign, change: `${onlineSalesStats?.deliveredOrders || 0} delivered`, positive: true },
+      { title: 'Online Orders', value: onlineSalesStats?.totalOrders || 0, icon: ShoppingCart, change: `${onlineSalesStats?.pendingOrders || 0} pending`, positive: true }
     ] : [])
   ];
 
-  const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-
-  // Prepare sales data for chart
   const salesData = stats?.salesByDate?.map(item => ({
     date: new Date(item._id).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     sales: item.totalSales,
     count: item.count
   })) || [];
 
-  // Prepare top products data
   const topProductsData = stats?.topProducts?.map(item => ({
-    name: item._id,
+    name: item._id?.length > 12 ? item._id.slice(0, 12) + '…' : item._id,
     quantity: item.totalQuantity,
     revenue: item.totalRevenue
   })) || [];
 
-  // Sales type distribution
   const salesTypeData = [
-    { name: 'Cash Sales', value: stats?.sales?.totalPaid || 0 },
-    { name: 'Credit Sales', value: stats?.sales?.totalCredit || 0 }
-  ];
+    { name: 'Cash Received', value: stats?.sales?.totalPaid || 0 },
+    { name: 'Credit Outstanding', value: stats?.sales?.totalCredit || 0 }
+  ].filter(d => d.value > 0);
 
   return (
-    <div className="space-y-6">
-      {/* Homepage Slider */}
+    <div className="space-y-8">
+      {/* Hero strip */}
+      <div className="relative overflow-hidden rounded-2xl bg-ink text-white p-6 sm:p-8 border border-neutral-800 shadow-elevated">
+        <div className="absolute inset-0 opacity-[0.07]" style={{
+          backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
+          backgroundSize: '20px 20px'
+        }} />
+        <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-neutral-400 text-xs uppercase tracking-[0.2em] mb-2">
+              <Activity size={14} />
+              Overview
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+              Business at a glance
+            </h1>
+            <p className="text-neutral-400 mt-2 text-sm max-w-md">
+              Track inventory, sales, credit, and production from one clean dashboard.
+            </p>
+          </div>
+          <div className="flex gap-6 sm:gap-8">
+            <div className="text-center sm:text-right">
+              <p className="text-[10px] uppercase tracking-widest text-neutral-500">Products</p>
+              <p className="text-2xl font-bold mt-1">{stats?.inventory?.totalProducts || 0}</p>
+            </div>
+            <div className="text-center sm:text-right border-l border-white/10 pl-6 sm:pl-8">
+              <p className="text-[10px] uppercase tracking-widest text-neutral-500">Transactions</p>
+              <p className="text-2xl font-bold mt-1">{stats?.sales?.totalTransactions || 0}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <HomepageSlider />
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+      {/* Stats grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5">
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           return (
-            <div key={index} className="stat-card">
-              <div className="flex items-start justify-between">
+            <div key={index} className="stat-card group">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
                     {stat.title}
                   </p>
-                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 break-words">
+                  <h3 className="text-xl sm:text-2xl font-bold text-ink mb-3 break-words tracking-tight">
                     {stat.value}
                   </h3>
-                  <div className="flex items-center gap-1 flex-wrap">
+                  <div className="flex items-center gap-1.5">
                     {stat.positive ? (
-                      <ArrowUp size={14} className="text-green-500 flex-shrink-0" />
+                      <ArrowUp size={12} className="text-neutral-600" />
                     ) : (
-                      <ArrowDown size={14} className="text-red-500 flex-shrink-0" />
+                      <ArrowDown size={12} className="text-neutral-400" />
                     )}
-                    <span className={`text-xs sm:text-sm font-medium ${stat.positive ? 'text-green-600' : 'text-red-600'}`}>
-                      {stat.change}
-                    </span>
-                    <span className="text-xs text-gray-500 hidden sm:inline">vs last month</span>
+                    <span className="text-xs text-neutral-500">{stat.change}</span>
                   </div>
                 </div>
-                <div className={`${stat.color} p-2.5 sm:p-3 rounded-xl flex-shrink-0 ml-2`}>
-                  <Icon className="text-white" size={20} />
+                <div className="p-3 rounded-xl bg-neutral-100 border border-neutral-200 group-hover:bg-ink group-hover:border-ink transition-colors duration-300 flex-shrink-0">
+                  <Icon className="text-ink group-hover:text-white transition-colors duration-300" size={20} />
                 </div>
               </div>
             </div>
@@ -189,237 +166,189 @@ const Dashboard = () => {
         })}
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sales Trend Chart */}
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Sales Trend (Last 30 Days)</h3>
-          <ResponsiveContainer width="100%" height={300}>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-bold text-ink tracking-tight">Sales Trend</h3>
+              <p className="text-xs text-neutral-400 mt-0.5">Last 30 days</p>
+            </div>
+            <span className="badge-mono">Revenue</span>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
             <LineChart data={salesData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="sales"
-                stroke="#0ea5e9"
-                strokeWidth={2}
-                dot={{ fill: '#0ea5e9', r: 4 }}
-                activeDot={{ r: 6 }}
-                name="Sales Amount (Rs.)"
-              />
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis dataKey="date" stroke="#a3a3a3" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis stroke="#a3a3a3" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`Rs. ${Number(v).toLocaleString()}`, 'Sales']} />
+              <Line type="monotone" dataKey="sales" stroke="#0a0a0a" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#0a0a0a' }} name="Sales (Rs.)" />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Sales Distribution Pie Chart */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Sales Distribution</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={salesTypeData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={100}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {salesTypeData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip
-                formatter={(value) => `Rs. ${value.toLocaleString()}`}
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
-                }}
-              />
-            </PieChart>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-bold text-ink tracking-tight">Cash vs Credit</h3>
+              <p className="text-xs text-neutral-400 mt-0.5">Payment split</p>
+            </div>
+            <span className="badge-mono">Split</span>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            {salesTypeData.length > 0 ? (
+              <PieChart>
+                <Pie
+                  data={salesTypeData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={95}
+                  paddingAngle={3}
+                  dataKey="value"
+                  stroke="#fff"
+                  strokeWidth={2}
+                >
+                  {salesTypeData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => `Rs. ${Number(value).toLocaleString()}`} contentStyle={tooltipStyle} />
+                <Legend wrapperStyle={{ fontSize: '12px' }} />
+              </PieChart>
+            ) : (
+              <div className="h-full flex items-center justify-center text-neutral-400 text-sm">No sales data yet</div>
+            )}
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Top Products and Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Selling Products */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Top Selling Products</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={topProductsData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="name" stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
-                }}
-              />
-              <Legend />
-              <Bar dataKey="quantity" fill="#0ea5e9" name="Quantity Sold" radius={[8, 8, 0, 0]} />
+          <div className="mb-6">
+            <h3 className="text-lg font-bold text-ink tracking-tight">Top Products</h3>
+            <p className="text-xs text-neutral-400 mt-0.5">By quantity sold</p>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={topProductsData} barSize={32}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis dataKey="name" stroke="#a3a3a3" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis stroke="#a3a3a3" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={tooltipStyle} />
+              <Bar dataKey="quantity" fill="#171717" name="Qty Sold" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Low Stock Alerts */}
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <AlertTriangle className="text-orange-500" size={20} />
-            Low Stock Alerts
-          </h3>
-          <div className="space-y-3 max-h-[300px] overflow-y-auto">
+          <div className="flex items-center gap-2 mb-6">
+            <AlertTriangle className="text-ink" size={18} />
+            <div>
+              <h3 className="text-lg font-bold text-ink tracking-tight">Low Stock Alerts</h3>
+              <p className="text-xs text-neutral-400">Items running low</p>
+            </div>
+          </div>
+          <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
             {stats?.inventory?.lowStockItems?.length > 0 ? (
               stats.inventory.lowStockItems.map((item, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-200">
-                  <div>
-                    <p className="font-medium text-gray-800">{item.productName}</p>
-                    <p className="text-sm text-gray-600">
-                      {item.brand} • {item.category}
-                    </p>
+                <div key={index} className="flex items-center justify-between p-4 bg-neutral-50 rounded-xl border border-neutral-200 hover:border-neutral-300 transition-colors">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-ink truncate">{item.productName}</p>
+                    <p className="text-xs text-neutral-500 mt-0.5">{item.brand} · {item.category}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-lg font-bold text-orange-600">{item.quantity}</p>
-                    <p className="text-xs text-gray-500">units left</p>
+                  <div className="text-right flex-shrink-0 ml-3">
+                    <p className="text-lg font-bold text-ink">{item.quantity}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-neutral-400">left</p>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                <Package size={48} className="mx-auto mb-2 opacity-50" />
-                <p>All stock levels are healthy!</p>
+              <div className="text-center py-12 text-neutral-400">
+                <Package size={40} className="mx-auto mb-3 opacity-30" />
+                <p className="text-sm font-medium">All stock levels healthy</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Online Sales Analytics Section */}
+      {/* Online sales */}
       {hasProducts && onlineSalesStats && onlineSalesStats.totalOrders > 0 && (
         <div className="card">
-          <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-4">Online Sales Analytics</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-            <div className="bg-blue-50 p-3 sm:p-4 rounded-lg border border-blue-200">
-              <p className="text-xs sm:text-sm text-gray-700 mb-1.5 font-medium">Total Online Revenue</p>
-              <p className="text-xl sm:text-2xl font-bold text-blue-700 break-words">
-                Rs. {onlineSalesStats.totalRevenue.toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-600 mt-1.5">{onlineSalesStats.deliveredOrders} delivered orders</p>
-            </div>
-            <div className="bg-green-50 p-3 sm:p-4 rounded-lg border border-green-200">
-              <p className="text-xs sm:text-sm text-gray-700 mb-1.5 font-medium">Total Orders</p>
-              <p className="text-xl sm:text-2xl font-bold text-green-700">{onlineSalesStats.totalOrders}</p>
-              <p className="text-xs text-gray-600 mt-1.5">
-                {onlineSalesStats.pendingOrders} pending, {onlineSalesStats.deliveredOrders} delivered
-              </p>
-            </div>
-            <div className="bg-purple-50 p-3 sm:p-4 rounded-lg border border-purple-200">
-              <p className="text-xs sm:text-sm text-gray-700 mb-1.5 font-medium">Units Sold</p>
-              <p className="text-xl sm:text-2xl font-bold text-purple-700">{onlineSalesStats.totalUnitsSold}</p>
-              <p className="text-xs text-gray-600 mt-1.5">Total products sold online</p>
-            </div>
-            <div className="bg-orange-50 p-3 sm:p-4 rounded-lg border border-orange-200">
-              <p className="text-xs sm:text-sm text-gray-700 mb-1.5 font-medium">Average Order Value</p>
-              <p className="text-xl sm:text-2xl font-bold text-orange-700 break-words">
-                Rs. {Math.round(onlineSalesStats.averageOrderValue).toLocaleString()}
-              </p>
-              <p className="text-xs text-gray-600 mt-1.5">Per delivered order</p>
-            </div>
+          <div className="mb-6">
+            <h3 className="text-lg font-bold text-ink tracking-tight">Online Sales</h3>
+            <p className="text-xs text-neutral-400 mt-0.5">E-commerce performance</p>
           </div>
-
-          {/* Top Selling Products */}
-          {onlineSalesStats.productSales && onlineSalesStats.productSales.length > 0 && (
-            <div>
-              <h4 className="font-semibold text-gray-800 mb-3">Top Selling Products (Online)</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Units Sold</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Online Price</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total Revenue</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {onlineSalesStats.productSales.slice(0, 10).map((product, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium text-gray-900">{product.productName}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{product.size}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">{product.totalQuantity}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">Rs. {product.unitPrice.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-sm font-bold text-green-600">
-                          Rs. {product.totalRevenue.toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            {[
+              { label: 'Revenue', value: `Rs. ${onlineSalesStats.totalRevenue.toLocaleString()}`, sub: `${onlineSalesStats.deliveredOrders} delivered` },
+              { label: 'Orders', value: onlineSalesStats.totalOrders, sub: `${onlineSalesStats.pendingOrders} pending` },
+              { label: 'Units Sold', value: onlineSalesStats.totalUnitsSold, sub: 'online channel' },
+              { label: 'Avg. Order', value: `Rs. ${Math.round(onlineSalesStats.averageOrderValue).toLocaleString()}`, sub: 'per order' },
+            ].map((item, i) => (
+              <div key={i} className="p-4 rounded-xl border border-neutral-200 bg-neutral-50">
+                <p className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">{item.label}</p>
+                <p className="text-xl font-bold text-ink mt-1 break-words">{item.value}</p>
+                <p className="text-xs text-neutral-500 mt-1">{item.sub}</p>
               </div>
+            ))}
+          </div>
+          {onlineSalesStats.productSales?.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-neutral-200">
+              <table className="w-full text-sm">
+                <thead className="bg-neutral-50 border-b border-neutral-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Product</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Size</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Qty</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Price</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {onlineSalesStats.productSales.slice(0, 10).map((product, index) => (
+                    <tr key={index} className="hover:bg-neutral-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-ink">{product.productName}</td>
+                      <td className="px-4 py-3 text-neutral-500">{product.size}</td>
+                      <td className="px-4 py-3 font-semibold">{product.totalQuantity}</td>
+                      <td className="px-4 py-3 text-neutral-500">Rs. {product.unitPrice.toLocaleString()}</td>
+                      <td className="px-4 py-3 font-bold">Rs. {product.totalRevenue.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
       )}
 
-      {/* Quick Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-        <div className="card bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-base sm:text-lg font-semibold">Inventory Value</h4>
-            <Package size={20} className="sm:w-6 sm:h-6" />
-          </div>
-          <p className="text-2xl sm:text-3xl font-bold mb-2 break-words">
-            Rs. {(stats?.inventory?.totalValue || 0).toLocaleString()}
-          </p>
-          <p className="text-blue-100 text-xs sm:text-sm">
-            {stats?.inventory?.totalProducts || 0} different products
-          </p>
-        </div>
-
-        <div className="card bg-gradient-to-br from-green-500 to-green-600 text-white">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-base sm:text-lg font-semibold">Payments Received</h4>
-            <DollarSign size={20} className="sm:w-6 sm:h-6" />
-          </div>
-          <p className="text-2xl sm:text-3xl font-bold mb-2 break-words">
-            Rs. {(stats?.sales?.totalPaid || 0).toLocaleString()}
-          </p>
-          <p className="text-green-100 text-xs sm:text-sm">
-            {stats?.sales?.totalTransactions || 0} total transactions
-          </p>
-        </div>
-
-        <div className="card bg-gradient-to-br from-purple-500 to-purple-600 text-white sm:col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-base sm:text-lg font-semibold">Production Status</h4>
-            <Factory size={20} className="sm:w-6 sm:h-6" />
-          </div>
-          <p className="text-2xl sm:text-3xl font-bold mb-2">
-            {stats?.production?.inProcess || 0}
-          </p>
-          <p className="text-purple-100 text-xs sm:text-sm">
-            batches in production
-          </p>
-        </div>
+      {/* Summary strip */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[
+          { title: 'Inventory Value', value: `Rs. ${(stats?.inventory?.totalValue || 0).toLocaleString()}`, sub: `${stats?.inventory?.totalProducts || 0} products`, icon: Package },
+          { title: 'Payments Received', value: `Rs. ${(stats?.sales?.totalPaid || 0).toLocaleString()}`, sub: `${stats?.sales?.totalTransactions || 0} transactions`, icon: DollarSign },
+          { title: 'In Production', value: stats?.production?.inProcess || 0, sub: 'active batches', icon: Factory },
+        ].map((item, i) => {
+          const Icon = item.icon;
+          return (
+            <div key={i} className="relative overflow-hidden rounded-2xl bg-ink text-white p-6 border border-neutral-800 group hover:shadow-elevated transition-shadow">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2" />
+              <div className="relative flex items-start justify-between">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.15em] text-neutral-400">{item.title}</p>
+                  <p className="text-2xl sm:text-3xl font-bold mt-2 tracking-tight">{item.value}</p>
+                  <p className="text-neutral-500 text-xs mt-2">{item.sub}</p>
+                </div>
+                <div className="p-2.5 rounded-xl bg-white/10 border border-white/10">
+                  <Icon size={20} className="text-white" />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
 export default Dashboard;
-

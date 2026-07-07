@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText } from 'lucide-react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText, AlertTriangle } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, updateSalePayment, deleteSalePayment, deleteSale, createCustomer } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
+
+const STAFF_MEMBERS = ['Almas', 'Shahzad'];
 
 const Sales = () => {
     const [sales, setSales] = useState([]);
@@ -19,6 +21,8 @@ const Sales = () => {
     const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
     const [editingPaymentKey, setEditingPaymentKey] = useState(null);
     const [deletingPaymentKey, setDeletingPaymentKey] = useState(null);
+    const [showDeletePaymentModal, setShowDeletePaymentModal] = useState(false);
+    const [paymentToDelete, setPaymentToDelete] = useState(null);
     const [showCustomerModal, setShowCustomerModal] = useState(false);
     const [paymentHistoryFilter, setPaymentHistoryFilter] = useState('All'); // For filtering payment history in sale details
     const [editingSale, setEditingSale] = useState(null);
@@ -36,7 +40,8 @@ const Sales = () => {
         items: [],
         paidAmount: '',
         saleType: 'Cash',
-        notes: ''
+        notes: '',
+        addedBy: ''
     });
 
     const [currentItem, setCurrentItem] = useState({
@@ -49,13 +54,15 @@ const Sales = () => {
     const [paymentData, setPaymentData] = useState({
         amount: '',
         method: 'Cash',
-        notes: ''
+        notes: '',
+        addedBy: ''
     });
 
     const [editPaymentData, setEditPaymentData] = useState({
         amount: '',
         method: 'Cash',
-        notes: ''
+        notes: '',
+        editedBy: ''
     });
 
     const [newCustomerData, setNewCustomerData] = useState({
@@ -133,7 +140,8 @@ const Sales = () => {
             items: [],
             paidAmount: '',
             saleType: 'Cash',
-            notes: ''
+            notes: '',
+            addedBy: ''
         });
         setNewCustomerData({
             name: '',
@@ -275,6 +283,10 @@ const Sales = () => {
             showError('Please add at least one item');
             return;
         }
+        if (!editingSale && !saleFormData.addedBy) {
+            showError('Please select who is adding this sale');
+            return;
+        }
 
         setSaving(true);
         try {
@@ -317,6 +329,10 @@ const Sales = () => {
             showError('Please enter payment amount');
             return;
         }
+        if (!paymentData.addedBy) {
+            showError('Please select who is adding this payment');
+            return;
+        }
 
         setSaving(true);
         try {
@@ -324,11 +340,12 @@ const Sales = () => {
                 amount: parseFloat(paymentData.amount),
                 paymentMethod: paymentData.method,
                 method: paymentData.method,
-                notes: paymentData.notes
+                notes: paymentData.notes,
+                addedBy: paymentData.addedBy
             });
             showSuccess('Payment added successfully!');
             setShowPaymentModal(false);
-            setPaymentData({ amount: '', method: 'Cash', notes: '' });
+            setPaymentData({ amount: '', method: 'Cash', notes: '', addedBy: '' });
             await refreshSelectedSale();
         } catch (error) {
             showError(error.message || 'Error adding payment');
@@ -353,7 +370,8 @@ const Sales = () => {
         setEditPaymentData({
             amount: payment.amount != null ? String(payment.amount) : '',
             method: payment.paymentMethod || 'Cash',
-            notes: payment.notes || ''
+            notes: payment.notes || '',
+            editedBy: ''
         });
         setShowEditPaymentModal(true);
     };
@@ -364,13 +382,18 @@ const Sales = () => {
             showError('Please enter payment amount');
             return;
         }
+        if (!editPaymentData.editedBy) {
+            showError('Please select who is editing this payment');
+            return;
+        }
         setSaving(true);
         try {
             await updateSalePayment(selectedSale.id || selectedSale._id, editingPaymentKey, {
                 amount: parseFloat(editPaymentData.amount),
                 paymentMethod: editPaymentData.method,
                 method: editPaymentData.method,
-                notes: editPaymentData.notes
+                notes: editPaymentData.notes,
+                editedBy: editPaymentData.editedBy
             });
             showSuccess('Payment updated successfully!');
             setShowEditPaymentModal(false);
@@ -383,12 +406,37 @@ const Sales = () => {
         }
     };
 
-    const handleDeletePayment = async (paymentKey) => {
-        if (!window.confirm('Delete this payment? Paid amount and remaining balance will be recalculated.')) return;
-        setDeletingPaymentKey(paymentKey);
+    const openDeletePaymentConfirm = (payment) => {
+        let paymentDate;
+        if (payment.date?.toDate) {
+            paymentDate = payment.date.toDate();
+        } else if (payment.date?.seconds) {
+            paymentDate = new Date(payment.date.seconds * 1000);
+        } else if (payment.date) {
+            paymentDate = new Date(payment.date);
+        } else {
+            paymentDate = null;
+        }
+        setPaymentToDelete({
+            key: payment._paymentKey,
+            amount: parseFloat(payment.amount) || 0,
+            method: payment.paymentMethod || 'Cash',
+            type: payment.paymentType || 'Payment',
+            dateLabel: paymentDate && !isNaN(paymentDate.getTime())
+                ? paymentDate.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+                : '—'
+        });
+        setShowDeletePaymentModal(true);
+    };
+
+    const handleDeletePayment = async () => {
+        if (!paymentToDelete?.key || !selectedSale) return;
+        setDeletingPaymentKey(paymentToDelete.key);
         try {
-            await deleteSalePayment(selectedSale.id || selectedSale._id, paymentKey);
+            await deleteSalePayment(selectedSale.id || selectedSale._id, paymentToDelete.key);
             showSuccess('Payment deleted successfully!');
+            setShowDeletePaymentModal(false);
+            setPaymentToDelete(null);
             await refreshSelectedSale();
         } catch (error) {
             showError(error.message || 'Error deleting payment');
@@ -491,208 +539,226 @@ const Sales = () => {
         const saleDate = formatDate(sale.saleDate);
         const customerName = sale.customer?.name || 'Walk-in Customer';
         const customerContact = sale.customer?.contact || '';
-        const customerAddress = sale.customer?.address || '';
+        const totalAmount = parseFloat(sale.totalAmount) || 0;
+        const paidAmount = parseFloat(sale.paidAmount) || 0;
+        const remainingAmount = parseFloat(sale.remainingAmount) || 0;
+        const paymentStatus = sale.paymentStatus || 'N/A';
+
+        const formatItemLabel = (item) => {
+            const name = item.productName || 'N/A';
+            const size = (item.size || '').trim();
+            const showSize = size && size.toLowerCase() !== 'one size' && size.toLowerCase() !== 'n/a';
+            return showSize ? `${name} (${size})` : name;
+        };
+
+        const itemRows = (sale.items || []).map((item, index) => {
+            const qty = parseInt(item.quantity, 10) || 0;
+            const rate = parseFloat(item.unitPrice) || 0;
+            const amount = parseFloat(item.totalPrice) || 0;
+            return `
+                <div class="item-block">
+                    <div class="item-name">${index + 1}. ${formatItemLabel(item)}</div>
+                    <div class="item-row">
+                        <span>${qty.toLocaleString()} x Rs.${rate.toLocaleString()}</span>
+                        <span>Rs.${amount.toLocaleString()}</span>
+                    </div>
+                </div>
+            `;
+        }).join('') || '<div class="item-block"><div class="item-name">No items</div></div>';
 
         printWindow.document.write(`
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Invoice - ${sale.invoiceNumber}</title>
+                <meta charset="UTF-8">
+                <title>${sale.invoiceNumber}</title>
                 <style>
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+
                     @media print {
-                        @page { margin: 10mm; size: A4; }
-                        body { margin: 0; padding: 0; }
+                        @page { size: 80mm auto; margin: 4mm 3mm; }
+                        html, body { width: 80mm; }
                     }
+
                     body {
-                        font-family: Arial, sans-serif;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        padding: 20px;
-                        color: #333;
-                    }
-                    .header {
-                        text-align: center;
-                        border-bottom: 3px solid #000;
-                        padding-bottom: 20px;
-                        margin-bottom: 20px;
-                    }
-                    .header h1 {
-                        margin: 0;
-                        font-size: 28px;
-                        color: #000;
-                    }
-                    .header p {
-                        margin: 5px 0;
-                        color: #666;
-                    }
-                    .invoice-info {
-                        display: flex;
-                        justify-content: space-between;
-                        margin-bottom: 20px;
-                    }
-                    .info-section {
-                        flex: 1;
-                    }
-                    .info-section h3 {
-                        margin: 0 0 10px 0;
-                        font-size: 14px;
-                        color: #666;
-                        text-transform: uppercase;
-                    }
-                    .info-section p {
-                        margin: 5px 0;
-                        font-size: 14px;
-                    }
-                    table {
-                        width: 100%;
-                        border-collapse: collapse;
-                        margin: 20px 0;
-                    }
-                    th, td {
-                        padding: 12px;
-                        text-align: left;
-                        border-bottom: 1px solid #ddd;
-                    }
-                    th {
-                        background-color: #f5f5f5;
-                        font-weight: bold;
-                        text-transform: uppercase;
+                        font-family: 'Courier New', Courier, monospace;
                         font-size: 12px;
+                        line-height: 1.4;
+                        color: #000;
+                        width: 80mm;
+                        max-width: 80mm;
+                        margin: 0 auto;
+                        padding: 8px 6px 16px;
+                        background: #fff;
                     }
-                    .text-right {
-                        text-align: right;
+
+                    .center { text-align: center; }
+                    .bold { font-weight: bold; }
+                    .divider {
+                        border: none;
+                        border-top: 1px dashed #000;
+                        margin: 8px 0;
                     }
-                    .totals {
-                        margin-top: 20px;
-                        border-top: 2px solid #000;
-                        padding-top: 10px;
+                    .divider-solid {
+                        border: none;
+                        border-top: 1px solid #000;
+                        margin: 8px 0;
                     }
-                    .total-row {
+
+                    .store-name {
+                        font-size: 16px;
+                        font-weight: bold;
+                        letter-spacing: 1px;
+                        text-transform: uppercase;
+                    }
+
+                    .tagline {
+                        font-size: 11px;
+                        margin-top: 2px;
+                    }
+
+                    .receipt-title {
+                        font-size: 13px;
+                        font-weight: bold;
+                        margin: 6px 0 4px;
+                        letter-spacing: 2px;
+                    }
+
+                    .info-line {
                         display: flex;
                         justify-content: space-between;
-                        padding: 8px 0;
-                        font-size: 16px;
+                        gap: 8px;
+                        font-size: 11px;
+                        margin: 3px 0;
                     }
-                    .total-row.final {
+
+                    .info-line span:last-child {
+                        text-align: right;
+                        word-break: break-word;
+                    }
+
+                    .item-block { margin: 6px 0; }
+
+                    .item-name {
+                        font-size: 12px;
                         font-weight: bold;
-                        font-size: 18px;
-                        border-top: 1px solid #000;
-                        padding-top: 10px;
+                        margin-bottom: 2px;
+                        word-break: break-word;
+                    }
+
+                    .item-row {
+                        display: flex;
+                        justify-content: space-between;
+                        font-size: 11px;
+                    }
+
+                    .totals { margin-top: 4px; }
+
+                    .total-line {
+                        display: flex;
+                        justify-content: space-between;
+                        font-size: 12px;
+                        margin: 4px 0;
+                    }
+
+                    .total-line.grand {
+                        font-size: 14px;
+                        font-weight: bold;
+                        margin-top: 6px;
+                    }
+
+                    .total-line.due {
+                        font-weight: bold;
+                    }
+
+                    .footer {
+                        text-align: center;
+                        font-size: 11px;
                         margin-top: 10px;
                     }
-                    .footer {
-                        margin-top: 40px;
-                        text-align: center;
-                        border-top: 1px solid #ddd;
-                        padding-top: 20px;
-                        color: #666;
-                        font-size: 12px;
-                    }
-                    .status-badge {
-                        display: inline-block;
-                        padding: 4px 12px;
-                        border-radius: 4px;
-                        font-size: 12px;
-                        font-weight: bold;
-                    }
-                    .status-paid { background-color: #d4edda; color: #155724; }
-                    .status-partial { background-color: #fff3cd; color: #856404; }
-                    .status-unpaid { background-color: #f8d7da; color: #721c24; }
+
+                    .footer p { margin: 3px 0; }
                 </style>
             </head>
             <body>
-                <div class="header">
-                    <h1>DRESSIFY CLOTHING</h1>
-                    <p>Your Fashion Destination</p>
-                    <p>Invoice Receipt</p>
+                <div class="center">
+                    <div class="store-name">Dressify Clothing</div>
+                    <div class="tagline">Your Fashion Destination</div>
                 </div>
 
-                <div class="invoice-info">
-                    <div class="info-section">
-                        <h3>Invoice Details</h3>
-                        <p><strong>Invoice #:</strong> ${sale.invoiceNumber}</p>
-                        <p><strong>Date:</strong> ${saleDate}</p>
-                        <p><strong>Status:</strong> <span class="status-badge status-${sale.paymentStatus?.toLowerCase()}">${sale.paymentStatus || 'N/A'}</span></p>
-                    </div>
-                    <div class="info-section">
-                        <h3>Customer Information</h3>
-                        <p><strong>Name:</strong> ${customerName}</p>
-                        ${customerContact ? `<p><strong>Contact:</strong> ${customerContact}</p>` : ''}
-                        ${customerAddress ? `<p><strong>Address:</strong> ${customerAddress}</p>` : ''}
-                    </div>
+                <hr class="divider-solid">
+
+                <div class="center receipt-title">SALES RECEIPT</div>
+
+                <hr class="divider">
+
+                <div class="info-line">
+                    <span>Invoice</span>
+                    <span>${sale.invoiceNumber}</span>
+                </div>
+                <div class="info-line">
+                    <span>Date</span>
+                    <span>${saleDate}</span>
+                </div>
+                <div class="info-line">
+                    <span>Customer</span>
+                    <span>${customerName}</span>
+                </div>
+                ${customerContact ? `
+                <div class="info-line">
+                    <span>Contact</span>
+                    <span>${customerContact}</span>
+                </div>` : ''}
+                <div class="info-line">
+                    <span>Status</span>
+                    <span class="bold">${paymentStatus}</span>
                 </div>
 
-                <table>
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Product</th>
-                            <th>Size</th>
-                            <th class="text-right">Qty</th>
-                            <th class="text-right">Unit Price</th>
-                            <th class="text-right">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${sale.items?.map((item, index) => `
-                            <tr>
-                                <td>${index + 1}</td>
-                                <td>${item.productName || 'N/A'}</td>
-                                <td>${item.size || 'N/A'}</td>
-                                <td class="text-right">${item.quantity || 0}</td>
-                                <td class="text-right">Rs. ${(parseFloat(item.unitPrice) || 0).toLocaleString()}</td>
-                                <td class="text-right">Rs. ${(parseFloat(item.totalPrice) || 0).toLocaleString()}</td>
-                            </tr>
-                        `).join('') || '<tr><td colspan="6" class="text-center">No items</td></tr>'}
-                    </tbody>
-                </table>
+                <hr class="divider">
+
+                ${itemRows}
+
+                <hr class="divider-solid">
 
                 <div class="totals">
-                    <div class="total-row">
-                        <span>Subtotal:</span>
-                        <span>Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}</span>
+                    <div class="total-line grand">
+                        <span>TOTAL</span>
+                        <span>Rs. ${totalAmount.toLocaleString()}</span>
                     </div>
-                    <div class="total-row">
-                        <span>Paid Amount:</span>
-                        <span>Rs. ${(parseFloat(sale.paidAmount) || 0).toLocaleString()}</span>
-                    </div>
-                    ${(parseFloat(sale.remainingAmount) || 0) > 0 ? `
-                    <div class="total-row">
-                        <span>Remaining Amount:</span>
-                        <span style="color: #dc3545; font-weight: bold;">Rs. ${(parseFloat(sale.remainingAmount) || 0).toLocaleString()}</span>
-                    </div>
-                    ` : ''}
-                    <div class="total-row final">
-                        <span>Total Amount:</span>
-                        <span>Rs. ${(parseFloat(sale.totalAmount) || 0).toLocaleString()}</span>
-                    </div>
+                    ${paidAmount > 0 ? `
+                    <div class="total-line">
+                        <span>Paid</span>
+                        <span>Rs. ${paidAmount.toLocaleString()}</span>
+                    </div>` : ''}
+                    ${remainingAmount > 0 ? `
+                    <div class="total-line due">
+                        <span>Balance Due</span>
+                        <span>Rs. ${remainingAmount.toLocaleString()}</span>
+                    </div>` : ''}
                 </div>
 
                 ${sale.notes ? `
-                <div style="margin-top: 20px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;">
-                    <strong>Notes:</strong> ${sale.notes}
-                </div>
-                ` : ''}
+                <hr class="divider">
+                <div style="font-size:11px;">
+                    <div class="bold">Note:</div>
+                    <div>${sale.notes}</div>
+                </div>` : ''}
+
+                <hr class="divider-solid">
 
                 <div class="footer">
-                    <p>Thank you for your business!</p>
-                    <p>For inquiries, please contact us.</p>
-                    <p style="margin-top: 20px;">Generated on ${new Date().toLocaleString()}</p>
+                    <p class="bold">Thank you for your business!</p>
+                    <p>Please visit again</p>
                 </div>
 
                 <script>
                     window.onload = function() {
-                        // For mobile, don't auto-print
                         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                        
                         if (!isMobile) {
-                            // Desktop: auto-print after a short delay
                             setTimeout(function() {
                                 window.print();
-                                window.onafterprint = function() {
-                                    window.close();
-                                };
-                            }, 500);
+                                window.onafterprint = function() { window.close(); };
+                            }, 400);
                         }
                     };
                 </script>
@@ -885,8 +951,9 @@ const Sales = () => {
         const matchesCustomerName = sale.customer?.name?.toLowerCase().includes(searchLower);
         const matchesCustomerContact = sale.customer?.contact?.toLowerCase().includes(searchLower);
         const matchesShopName = sale.customer?.shopName?.toLowerCase().includes(searchLower);
+        const matchesAddedBy = sale.addedBy?.toLowerCase().includes(searchLower);
 
-        return matchesInvoice || matchesCustomerName || matchesCustomerContact || matchesShopName;
+        return matchesInvoice || matchesCustomerName || matchesCustomerContact || matchesShopName || matchesAddedBy;
     });
 
     const totalPages = Math.ceil(filteredSales.length / itemsPerPage);
@@ -952,6 +1019,7 @@ const Sales = () => {
                                         <th className="text-left py-3 px-4 font-semibold text-gray-700">Paid</th>
                                         <th className="text-left py-3 px-4 font-semibold text-gray-700">Remaining</th>
                                         <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
+                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Added By</th>
                                         <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
                                     </tr>
                                 </thead>
@@ -975,6 +1043,15 @@ const Sales = () => {
                                                     }`}>
                                                     {sale.paymentStatus}
                                                 </span>
+                                            </td>
+                                            <td className="py-3 px-4">
+                                                {sale.addedBy ? (
+                                                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                                        {sale.addedBy}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-gray-400 text-sm">—</span>
+                                                )}
                                             </td>
                                             <td className="py-3 px-4">
                                                 <div className="flex items-center gap-2">
@@ -1304,6 +1381,23 @@ const Sales = () => {
                                     </div>
                                 </div>
 
+                                {!editingSale && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Who is adding this sale? *</label>
+                                        <select
+                                            required
+                                            value={saleFormData.addedBy}
+                                            onChange={(e) => setSaleFormData({ ...saleFormData, addedBy: e.target.value })}
+                                            className="input-field"
+                                        >
+                                            <option value="">Select staff member</option>
+                                            {STAFF_MEMBERS.map(name => (
+                                                <option key={name} value={name}>{name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                                     <textarea
@@ -1410,6 +1504,10 @@ const Sales = () => {
                                         }`}>
                                         {selectedSale.paymentStatus}
                                     </span>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-600">Sale added by</p>
+                                    <p className="font-semibold">{selectedSale.addedBy || '—'}</p>
                                 </div>
                             </div>
                             <div className="border-t border-gray-200 pt-4">
@@ -1642,6 +1740,7 @@ const Sales = () => {
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Amount</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Method</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Type</th>
+                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">By</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Notes</th>
                                                                 <th className="text-left py-2 px-2 font-semibold text-gray-700">Actions</th>
                                                             </tr>
@@ -1657,85 +1756,94 @@ const Sales = () => {
                                                                     };
                                                                 });
                                                                 return paymentsWithKeys
-                                                                .sort((a, b) => {
-                                                                    const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
-                                                                    const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
-                                                                    return dateB - dateA;
-                                                                })
-                                                                .map((payment, index) => {
-                                                                    // Handle Firestore Timestamp format
-                                                                    let paymentDate;
-                                                                    if (payment.date?.toDate) {
-                                                                        // Firestore Timestamp object
-                                                                        paymentDate = payment.date.toDate();
-                                                                    } else if (payment.date?.seconds) {
-                                                                        // Firestore Timestamp with seconds
-                                                                        paymentDate = new Date(payment.date.seconds * 1000);
-                                                                    } else if (payment.date instanceof Date) {
-                                                                        paymentDate = payment.date;
-                                                                    } else if (payment.date) {
-                                                                        paymentDate = new Date(payment.date);
-                                                                    } else {
-                                                                        paymentDate = new Date();
-                                                                    }
+                                                                    .sort((a, b) => {
+                                                                        const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
+                                                                        const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
+                                                                        return dateB - dateA;
+                                                                    })
+                                                                    .map((payment, index) => {
+                                                                        // Handle Firestore Timestamp format
+                                                                        let paymentDate;
+                                                                        if (payment.date?.toDate) {
+                                                                            // Firestore Timestamp object
+                                                                            paymentDate = payment.date.toDate();
+                                                                        } else if (payment.date?.seconds) {
+                                                                            // Firestore Timestamp with seconds
+                                                                            paymentDate = new Date(payment.date.seconds * 1000);
+                                                                        } else if (payment.date instanceof Date) {
+                                                                            paymentDate = payment.date;
+                                                                        } else if (payment.date) {
+                                                                            paymentDate = new Date(payment.date);
+                                                                        } else {
+                                                                            paymentDate = new Date();
+                                                                        }
 
-                                                                    const formattedDate = formatDate(paymentDate);
-                                                                    const formattedTime = paymentDate.toLocaleTimeString('en-US', {
-                                                                        hour: '2-digit',
-                                                                        minute: '2-digit',
-                                                                        hour12: true
+                                                                        const formattedDate = formatDate(paymentDate);
+                                                                        const formattedTime = paymentDate.toLocaleTimeString('en-US', {
+                                                                            hour: '2-digit',
+                                                                            minute: '2-digit',
+                                                                            hour12: true
+                                                                        });
+                                                                        const paymentAmount = parseFloat(payment.amount) || 0;
+
+                                                                        return (
+                                                                            <tr key={payment._paymentKey} className="border-b border-gray-200 hover:bg-white transition-colors">
+                                                                                <td className="py-3 px-3 text-gray-600 font-medium">{index + 1}</td>
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-semibold text-gray-900">{formattedDate}</div>
+                                                                                    <div className="text-xs text-gray-500 mt-1">{formattedTime}</div>
+                                                                                </td>
+                                                                                <td className="py-3 px-3">
+                                                                                    <span className="font-bold text-green-600 text-base">
+                                                                                        Rs. {paymentAmount.toLocaleString()}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="py-3 px-3">
+                                                                                    <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium">
+                                                                                        {payment.paymentMethod || 'Cash'}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="py-3 px-3">
+                                                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${payment.paymentType === 'Initial Sale' ? 'bg-indigo-100 text-indigo-800' : payment.paymentType === 'Recovery' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
+                                                                                        {payment.paymentType || 'Payment'}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="py-3 px-3 text-xs text-gray-700">
+                                                                                    {payment.editedBy ? (
+                                                                                        <span>Edited: <strong>{payment.editedBy}</strong></span>
+                                                                                    ) : payment.addedBy ? (
+                                                                                        <span>Added: <strong>{payment.addedBy}</strong></span>
+                                                                                    ) : (
+                                                                                        <span className="text-gray-400">—</span>
+                                                                                    )}
+                                                                                </td>
+                                                                                <td className="py-3 px-3 text-gray-600 text-xs">
+                                                                                    {payment.notes || <span className="text-gray-400">-</span>}
+                                                                                </td>
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="flex items-center gap-1">
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => openEditPayment(payment)}
+                                                                                            className="p-1.5 text-green-600 hover:bg-green-50 rounded"
+                                                                                            title="Edit payment"
+                                                                                        >
+                                                                                            <Edit2 className="w-4 h-4" />
+                                                                                        </button>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => openDeletePaymentConfirm(payment)}
+                                                                                            disabled={deletingPaymentKey === payment._paymentKey}
+                                                                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                                                                            title="Delete payment"
+                                                                                        >
+                                                                                            <Trash2 className="w-4 h-4" />
+                                                                                        </button>
+                                                                                    </div>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
                                                                     });
-                                                                    const paymentAmount = parseFloat(payment.amount) || 0;
-
-                                                                    return (
-                                                                        <tr key={payment._paymentKey} className="border-b border-gray-200 hover:bg-white transition-colors">
-                                                                            <td className="py-3 px-3 text-gray-600 font-medium">{index + 1}</td>
-                                                                            <td className="py-3 px-3">
-                                                                                <div className="font-semibold text-gray-900">{formattedDate}</div>
-                                                                                <div className="text-xs text-gray-500 mt-1">{formattedTime}</div>
-                                                                            </td>
-                                                                            <td className="py-3 px-3">
-                                                                                <span className="font-bold text-green-600 text-base">
-                                                                                    Rs. {paymentAmount.toLocaleString()}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className="py-3 px-3">
-                                                                                <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium">
-                                                                                    {payment.paymentMethod || 'Cash'}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className="py-3 px-3">
-                                                                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${payment.paymentType === 'Initial Sale' ? 'bg-indigo-100 text-indigo-800' : payment.paymentType === 'Recovery' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
-                                                                                    {payment.paymentType || 'Payment'}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className="py-3 px-3 text-gray-600 text-xs">
-                                                                                {payment.notes || <span className="text-gray-400">-</span>}
-                                                                            </td>
-                                                                            <td className="py-3 px-3">
-                                                                                <div className="flex items-center gap-1">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() => openEditPayment(payment)}
-                                                                                        className="p-1.5 text-green-600 hover:bg-green-50 rounded"
-                                                                                        title="Edit payment"
-                                                                                    >
-                                                                                        <Edit2 className="w-4 h-4" />
-                                                                                    </button>
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() => handleDeletePayment(payment._paymentKey)}
-                                                                                        disabled={deletingPaymentKey === payment._paymentKey}
-                                                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                                                                                        title="Delete payment"
-                                                                                    >
-                                                                                        <Trash2 className="w-4 h-4" />
-                                                                                    </button>
-                                                                                </div>
-                                                                            </td>
-                                                                        </tr>
-                                                                    );
-                                                                });
                                                             })()}
                                                         </tbody>
                                                         <tfoot className="bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-300">
@@ -1746,7 +1854,7 @@ const Sales = () => {
                                                                 <td className="py-3 px-3 font-bold text-green-600 text-lg">
                                                                     Rs. {totalFromPayments.toLocaleString()}
                                                                 </td>
-                                                                <td colSpan="4" className="py-3 px-3"></td>
+                                                                <td colSpan="5" className="py-3 px-3"></td>
                                                             </tr>
                                                         </tfoot>
                                                     </table>
@@ -1822,6 +1930,20 @@ const Sales = () => {
                             </div>
                         </div>
                         <form onSubmit={handleAddPayment} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Who is adding this payment? *</label>
+                                <select
+                                    required
+                                    value={paymentData.addedBy}
+                                    onChange={(e) => setPaymentData({ ...paymentData, addedBy: e.target.value })}
+                                    className="input-field"
+                                >
+                                    <option value="">Select staff member</option>
+                                    {STAFF_MEMBERS.map(name => (
+                                        <option key={name} value={name}>{name}</option>
+                                    ))}
+                                </select>
+                            </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
                                 <input
@@ -1905,6 +2027,20 @@ const Sales = () => {
                         </div>
                         <form onSubmit={handleUpdatePayment} className="p-6 space-y-4">
                             <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Who is editing this payment? *</label>
+                                <select
+                                    required
+                                    value={editPaymentData.editedBy}
+                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, editedBy: e.target.value })}
+                                    className="input-field"
+                                >
+                                    <option value="">Select staff member</option>
+                                    {STAFF_MEMBERS.map(name => (
+                                        <option key={name} value={name}>{name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
                                 <input
                                     type="text"
@@ -1963,6 +2099,64 @@ const Sales = () => {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Payment Confirmation */}
+            {showDeletePaymentModal && paymentToDelete && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                        <div className="p-6">
+                            <div className="flex items-start gap-4">
+                                <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                                    <AlertTriangle className="w-6 h-6 text-red-600" />
+                                </div>
+                                <div className="flex-1">
+                                    <h3 className="text-lg font-bold text-gray-900">Delete this payment?</h3>
+                                    <p className="text-sm text-gray-600 mt-2">
+                                        Are you sure you want to delete this payment? Paid amount and remaining balance will be recalculated. This cannot be undone.
+                                    </p>
+                                    <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm space-y-1">
+                                        <p><span className="text-gray-500">Amount:</span> <strong className="text-red-600">Rs. {paymentToDelete.amount.toLocaleString()}</strong></p>
+                                        <p><span className="text-gray-500">Date:</span> <strong>{paymentToDelete.dateLabel}</strong></p>
+                                        <p><span className="text-gray-500">Method:</span> <strong>{paymentToDelete.method}</strong></p>
+                                        <p><span className="text-gray-500">Type:</span> <strong>{paymentToDelete.type}</strong></p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-3 mt-6">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowDeletePaymentModal(false);
+                                        setPaymentToDelete(null);
+                                    }}
+                                    disabled={deletingPaymentKey === paymentToDelete.key}
+                                    className="btn-secondary"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDeletePayment}
+                                    disabled={deletingPaymentKey === paymentToDelete.key}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium disabled:opacity-50 flex items-center gap-2"
+                                >
+                                    {deletingPaymentKey === paymentToDelete.key ? (
+                                        <>
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                                            Deleting...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Trash2 className="w-4 h-4" />
+                                            Delete Payment
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
