@@ -46,6 +46,7 @@ const BrandsCategories = () => {
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
     } catch (error) {
+      showError(error.message || 'Error loading brands and categories');
     } finally {
       setLoading(false);
     }
@@ -84,7 +85,8 @@ const BrandsCategories = () => {
           name: formData.name,
           description: formData.description,
           brandId: formData.brandId || null,
-          parentCategoryId: formData.parentCategoryId || null
+          parentCategoryId: formData.parentCategoryId || null,
+          imageUrl: formData.imageUrl || ''
         };
 
         const isMainCategory = !formData.parentCategoryId;
@@ -105,7 +107,7 @@ const BrandsCategories = () => {
       }
       setShowModal(false);
       resetForm();
-      fetchData();
+      await fetchData();
     } catch (error) {
       showError(error.message || error.response?.data?.error || 'Error saving item');
     } finally {
@@ -237,18 +239,23 @@ const BrandsCategories = () => {
                     <div className="flex items-center gap-3">
                       {brand.imageUrl ? (
                         <img
+                          key={brand.imageUrl}
                           src={brand.imageUrl}
                           alt={brand.name}
                           className="w-12 h-12 object-cover rounded-lg"
                           onError={(e) => {
-                            e.target.style.display = 'none';
-                            const fallback = e.target.nextElementSibling;
-                            if (fallback) fallback.style.display = 'flex';
+                            e.currentTarget.style.visibility = 'hidden';
+                            e.currentTarget.style.position = 'absolute';
+                            const fallback = e.currentTarget.nextElementSibling;
+                            if (fallback) {
+                              fallback.classList.remove('hidden');
+                              fallback.classList.add('flex');
+                            }
                           }}
                         />
                       ) : null}
                       <div
-                        className={`w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center text-white font-bold text-lg ${brand.imageUrl ? 'hidden' : 'flex'}`}
+                        className={`w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg items-center justify-center text-white font-bold text-lg ${brand.imageUrl ? 'hidden' : 'flex'}`}
                       >
                         {brand.name.charAt(0).toUpperCase()}
                       </div>
@@ -334,18 +341,23 @@ const BrandsCategories = () => {
                       <div className="flex items-center gap-3">
                         {category.imageUrl ? (
                           <img
+                            key={category.imageUrl}
                             src={category.imageUrl}
                             alt={category.name}
                             className="w-12 h-12 object-cover rounded-lg"
                             onError={(e) => {
-                              e.target.style.display = 'none';
-                              const fallback = e.target.nextElementSibling;
-                              if (fallback) fallback.style.display = 'flex';
+                              e.currentTarget.style.visibility = 'hidden';
+                              e.currentTarget.style.position = 'absolute';
+                              const fallback = e.currentTarget.nextElementSibling;
+                              if (fallback) {
+                                fallback.classList.remove('hidden');
+                                fallback.classList.add('flex');
+                              }
                             }}
                           />
                         ) : null}
                         <div
-                          className={`w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-lg ${category.imageUrl ? 'hidden' : 'flex'}`}
+                          className={`w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg items-center justify-center text-white font-bold text-lg ${category.imageUrl ? 'hidden' : 'flex'}`}
                         >
                           {category.name.charAt(0).toUpperCase()}
                         </div>
@@ -459,8 +471,9 @@ const BrandsCategories = () => {
 
               {/* Image Upload */}
               <ImageUpload
+                key={`${modalType}-${editingItem?.id || editingItem?._id || 'new'}-${showModal}`}
                 imageUrl={formData.imageUrl}
-                onImageChange={(url) => setFormData({ ...formData, imageUrl: url })}
+                onImageChange={(url) => setFormData((prev) => ({ ...prev, imageUrl: url }))}
                 label={modalType === 'brand' ? 'Brand Image' : 'Category Image'}
                 folder={modalType === 'brand' ? 'upload pics/brands' : 'upload pics/categories'}
                 disabled={saving}
