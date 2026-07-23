@@ -171,21 +171,58 @@ const Inventory = () => {
     return totalEarned;
   };
 
-  // Calculate sold quantity from sales records
-  const calculateSoldQuantity = (inventoryItemId) => {
-    let totalSold = 0;
+  const getSaleLineTotal = (item) =>
+    parseFloat(item.totalPrice) ||
+    ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
 
-    sales.forEach(sale => {
-      if (sale.items && Array.isArray(sale.items)) {
-        sale.items.forEach(item => {
-          if (item.inventoryId === inventoryItemId) {
-            totalSold += item.quantity || 0;
-          }
-        });
-      }
+  // Sold qty + billed amount + payment received/remaining (payment split by line share of sale)
+  const getProductSalePaymentStats = (inventoryItemId) => {
+    let soldQty = 0;
+    let soldAmount = 0;
+    let paidAmount = 0;
+    let remainingAmount = 0;
+
+    sales.forEach((sale) => {
+      const items = sale.items || [];
+      if (!items.length) return;
+
+      const saleTotal =
+        parseFloat(sale.totalAmount) ||
+        items.reduce((sum, line) => sum + getSaleLineTotal(line), 0) ||
+        0;
+      const salePaid = parseFloat(sale.paidAmount) || 0;
+      const saleRemaining =
+        parseFloat(sale.remainingAmount) >= 0
+          ? parseFloat(sale.remainingAmount)
+          : Math.max(0, saleTotal - salePaid);
+
+      items.forEach((item) => {
+        const invId = item.inventoryId || item.inventory;
+        if (invId !== inventoryItemId) return;
+
+        const lineTotal = getSaleLineTotal(item);
+        soldQty += parseFloat(item.quantity) || 0;
+        soldAmount += lineTotal;
+
+        if (saleTotal > 0) {
+          const share = lineTotal / saleTotal;
+          paidAmount += salePaid * share;
+          remainingAmount += saleRemaining * share;
+        }
+      });
     });
 
-    return totalSold;
+    return {
+      soldQty,
+      soldAmount: Math.round(soldAmount),
+      paidAmount: Math.round(paidAmount),
+      remainingAmount: Math.round(remainingAmount)
+    };
+  };
+
+  // Calculate sold quantity from sales records
+  const calculateSoldQuantity = (inventoryItemId) => {
+    return getProductSalePaymentStats(inventoryItemId).soldQty;
   };
 
   // Format date for display
@@ -823,6 +860,23 @@ const Inventory = () => {
                                     Added: {formatDate(item.createdAt)}
                                   </p>
                                 )}
+                                {(() => {
+                                  const pay = getProductSalePaymentStats(itemId);
+                                  if (pay.soldQty <= 0) return null;
+                                  return (
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 font-medium">
+                                        Sold {pay.soldQty}
+                                      </span>
+                                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium">
+                                        Paid Rs. {pay.paidAmount.toLocaleString()}
+                                      </span>
+                                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${pay.remainingAmount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                        Due Rs. {pay.remainingAmount.toLocaleString()}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 {isExpanded ? (
@@ -984,6 +1038,42 @@ const Inventory = () => {
                             </div>
                           </div>
 
+                          {/* Sales & Payment (offline sales) */}
+                          {(() => {
+                            const pay = getProductSalePaymentStats(itemId);
+                            if (pay.soldQty <= 0 && pay.soldAmount <= 0) return null;
+                            return (
+                              <div className="pt-3 border-t border-gray-200">
+                                <div className="text-sm text-gray-700 mb-2 font-semibold">Sales & Payment</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="bg-orange-50 p-3 rounded-lg border border-orange-200">
+                                    <div className="text-[11px] uppercase tracking-wide text-orange-700/80 font-semibold">Sold Qty</div>
+                                    <div className="text-base font-bold text-orange-800 mt-1">{pay.soldQty} pcs</div>
+                                  </div>
+                                  <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-200">
+                                    <div className="text-[11px] uppercase tracking-wide text-neutral-500 font-semibold">Billed</div>
+                                    <div className="text-base font-bold text-ink mt-1 break-words">Rs. {pay.soldAmount.toLocaleString()}</div>
+                                  </div>
+                                  <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200">
+                                    <div className="text-[11px] uppercase tracking-wide text-emerald-700/80 font-semibold">Payment In</div>
+                                    <div className="text-base font-bold text-emerald-700 mt-1 break-words">Rs. {pay.paidAmount.toLocaleString()}</div>
+                                  </div>
+                                  <div className={`p-3 rounded-lg border ${pay.remainingAmount > 0 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                    <div className={`text-[11px] uppercase tracking-wide font-semibold ${pay.remainingAmount > 0 ? 'text-rose-700/80' : 'text-emerald-700/80'}`}>
+                                      Remaining
+                                    </div>
+                                    <div className={`text-base font-bold mt-1 break-words ${pay.remainingAmount > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                      Rs. {pay.remainingAmount.toLocaleString()}
+                                    </div>
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-neutral-400 mt-2">
+                                  Payment is shared from each invoice by this product’s bill amount.
+                                </p>
+                              </div>
+                            );
+                          })()}
+
                           {/* Cost and Value */}
                           <div className="pt-3 border-t border-gray-200">
                             <div className="text-sm text-gray-700 mb-2 font-semibold">Financial Summary</div>
@@ -1108,6 +1198,7 @@ const Inventory = () => {
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Price</th>
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden md:table-cell">Online</th>
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Stock Value</th>
+                    <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Sold / Payment</th>
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Revenue</th>
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Total Profit</th>
                     <th className="px-4 sm:px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Date Added</th>
@@ -1300,6 +1391,30 @@ const Inventory = () => {
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm font-medium text-gray-900 hidden xl:table-cell">
                           Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-3 sm:px-6 py-4 text-sm hidden lg:table-cell">
+                          {(() => {
+                            const pay = getProductSalePaymentStats(item.id || item._id);
+                            if (pay.soldQty <= 0 && pay.soldAmount <= 0) {
+                              return <span className="text-gray-400 text-xs">No sales yet</span>;
+                            }
+                            return (
+                              <div className="space-y-1 min-w-[140px]">
+                                <div className="text-xs text-gray-600">
+                                  Sold: <span className="font-semibold text-orange-700">{pay.soldQty} pcs</span>
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                  Billed: <span className="font-semibold text-ink">Rs. {pay.soldAmount.toLocaleString()}</span>
+                                </div>
+                                <div className="text-xs text-emerald-700">
+                                  Paid: <span className="font-semibold">Rs. {pay.paidAmount.toLocaleString()}</span>
+                                </div>
+                                <div className={`text-xs ${pay.remainingAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                  Due: <span className="font-semibold">Rs. {pay.remainingAmount.toLocaleString()}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
                           {(() => {

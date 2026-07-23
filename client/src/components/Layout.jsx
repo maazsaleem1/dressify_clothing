@@ -152,12 +152,12 @@ const Layout = ({ children }) => {
 
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <header className="bg-white/80 backdrop-blur-md border-b border-neutral-200 px-4 sm:px-6 md:px-8 py-4 sticky top-0 z-20">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
+        <header className="bg-white/80 backdrop-blur-md border-b border-neutral-200 px-3 sm:px-6 md:px-8 py-3 sm:py-4 sticky top-0 z-20">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="md:hidden p-2 hover:bg-neutral-100 rounded-xl transition-colors"
+                className="md:hidden p-2.5 -ml-1 hover:bg-neutral-100 rounded-xl transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                 aria-label="Toggle menu"
               >
                 <Menu size={22} className="text-ink" />
@@ -166,12 +166,12 @@ const Layout = ({ children }) => {
                 <p className="text-[10px] uppercase tracking-[0.15em] text-neutral-400 font-semibold hidden sm:block">
                   Admin Panel
                 </p>
-                <h2 className="text-xl sm:text-2xl font-bold text-ink truncate tracking-tight">
+                <h2 className="text-lg sm:text-2xl font-bold text-ink truncate tracking-tight">
                   {currentPage}
                 </h2>
               </div>
             </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-semibold text-ink truncate max-w-[160px]">
                   {currentUser?.email?.split('@')[0] || 'Admin'}
@@ -184,15 +184,15 @@ const Layout = ({ children }) => {
                   })}
                 </p>
               </div>
-              <div className="w-10 h-10 bg-ink rounded-xl flex items-center justify-center text-white font-bold text-sm ring-2 ring-neutral-200 ring-offset-2">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-ink rounded-xl flex items-center justify-center text-white font-bold text-sm ring-2 ring-neutral-200 ring-offset-1 sm:ring-offset-2">
                 {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
               </div>
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-grid-pattern bg-neutral-50">
-          <div className="max-w-[1600px] mx-auto animate-fade-in">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 md:p-8 bg-grid-pattern bg-neutral-50">
+          <div className="max-w-[1600px] mx-auto animate-fade-in w-full min-w-0">
             {children}
           </div>
         </main>

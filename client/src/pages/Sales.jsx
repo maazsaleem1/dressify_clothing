@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText, AlertTriangle, MoreHorizontal } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, updateSalePayment, deleteSalePayment, deleteSale, createCustomer } from '../services/api';
@@ -7,6 +7,14 @@ import { showSuccess, showError } from '../utils/toast';
 import { ListItemShimmer } from '../components/Shimmer';
 
 const STAFF_MEMBERS = ['Almas', 'Shahzad'];
+
+const formatMoney = (amount) => `Rs. ${(parseFloat(amount) || 0).toLocaleString()}`;
+
+const getCustomerInitial = (name) => {
+    const parts = (name || 'C').trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return (parts[0][0] || 'C').toUpperCase();
+};
 
 const Sales = () => {
     const [sales, setSales] = useState([]);
@@ -72,10 +80,22 @@ const Sales = () => {
         address: '',
         customerType: 'Walk-in'
     });
+    const [openMenuId, setOpenMenuId] = useState(null);
+    const menuRef = useRef(null);
 
     useEffect(() => {
         fetchData();
     }, [filterStatus]);
+
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (menuRef.current && !menuRef.current.contains(e.target)) {
+                setOpenMenuId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const fetchData = async () => {
         try {
@@ -123,6 +143,24 @@ const Sales = () => {
             hour: '2-digit',
             minute: '2-digit'
         });
+    };
+
+    const parseSaleDate = (dateValue) => {
+        if (!dateValue) return null;
+        if (dateValue instanceof Date) return dateValue;
+        if (dateValue?.toDate) return dateValue.toDate();
+        if (dateValue?.seconds != null) return new Date(dateValue.seconds * 1000);
+        const d = new Date(dateValue);
+        return isNaN(d.getTime()) ? null : d;
+    };
+
+    const formatDateParts = (dateValue) => {
+        const date = parseSaleDate(dateValue);
+        if (!date) return { day: 'N/A', time: '' };
+        return {
+            day: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+        };
     };
 
     /** When this line was added to the sale (not inventory created date). */
@@ -962,188 +1000,413 @@ const Sales = () => {
         currentPage * itemsPerPage
     );
 
+    const salesSummary = {
+        totalAmount: filteredSales.reduce((s, sale) => s + (parseFloat(sale.totalAmount) || 0), 0),
+        paidAmount: filteredSales.reduce((s, sale) => s + (parseFloat(sale.paidAmount) || 0), 0),
+        outstanding: filteredSales.reduce((s, sale) => s + (parseFloat(sale.remainingAmount) || 0), 0),
+        paidCount: filteredSales.filter(s => s.paymentStatus === 'Paid').length,
+        partialCount: filteredSales.filter(s => s.paymentStatus === 'Partial').length,
+        unpaidCount: filteredSales.filter(s => s.paymentStatus === 'Unpaid').length
+    };
+
+    const statusFilters = [
+        { value: '', label: 'All' },
+        { value: 'Paid', label: 'Paid' },
+        { value: 'Partial', label: 'Partial' },
+        { value: 'Unpaid', label: 'Unpaid' }
+    ];
+
+    const statusBadgeClass = (status) => {
+        if (status === 'Paid') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+        if (status === 'Partial') return 'bg-amber-50 text-amber-700 border-amber-100';
+        return 'bg-rose-50 text-rose-700 border-rose-100';
+    };
+
+    const openSaleDetails = (sale) => {
+        setSelectedSale(sale);
+        setShowDetailsModal(true);
+        setOpenMenuId(null);
+    };
+
     return (
-        <div className="p-6">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-gray-800">Sales & Credit</h1>
+        <div className="space-y-4 sm:space-y-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+                <div className="min-w-0">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-ink tracking-tight hidden sm:block">Sales & Credit</h1>
+                    <p className="text-sm text-neutral-500 sm:mt-1">
+                        {filteredSales.length} sale{filteredSales.length !== 1 ? 's' : ''}
+                        {filterStatus ? ` · ${filterStatus}` : ''}
+                    </p>
+                </div>
                 <button
                     onClick={() => {
                         resetSaleForm();
                         setShowSaleModal(true);
                     }}
-                    className="btn-primary flex items-center gap-2"
+                    className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
                 >
-                    <Plus className="w-5 h-5" />
+                    <Plus className="w-4 h-4" />
                     New Sale
                 </button>
             </div>
 
-            <div className="bg-white rounded-lg shadow-md p-6">
-                <div className="flex flex-col md:flex-row gap-4 mb-6">
-                    <div className="flex-1 relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+                <div className="stat-card !p-3.5 sm:!p-6">
+                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.totalAmount)}</p>
+                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Total Sales</p>
+                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{filteredSales.length} invoices</p>
+                </div>
+                <div className="stat-card !p-3.5 sm:!p-6">
+                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.paidAmount)}</p>
+                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Collected</p>
+                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.paidCount} paid</p>
+                </div>
+                <div className="stat-card !p-3.5 sm:!p-6">
+                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.outstanding)}</p>
+                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Outstanding</p>
+                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.partialCount + salesSummary.unpaidCount} pending</p>
+                </div>
+                <div className="stat-card !p-3.5 sm:!p-6 col-span-2 xl:col-span-1">
+                    <div className="flex items-end justify-between gap-4">
+                        <div>
+                            <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums">{salesSummary.unpaidCount}</p>
+                            <p className="text-xs sm:text-sm font-medium text-ink mt-2">Unpaid</p>
+                            <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.partialCount} partial</p>
+                        </div>
+                        <div className="flex items-end gap-1 h-10 mb-1">
+                            {[salesSummary.paidCount, salesSummary.partialCount, salesSummary.unpaidCount].map((v, i) => (
+                                <div
+                                    key={i}
+                                    className="w-2 rounded-sm bg-neutral-200"
+                                    style={{ height: `${Math.max(8, Math.min(40, (v / Math.max(1, filteredSales.length)) * 40))}px`, backgroundColor: i === 0 ? '#0a0a0a' : i === 1 ? '#a3a3a3' : '#e5e5e5' }}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="card !p-0 overflow-hidden">
+                <div className="p-3 sm:p-5 border-b border-neutral-100 flex flex-col gap-3">
+                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
+                        {statusFilters.map((f) => (
+                            <button
+                                key={f.value || 'all'}
+                                type="button"
+                                onClick={() => {
+                                    setFilterStatus(f.value);
+                                    setCurrentPage(1);
+                                }}
+                                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0 min-h-[40px] ${
+                                    filterStatus === f.value
+                                        ? 'bg-ink text-white'
+                                        : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                                }`}
+                            >
+                                {f.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="relative w-full">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4" />
                         <input
                             type="text"
-                            placeholder="Search by invoice, customer name, contact, or shop..."
+                            placeholder="Search invoices, customers..."
                             value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="input-field pl-10 w-full text-gray-900 placeholder-gray-400"
+                            onChange={(e) => {
+                                setSearchTerm(e.target.value);
+                                setCurrentPage(1);
+                            }}
+                            className="input-field pl-9 !py-2.5 text-sm"
                         />
-                    </div>
-                    <div className="flex-1">
-                        <select
-                            value={filterStatus}
-                            onChange={(e) => setFilterStatus(e.target.value)}
-                            className="input-field w-full text-gray-900"
-                        >
-                            <option value="">All Status</option>
-                            <option value="Paid">Paid</option>
-                            <option value="Partial">Partial</option>
-                            <option value="Unpaid">Unpaid</option>
-                        </select>
                     </div>
                 </div>
 
                 {loading ? (
-                    <ListItemShimmer count={5} />
+                    <div className="p-4 sm:p-6">
+                        <ListItemShimmer count={5} />
+                    </div>
+                ) : filteredSales.length === 0 ? (
+                    <div className="py-12 sm:py-16 px-4 sm:px-6 text-center">
+                        <div className="w-12 h-12 rounded-full bg-neutral-100 flex items-center justify-center mx-auto mb-4">
+                            <ShoppingCart className="w-5 h-5 text-neutral-400" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-ink">No sales found</h3>
+                        <p className="text-sm text-neutral-500 mt-1 max-w-sm mx-auto">
+                            {searchTerm || filterStatus
+                                ? 'Try a different search or status filter.'
+                                : 'Create your first sale to start tracking credit and payments.'}
+                        </p>
+                        {!searchTerm && !filterStatus && (
+                            <button
+                                onClick={() => {
+                                    resetSaleForm();
+                                    setShowSaleModal(true);
+                                }}
+                                className="btn-secondary mt-5 inline-flex items-center gap-2"
+                            >
+                                <Plus className="w-4 h-4" />
+                                New Sale
+                            </button>
+                        )}
+                    </div>
                 ) : (
                     <>
-                        <div className="overflow-x-auto">
-                            <table className="w-full">
+                        {/* Mobile cards */}
+                        <div className="md:hidden divide-y divide-neutral-100">
+                            {paginatedSales.map((sale) => {
+                                const saleId = sale.id || sale._id;
+                                const dateParts = formatDateParts(sale.saleDate);
+                                const customerName = sale.customer?.name || 'Walk-in';
+                                const remaining = parseFloat(sale.remainingAmount) || 0;
+                                const isMenuOpen = openMenuId === saleId;
+
+                                return (
+                                    <div key={saleId} className="p-4 space-y-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => openSaleDetails(sale)}
+                                                className="flex items-center gap-3 min-w-0 text-left"
+                                            >
+                                                <div className="w-10 h-10 rounded-full bg-neutral-900 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+                                                    {getCustomerInitial(customerName)}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-semibold text-ink truncate">{customerName}</p>
+                                                    <p className="text-xs text-neutral-500 truncate mt-0.5">{sale.invoiceNumber}</p>
+                                                </div>
+                                            </button>
+                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium border shrink-0 ${statusBadgeClass(sale.paymentStatus)}`}>
+                                                {sale.paymentStatus || 'N/A'}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 rounded-xl bg-neutral-50 border border-neutral-100 p-3">
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Total</p>
+                                                <p className="text-sm font-semibold text-ink tabular-nums mt-0.5 break-all">{formatMoney(sale.totalAmount)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Paid</p>
+                                                <p className="text-sm font-medium text-neutral-700 tabular-nums mt-0.5 break-all">{formatMoney(sale.paidAmount)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Due</p>
+                                                <p className={`text-sm font-semibold tabular-nums mt-0.5 break-all ${remaining > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                    {formatMoney(remaining)}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between gap-2 text-xs text-neutral-500">
+                                            <span>{dateParts.day} · {dateParts.time}</span>
+                                            {sale.addedBy && (
+                                                <span className="px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-700 font-medium">{sale.addedBy}</span>
+                                            )}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 pt-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => openSaleDetails(sale)}
+                                                className="flex-1 min-h-[44px] rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink hover:bg-neutral-50"
+                                            >
+                                                View
+                                            </button>
+                                            {sale.paymentStatus !== 'Paid' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedSale(sale);
+                                                        setShowPaymentModal(true);
+                                                    }}
+                                                    className="flex-1 min-h-[44px] rounded-xl bg-ink text-white text-sm font-medium"
+                                                >
+                                                    Pay
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleEditSale(sale)}
+                                                className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-neutral-600"
+                                                title="Edit"
+                                            >
+                                                <Edit2 className="w-4 h-4" />
+                                            </button>
+                                            <div className="relative" ref={isMenuOpen ? menuRef : null}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)}
+                                                    className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-neutral-600"
+                                                    title="More"
+                                                >
+                                                    <MoreHorizontal className="w-4 h-4" />
+                                                </button>
+                                                {isMenuOpen && (
+                                                    <div className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 z-30">
+                                                        <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                            <Printer className="w-3.5 h-3.5" /> Print receipt
+                                                        </button>
+                                                        <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                            <Share2 className="w-3.5 h-3.5" /> Share WhatsApp
+                                                        </button>
+                                                        <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                            <FileText className="w-3.5 h-3.5" /> Send PDF
+                                                        </button>
+                                                        <div className="my-1 border-t border-neutral-100" />
+                                                        <button type="button" onClick={() => { handleDeleteSale(saleId); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2">
+                                                            <Trash2 className="w-3.5 h-3.5" /> Delete sale
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Desktop table */}
+                        <div className="hidden md:block overflow-x-auto">
+                            <table className="w-full min-w-[900px]">
                                 <thead>
-                                    <tr className="border-b border-gray-200">
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Invoice</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Customer</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Total</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Paid</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Remaining</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Added By</th>
-                                        <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
+                                    <tr className="border-b border-neutral-100 bg-neutral-50/60">
+                                        <th className="text-left py-3 px-5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Invoice</th>
+                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Customer</th>
+                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Date</th>
+                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Total</th>
+                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Paid</th>
+                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Due</th>
+                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Status</th>
+                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Staff</th>
+                                        <th className="text-right py-3 px-5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {paginatedSales.map((sale) => (
-                                        <tr key={sale.id || sale._id} className="border-b border-gray-100 hover:bg-gray-50">
-                                            <td className="py-3 px-4">{sale.invoiceNumber}</td>
-                                            <td className="py-3 px-4">{sale.customer?.name || 'N/A'}</td>
-                                            <td className="py-3 px-4">{formatDate(sale.saleDate)}</td>
-                                            <td className="py-3 px-4">Rs. {sale.totalAmount?.toLocaleString() || 0}</td>
-                                            <td className="py-3 px-4">Rs. {sale.paidAmount?.toLocaleString() || 0}</td>
-                                            <td className="py-3 px-4">
-                                                <span className={`font-medium ${(sale.remainingAmount || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                                    Rs. {(sale.remainingAmount || 0).toLocaleString()}
-                                                </span>
-                                            </td>
-                                            <td className="py-3 px-4">
-                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${sale.paymentStatus === 'Paid' ? 'bg-green-100 text-green-800' :
-                                                    sale.paymentStatus === 'Partial' ? 'bg-yellow-100 text-yellow-800' :
-                                                        'bg-red-100 text-red-800'
-                                                    }`}>
-                                                    {sale.paymentStatus}
-                                                </span>
-                                            </td>
-                                            <td className="py-3 px-4">
-                                                {sale.addedBy ? (
-                                                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                                        {sale.addedBy}
+                                    {paginatedSales.map((sale) => {
+                                        const saleId = sale.id || sale._id;
+                                        const dateParts = formatDateParts(sale.saleDate);
+                                        const customerName = sale.customer?.name || 'Walk-in';
+                                        const remaining = parseFloat(sale.remainingAmount) || 0;
+                                        const isMenuOpen = openMenuId === saleId;
+
+                                        return (
+                                            <tr key={saleId} className="border-b border-neutral-100 hover:bg-neutral-50/80 transition-colors">
+                                                <td className="py-4 px-5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openSaleDetails(sale)}
+                                                        className="text-sm font-medium text-ink hover:underline underline-offset-2 text-left"
+                                                    >
+                                                        {sale.invoiceNumber}
+                                                    </button>
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    <div className="flex items-center gap-2.5 min-w-0">
+                                                        <div className="w-8 h-8 rounded-full bg-neutral-900 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+                                                            {getCustomerInitial(customerName)}
+                                                        </div>
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-medium text-ink truncate">{customerName}</p>
+                                                            {sale.customer?.shopName && (
+                                                                <p className="text-xs text-neutral-500 truncate">{sale.customer.shopName}</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="py-4 px-4 whitespace-nowrap">
+                                                    <p className="text-sm text-ink">{dateParts.day}</p>
+                                                    <p className="text-xs text-neutral-500">{dateParts.time}</p>
+                                                </td>
+                                                <td className="py-4 px-4 text-right text-sm font-medium text-ink tabular-nums whitespace-nowrap">
+                                                    {formatMoney(sale.totalAmount)}
+                                                </td>
+                                                <td className="py-4 px-4 text-right text-sm text-neutral-600 tabular-nums whitespace-nowrap">
+                                                    {formatMoney(sale.paidAmount)}
+                                                </td>
+                                                <td className="py-4 px-4 text-right text-sm font-semibold tabular-nums whitespace-nowrap">
+                                                    <span className={remaining > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                        {formatMoney(remaining)}
                                                     </span>
-                                                ) : (
-                                                    <span className="text-gray-400 text-sm">—</span>
-                                                )}
-                                            </td>
-                                            <td className="py-3 px-4">
-                                                <div className="flex items-center gap-2">
-                                                    <button
-                                                        onClick={() => {
-                                                            setSelectedSale(sale);
-                                                            setShowDetailsModal(true);
-                                                        }}
-                                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                                                        title="View Details"
-                                                    >
-                                                        <Eye className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handlePrintReceipt(sale)}
-                                                        className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                                                        title="Print Receipt"
-                                                    >
-                                                        <Printer className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleShareReceipt(sale)}
-                                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                                        title="Share text via WhatsApp"
-                                                    >
-                                                        <Share2 className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleSharePdfWhatsApp(sale)}
-                                                        className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
-                                                        title="Send PDF to WhatsApp"
-                                                    >
-                                                        <FileText className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleEditSale(sale)}
-                                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                                        title="Edit Sale"
-                                                    >
-                                                        <Edit2 className="w-4 h-4" />
-                                                    </button>
-                                                    {sale.paymentStatus !== 'Paid' && (
-                                                        <button
-                                                            onClick={() => {
-                                                                setSelectedSale(sale);
-                                                                setShowPaymentModal(true);
-                                                            }}
-                                                            className="p-1 text-purple-600 hover:bg-purple-50 rounded"
-                                                            title="Add Payment"
-                                                        >
-                                                            <DollarSign className="w-4 h-4" />
-                                                        </button>
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${statusBadgeClass(sale.paymentStatus)}`}>
+                                                        {sale.paymentStatus || 'N/A'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    {sale.addedBy ? (
+                                                        <span className="inline-flex px-2 py-1 rounded-md text-xs font-medium bg-neutral-100 text-neutral-700">
+                                                            {sale.addedBy}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-neutral-400 text-sm">—</span>
                                                     )}
-                                                    <button
-                                                        onClick={() => handleDeleteSale(sale.id || sale._id)}
-                                                        disabled={deleting === (sale.id || sale._id)}
-                                                        className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                                                        title="Delete Sale"
-                                                    >
-                                                        {deleting === (sale.id || sale._id) ? (
-                                                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent"></div>
-                                                        ) : (
-                                                            <Trash2 className="w-4 h-4" />
+                                                </td>
+                                                <td className="py-4 px-5">
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <button type="button" onClick={() => openSaleDetails(sale)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="View">
+                                                            <Eye className="w-4 h-4" />
+                                                        </button>
+                                                        {sale.paymentStatus !== 'Paid' && (
+                                                            <button type="button" onClick={() => { setSelectedSale(sale); setShowPaymentModal(true); }} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Add Payment">
+                                                                <DollarSign className="w-4 h-4" />
+                                                            </button>
                                                         )}
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                        <button type="button" onClick={() => handleEditSale(sale)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Edit">
+                                                            <Edit2 className="w-4 h-4" />
+                                                        </button>
+                                                        <div className="relative" ref={isMenuOpen ? menuRef : null}>
+                                                            <button type="button" onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="More actions">
+                                                                <MoreHorizontal className="w-4 h-4" />
+                                                            </button>
+                                                            {isMenuOpen && (
+                                                                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 z-20">
+                                                                    <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                        <Printer className="w-3.5 h-3.5" /> Print receipt
+                                                                    </button>
+                                                                    <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                        <Share2 className="w-3.5 h-3.5" /> Share WhatsApp
+                                                                    </button>
+                                                                    <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                        <FileText className="w-3.5 h-3.5" /> Send PDF
+                                                                    </button>
+                                                                    <div className="my-1 border-t border-neutral-100" />
+                                                                    <button type="button" onClick={() => { handleDeleteSale(saleId); setOpenMenuId(null); }} disabled={deleting === saleId} className="w-full px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2 disabled:opacity-50">
+                                                                        <Trash2 className="w-3.5 h-3.5" /> Delete sale
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
 
                         {totalPages > 1 && (
-                            <div className="flex justify-between items-center mt-4">
+                            <div className="flex justify-between items-center gap-2 px-3 sm:px-5 py-4 border-t border-neutral-100">
                                 <button
                                     onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                                     disabled={currentPage === 1}
-                                    className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+                                    className="btn-secondary flex items-center gap-1 sm:gap-2 disabled:opacity-50 !py-2 !px-3 !text-sm min-h-[40px]"
                                 >
                                     <ChevronLeft className="w-4 h-4" />
-                                    Previous
+                                    <span className="hidden xs:inline sm:inline">Previous</span>
                                 </button>
-                                <span className="text-gray-600">
-                                    Page {currentPage} of {totalPages}
+                                <span className="text-xs sm:text-sm text-neutral-500 whitespace-nowrap">
+                                    {currentPage} / {totalPages}
                                 </span>
                                 <button
                                     onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                                     disabled={currentPage === totalPages}
-                                    className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+                                    className="btn-secondary flex items-center gap-1 sm:gap-2 disabled:opacity-50 !py-2 !px-3 !text-sm min-h-[40px]"
                                 >
-                                    Next
+                                    <span className="hidden xs:inline sm:inline">Next</span>
                                     <ChevronRight className="w-4 h-4" />
                                 </button>
                             </div>
@@ -1154,8 +1417,8 @@ const Sales = () => {
 
             {/* Sale Modal */}
             {showSaleModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-4xl w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <div>
@@ -1443,8 +1706,8 @@ const Sales = () => {
 
             {/* Details Modal */}
             {showDetailsModal && selectedSale && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-2xl w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-bold text-gray-800">Sale Details</h3>
@@ -1916,8 +2179,8 @@ const Sales = () => {
 
             {/* Payment Modal */}
             {showPaymentModal && selectedSale && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-bold text-gray-800">Add Payment</h3>
@@ -2009,8 +2272,8 @@ const Sales = () => {
 
             {/* Edit Payment Modal */}
             {showEditPaymentModal && selectedSale && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-bold text-gray-800">Edit Payment</h3>
@@ -2105,8 +2368,8 @@ const Sales = () => {
 
             {/* Delete Payment Confirmation */}
             {showDeletePaymentModal && paymentToDelete && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6">
                             <div className="flex items-start gap-4">
                                 <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
@@ -2163,8 +2426,8 @@ const Sales = () => {
 
             {/* Add Customer Modal */}
             {showCustomerModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-xl font-bold text-gray-800">Add New Customer</h3>

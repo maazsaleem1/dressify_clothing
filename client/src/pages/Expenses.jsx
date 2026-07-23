@@ -16,7 +16,7 @@ const Expenses = () => {
   const [originalGroupExpenseIds, setOriginalGroupExpenseIds] = useState([]);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterMonth, setFilterMonth] = useState('');
+  const [filterMonth, setFilterMonth] = useState(String(new Date().getMonth() + 1));
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -131,13 +131,23 @@ const Expenses = () => {
     return isNaN(d.getTime()) ? 0 : d.getTime();
   };
 
+  const getExpenseDateKey = (expense) => {
+    if (!expense?.expenseDate) return 'unknown';
+    const d = expense.expenseDate?.toDate ? expense.expenseDate.toDate() : new Date(expense.expenseDate);
+    if (isNaN(d.getTime())) return 'unknown';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const getProductName = (expense) =>
     inventoryList.find(p => (p.id || p._id) === expense.inventoryId)?.productName ||
     expense.productName ||
     '—';
 
   const groupExpensesForDisplay = (expenseList) => {
-    const generalRows = [];
+    const generalByDate = new Map();
     const productGroups = new Map();
 
     expenseList.forEach(expense => {
@@ -146,7 +156,9 @@ const Expenses = () => {
         if (!productGroups.has(key)) productGroups.set(key, []);
         productGroups.get(key).push(expense);
       } else {
-        generalRows.push({ type: 'general', expense });
+        const dateKey = getExpenseDateKey(expense);
+        if (!generalByDate.has(dateKey)) generalByDate.set(dateKey, []);
+        generalByDate.get(dateKey).push(expense);
       }
     });
 
@@ -163,22 +175,43 @@ const Expenses = () => {
       });
     });
 
-    generalRows.forEach(row => rows.push(row));
+    generalByDate.forEach((items, dateKey) => {
+      const sorted = [...items].sort((a, b) => getExpenseTimestamp(b) - getExpenseTimestamp(a));
+      if (sorted.length === 1) {
+        rows.push({ type: 'general', expense: sorted[0] });
+      } else {
+        rows.push({
+          type: 'date-group',
+          dateKey,
+          items: sorted,
+          totalAmount: sorted.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0),
+          expenseDate: sorted[0]?.expenseDate
+        });
+      }
+    });
 
     rows.sort((a, b) => {
-      const tsA = a.type === 'product-group' ? getExpenseTimestamp({ expenseDate: a.latestDate }) : getExpenseTimestamp(a.expense);
-      const tsB = b.type === 'product-group' ? getExpenseTimestamp({ expenseDate: b.latestDate }) : getExpenseTimestamp(b.expense);
+      const tsA = a.type === 'product-group'
+        ? getExpenseTimestamp({ expenseDate: a.latestDate })
+        : a.type === 'date-group'
+          ? getExpenseTimestamp({ expenseDate: a.expenseDate })
+          : getExpenseTimestamp(a.expense);
+      const tsB = b.type === 'product-group'
+        ? getExpenseTimestamp({ expenseDate: b.latestDate })
+        : b.type === 'date-group'
+          ? getExpenseTimestamp({ expenseDate: b.expenseDate })
+          : getExpenseTimestamp(b.expense);
       return tsB - tsA;
     });
 
     return rows;
   };
 
-  const toggleGroupExpand = (inventoryId) => {
+  const toggleGroupExpand = (groupKey) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
-      if (next.has(inventoryId)) next.delete(inventoryId);
-      else next.add(inventoryId);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
       return next;
     });
   };
@@ -381,14 +414,6 @@ const Expenses = () => {
 
   const displayRows = groupExpensesForDisplay(filteredExpenses);
 
-  const totalExpenses = filteredExpenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
-
-  const totalPages = Math.ceil(displayRows.length / itemsPerPage);
-  const paginatedRows = displayRows.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
-
   const months = [
     { value: '', label: 'All Months' },
     { value: '1', label: 'January' },
@@ -408,42 +433,90 @@ const Expenses = () => {
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
 
+  const generalTotal = filteredExpenses
+    .filter((expense) => !expense.inventoryId)
+    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+
+  const productTotal = filteredExpenses
+    .filter((expense) => !!expense.inventoryId)
+    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+
+  const totalExpenses = generalTotal + productTotal;
+
+  const periodLabel = filterMonth
+    ? `${months.find(m => m.value === filterMonth)?.label || ''} ${filterYear}`
+    : `All Time`;
+
+  const totalPages = Math.ceil(displayRows.length / itemsPerPage);
+  const paginatedRows = displayRows.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800">Daily Expenses</h1>
-          <p className="text-sm text-gray-600 mt-1">Track your shop expenses and manage daily costs</p>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 hidden sm:block">Daily Expenses</h1>
+          <p className="text-sm text-gray-600 sm:mt-1">Track shop expenses and daily costs</p>
         </div>
         <button
           onClick={() => {
             resetForm();
             setShowModal(true);
           }}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
         >
           <Plus className="w-5 h-5" />
           Add Expense
         </button>
       </div>
 
-      {/* Summary Card */}
-      <div className="bg-gradient-to-r from-red-500 to-red-600 rounded-lg shadow-md p-6 mb-6 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-red-100 text-sm">Total Expenses</p>
-            <p className="text-3xl font-bold mt-1">Rs. {totalExpenses.toLocaleString()}</p>
-            <p className="text-red-100 text-xs mt-1">
-              {filterMonth ? `${months.find(m => m.value === filterMonth)?.label} ${filterYear}` : `All Time`}
-            </p>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-gray-500 text-sm font-medium">General Expenses</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-1 break-words">Rs. {generalTotal.toLocaleString()}</p>
+              <p className="text-gray-400 text-xs mt-1">{periodLabel}</p>
+            </div>
+            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5 text-gray-600" />
+            </div>
           </div>
-          <DollarSign className="w-12 h-12 text-red-200" />
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-gray-500 text-sm font-medium">Product Expenses</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-1 break-words">Rs. {productTotal.toLocaleString()}</p>
+              <p className="text-gray-400 text-xs mt-1">{periodLabel}</p>
+            </div>
+            <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5 text-blue-600" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-ink text-white rounded-lg shadow-sm p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-neutral-300 text-sm font-medium">Grand Total</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1 break-words">Rs. {totalExpenses.toLocaleString()}</p>
+              <p className="text-neutral-400 text-xs mt-1">{periodLabel}</p>
+            </div>
+            <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5 text-white" />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <div className="flex flex-col md:flex-row gap-4 mb-6">
-          <div className="flex-1 relative">
+      <div className="bg-white rounded-lg shadow-md p-3 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 mb-4 sm:mb-6">
+          <div className="flex-1 relative min-w-0">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
               type="text"
@@ -453,11 +526,11 @@ const Expenses = () => {
               className="input-field pl-10 w-full"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
             <select
               value={filterMonth}
               onChange={(e) => setFilterMonth(e.target.value)}
-              className="input-field"
+              className="input-field min-w-0"
             >
               {months.map(month => (
                 <option key={month.value} value={month.value}>{month.label}</option>
@@ -466,7 +539,7 @@ const Expenses = () => {
             <select
               value={filterYear}
               onChange={(e) => setFilterYear(parseInt(e.target.value))}
-              className="input-field"
+              className="input-field min-w-0"
             >
               {years.map(year => (
                 <option key={year} value={year}>{year}</option>
@@ -479,17 +552,17 @@ const Expenses = () => {
           <ListItemShimmer count={5} />
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto -mx-3 sm:mx-0">
+              <table className="w-full min-w-[640px]">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Description</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Category</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Type</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Product</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Amount</th>
-                    <th className="text-left py-3 px-4 font-semibold text-gray-700">Actions</th>
+                    <th className="text-left py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm">Date</th>
+                    <th className="text-left py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm">Description</th>
+                    <th className="text-left py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm hidden sm:table-cell">Category</th>
+                    <th className="text-left py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm hidden md:table-cell">Type</th>
+                    <th className="text-left py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm hidden lg:table-cell">Product</th>
+                    <th className="text-right py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm">Amount</th>
+                    <th className="text-right py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -507,19 +580,19 @@ const Expenses = () => {
                         return (
                           <React.Fragment key={`group-${row.inventoryId}`}>
                             <tr className="border-b border-gray-100 hover:bg-amber-50/40 bg-amber-50/20">
-                              <td className="py-3 px-4">{formatDate(row.latestDate)}</td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-3 sm:px-4 text-sm whitespace-nowrap">{formatDate(row.latestDate)}</td>
+                              <td className="py-3 px-3 sm:px-4">
                                 <button
                                   type="button"
                                   onClick={() => toggleGroupExpand(row.inventoryId)}
-                                  className="flex items-center gap-2 text-left font-medium text-gray-800 hover:text-amber-800"
+                                  className="flex items-center gap-2 text-left font-medium text-gray-800 hover:text-amber-800 min-h-[40px]"
                                 >
                                   {isExpanded ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
-                                  <span>{categories.join(', ')}</span>
-                                  <span className="text-xs font-normal text-gray-500">({row.items.length} items)</span>
+                                  <span className="break-words">{categories.join(', ')}</span>
+                                  <span className="text-xs font-normal text-gray-500 shrink-0">({row.items.length})</span>
                                 </button>
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-3 sm:px-4 hidden sm:table-cell">
                                 <div className="flex flex-wrap gap-1">
                                   {categories.map(cat => (
                                     <span key={cat} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
@@ -528,21 +601,21 @@ const Expenses = () => {
                                   ))}
                                 </div>
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-3 sm:px-4 hidden md:table-cell">
                                 <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
                                   Product
                                 </span>
                               </td>
-                              <td className="py-3 px-4 text-sm font-medium text-gray-800">
+                              <td className="py-3 px-3 sm:px-4 text-sm font-medium text-gray-800 hidden lg:table-cell">
                                 {row.productName}
                               </td>
-                              <td className="py-3 px-4 font-semibold text-red-600">
+                              <td className="py-3 px-3 sm:px-4 font-semibold text-red-600 text-right text-sm whitespace-nowrap">
                                 Rs. {row.totalAmount.toLocaleString()}
                               </td>
-                              <td className="py-3 px-4">
+                              <td className="py-3 px-3 sm:px-4 text-right">
                                 <button
                                   onClick={() => openProductGroupModal(row)}
-                                  className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                  className="p-2 text-green-600 hover:bg-green-50 rounded-lg min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
                                   title="Manage all expenses for this product"
                                 >
                                   <Edit2 className="w-4 h-4" />
@@ -551,21 +624,21 @@ const Expenses = () => {
                             </tr>
                             {isExpanded && row.items.map(expense => (
                               <tr key={expense.id || expense._id} className="border-b border-gray-50 bg-gray-50/80">
-                                <td className="py-2 px-4 pl-10 text-sm text-gray-500">{formatDate(expense.expenseDate)}</td>
-                                <td className="py-2 px-4 text-sm text-gray-700">{expense.description}</td>
-                                <td className="py-2 px-4">
+                                <td className="py-2 px-3 sm:px-4 pl-8 sm:pl-10 text-sm text-gray-500">{formatDate(expense.expenseDate)}</td>
+                                <td className="py-2 px-3 sm:px-4 text-sm text-gray-700 break-words">{expense.description}</td>
+                                <td className="py-2 px-3 sm:px-4 hidden sm:table-cell">
                                   <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs">{expense.category}</span>
                                 </td>
-                                <td className="py-2 px-4" />
-                                <td className="py-2 px-4" />
-                                <td className="py-2 px-4 text-sm font-medium text-red-600">
+                                <td className="py-2 px-3 sm:px-4 hidden md:table-cell" />
+                                <td className="py-2 px-3 sm:px-4 hidden lg:table-cell" />
+                                <td className="py-2 px-3 sm:px-4 text-sm font-medium text-red-600 text-right whitespace-nowrap">
                                   Rs. {parseFloat(expense.amount || 0).toLocaleString()}
                                 </td>
-                                <td className="py-2 px-4">
+                                <td className="py-2 px-3 sm:px-4 text-right">
                                   <button
                                     onClick={() => handleDelete(expense.id || expense._id)}
                                     disabled={deleting === (expense.id || expense._id)}
-                                    className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
                                     title="Delete this line"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -577,30 +650,122 @@ const Expenses = () => {
                         );
                       }
 
+                      if (row.type === 'date-group') {
+                        const groupKey = `date-${row.dateKey}`;
+                        const isExpanded = expandedGroups.has(groupKey);
+                        const categories = [...new Set(row.items.map(e => e.category).filter(Boolean))];
+                        return (
+                          <React.Fragment key={groupKey}>
+                            <tr className="border-b border-gray-100 hover:bg-gray-50 bg-gray-50/40">
+                              <td className="py-3 px-3 sm:px-4 font-medium text-gray-800 text-sm whitespace-nowrap">{formatDate(row.expenseDate)}</td>
+                              <td className="py-3 px-3 sm:px-4">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroupExpand(groupKey)}
+                                  className="flex items-center gap-2 text-left font-medium text-gray-800 hover:text-gray-600 min-h-[40px]"
+                                >
+                                  {isExpanded ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                                  <span>{row.items.length} expenses</span>
+                                  <span className="text-xs font-normal text-gray-500 hidden xs:inline sm:inline">
+                                    ({categories.slice(0, 2).join(', ')}{categories.length > 2 ? '…' : ''})
+                                  </span>
+                                </button>
+                              </td>
+                              <td className="py-3 px-3 sm:px-4 hidden sm:table-cell">
+                                <div className="flex flex-wrap gap-1">
+                                  {categories.slice(0, 3).map(cat => (
+                                    <span key={cat} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                                      {cat}
+                                    </span>
+                                  ))}
+                                  {categories.length > 3 && (
+                                    <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-full text-xs">
+                                      +{categories.length - 3}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 sm:px-4 hidden md:table-cell">
+                                <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                                  General
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 sm:px-4 text-sm text-gray-600 hidden lg:table-cell">—</td>
+                              <td className="py-3 px-3 sm:px-4 font-semibold text-red-600 text-right text-sm whitespace-nowrap">
+                                Rs. {row.totalAmount.toLocaleString()}
+                              </td>
+                              <td className="py-3 px-3 sm:px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleGroupExpand(groupKey)}
+                                  className="px-3 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-xs font-medium min-h-[40px]"
+                                  title={isExpanded ? 'Hide expenses' : 'Show expenses'}
+                                >
+                                  {isExpanded ? 'Hide' : 'View'}
+                                </button>
+                              </td>
+                            </tr>
+                            {isExpanded && row.items.map(expense => (
+                              <tr key={expense.id || expense._id} className="border-b border-gray-50 bg-white">
+                                <td className="py-2 px-3 sm:px-4 pl-8 sm:pl-10 text-sm text-gray-400">↳</td>
+                                <td className="py-2 px-3 sm:px-4 text-sm text-gray-700 break-words">{expense.description}</td>
+                                <td className="py-2 px-3 sm:px-4 hidden sm:table-cell">
+                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs">{expense.category}</span>
+                                </td>
+                                <td className="py-2 px-3 sm:px-4 hidden md:table-cell" />
+                                <td className="py-2 px-3 sm:px-4 hidden lg:table-cell" />
+                                <td className="py-2 px-3 sm:px-4 text-sm font-medium text-red-600 text-right whitespace-nowrap">
+                                  Rs. {parseFloat(expense.amount || 0).toLocaleString()}
+                                </td>
+                                <td className="py-2 px-3 sm:px-4 text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      onClick={() => handleEdit(expense)}
+                                      className="p-2 text-green-600 hover:bg-green-50 rounded-lg min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
+                                      title="Edit Expense"
+                                    >
+                                      <Edit2 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDelete(expense.id || expense._id)}
+                                      disabled={deleting === (expense.id || expense._id)}
+                                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
+                                      title="Delete Expense"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      }
+
                       const expense = row.expense;
                       return (
                         <tr key={expense.id || expense._id} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="py-3 px-4">{formatDate(expense.expenseDate)}</td>
-                          <td className="py-3 px-4">{expense.description}</td>
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-3 sm:px-4 text-sm whitespace-nowrap">{formatDate(expense.expenseDate)}</td>
+                          <td className="py-3 px-3 sm:px-4 text-sm break-words">{expense.description}</td>
+                          <td className="py-3 px-3 sm:px-4 hidden sm:table-cell">
                             <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
                               {expense.category}
                             </span>
                           </td>
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-3 sm:px-4 hidden md:table-cell">
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
                               General
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-sm text-gray-600">—</td>
-                          <td className="py-3 px-4 font-semibold text-red-600">
+                          <td className="py-3 px-3 sm:px-4 text-sm text-gray-600 hidden lg:table-cell">—</td>
+                          <td className="py-3 px-3 sm:px-4 font-semibold text-red-600 text-right text-sm whitespace-nowrap">
                             Rs. {parseFloat(expense.amount || 0).toLocaleString()}
                           </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
+                          <td className="py-3 px-3 sm:px-4 text-right">
+                            <div className="flex items-center justify-end gap-1">
                               <button
                                 onClick={() => handleEdit(expense)}
-                                className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
                                 title="Edit Expense"
                               >
                                 <Edit2 className="w-4 h-4" />
@@ -608,7 +773,7 @@ const Expenses = () => {
                               <button
                                 onClick={() => handleDelete(expense.id || expense._id)}
                                 disabled={deleting === (expense.id || expense._id)}
-                                className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 min-h-[40px] min-w-[40px] inline-flex items-center justify-center"
                                 title="Delete Expense"
                               >
                                 <Trash2 className="w-4 h-4" />
