@@ -1,0 +1,139 @@
+<!--
+  Dressify — Order Confirmation (EmailJS template_e7ha0k3)
+  Paste into EmailJS → Templates → Content (HTML)
+
+  Use FLAT vars for money: {{cost_shipping}} {{cost_tax}} {{cost_total}}
+  (nested {{cost.shipping}} often blank when sent from admin)
+-->
+<div style="margin:0;padding:0;background-color:#f0eeea;font-family:Georgia,'Times New Roman',serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f0eeea;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:4px;overflow:hidden;">
+          <tr>
+            <td style="background-color:#1a1a1a;padding:28px 32px;text-align:center;">
+              <a href="{{website_link}}" target="_blank" style="text-decoration:none;color:#ffffff;">
+                <div style="font-family:Georgia,serif;font-size:28px;letter-spacing:0.04em;color:#ffffff;font-weight:700;">
+                  Dressify
+                </div>
+              </a>
+              <div style="margin-top:8px;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#c8c4bc;">
+                Men&rsquo;s Clothing
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="height:4px;background-color:#2f5d3a;font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+
+          <tr>
+            <td style="padding:32px 32px 8px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+              <h1 style="margin:0 0 8px;font-family:Georgia,serif;font-size:22px;font-weight:600;color:#1a1a1a;">
+                Thank you for your order
+              </h1>
+              <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#555555;">
+                Hi {{customer_name}}, {{status_message}}
+              </p>
+              <p style="margin:0;font-size:14px;color:#1a1a1a;">
+                <strong>Order # {{order_id}}</strong>
+                <span style="color:#888888;"> &nbsp;|&nbsp; {{order_date}}</span>
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:16px 32px 8px;">
+              <div style="border-bottom:2px solid #1a1a1a;padding-bottom:8px;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#666666;">
+                Items
+              </div>
+              {{#orders}}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-bottom:1px solid #eceae6;">
+                <tr>
+                  <td style="padding:16px 12px 16px 0;width:72px;vertical-align:top;">
+                    <img src="{{image_url}}" alt="{{name}}" width="64" height="64" style="display:block;width:64px;height:64px;object-fit:cover;border-radius:2px;border:1px solid #eee;" />
+                  </td>
+                  <td style="padding:16px 8px;vertical-align:top;font-family:Arial,Helvetica,sans-serif;">
+                    <div style="font-size:15px;color:#1a1a1a;font-weight:600;">{{name}}</div>
+                    <div style="font-size:13px;color:#888888;margin-top:4px;">
+                      Qty: {{units}}{{size_label}}
+                    </div>
+                  </td>
+                  <td style="padding:16px 0;vertical-align:top;text-align:right;white-space:nowrap;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#1a1a1a;font-weight:700;">
+                    {{price}}
+                  </td>
+                </tr>
+              </table>
+              {{/orders}}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:8px 32px 24px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#444444;">
+                <tr>
+                  <td style="padding:6px 0;">Shipping</td>
+                  <td style="padding:6px 0;text-align:right;white-space:nowrap;">{{cost_shipping}}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0;">Taxes</td>
+                  <td style="padding:6px 0;text-align:right;white-space:nowrap;">{{cost_tax}}</td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 0 0;border-top:2px solid #1a1a1a;font-size:16px;font-weight:700;color:#1a1a1a;">
+                    Order Total
+                  </td>
+                  <td style="padding:14px 0 0;border-top:2px solid #1a1a1a;text-align:right;white-space:nowrap;font-size:16px;font-weight:700;color:#1a1a1a;">
+                    {{cost_total}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 32px 28px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f7f5f1;border-radius:4px;">
+                <tr>
+                  <td style="padding:20px;width:50%;vertical-align:top;font-family:Arial,Helvetica,sans-serif;">
+                    <div style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#888888;margin-bottom:8px;">
+                      Shipping to
+                    </div>
+                    <div style="font-size:14px;line-height:1.55;color:#333333;">
+                      {{customer_name}}<br />
+                      {{shipping_address}}<br />
+                      {{customer_phone}}
+                    </div>
+                  </td>
+                  <td style="padding:20px;width:50%;vertical-align:top;font-family:Arial,Helvetica,sans-serif;">
+                    <div style="font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:#888888;margin-bottom:8px;">
+                      Payment
+                    </div>
+                    <div style="font-size:14px;line-height:1.55;color:#333333;">
+                      {{payment_method}}
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 32px 32px;text-align:center;">
+              <a href="{{website_link}}" target="_blank" style="display:inline-block;background-color:#1a1a1a;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;padding:14px 28px;border-radius:2px;">
+                Continue Shopping
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background-color:#f7f5f1;padding:20px 32px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#999999;text-align:center;">
+              This email was sent to {{email}} because you placed an order at Dressify.<br />
+              Questions? Reply to this email or visit our website.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</div>

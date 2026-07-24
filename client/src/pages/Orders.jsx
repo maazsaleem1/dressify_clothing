@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Eye, CheckCircle, Truck, Package, XCircle, Clock, Edit2, X, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getOrders, updateOrderStatus, getOrder } from '../services/api';
-import { sendOrderConfirmationEmail } from '../services/emailService';
+import { sendOrderConfirmationEmail, getOrderCostBreakdown } from '../services/emailService';
 import { showSuccess, showError, showInfo } from '../utils/toast';
 import { TableRowShimmer } from '../components/Shimmer';
 
@@ -543,14 +543,48 @@ const Orders = () => {
                       ))}
                     </tbody>
                     <tfoot className="bg-gray-50 border-t-2 border-gray-300">
-                      <tr>
-                        <td colSpan="4" className="px-4 py-3 text-right font-semibold text-gray-700">
-                          Total Amount:
-                        </td>
-                        <td className="px-4 py-3 text-lg font-bold text-gray-900">
-                          Rs. {selectedOrder.totalAmount?.toLocaleString() || '0'}
-                        </td>
-                      </tr>
+                      {(() => {
+                        const costs = getOrderCostBreakdown(selectedOrder);
+                        return (
+                          <>
+                            <tr>
+                              <td colSpan="4" className="px-4 py-2 text-right text-sm text-gray-600">
+                                Subtotal
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-800">
+                                Rs. {costs.subtotal.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan="4" className="px-4 py-2 text-right text-sm text-gray-600">
+                                Shipping
+                                {costs.shippingSource === 'default' && (
+                                  <span className="ml-1 text-xs text-amber-600">(default Rs. 249)</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-800">
+                                Rs. {costs.shipping.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan="4" className="px-4 py-2 text-right text-sm text-gray-600">
+                                Taxes
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-800">
+                                Rs. {costs.tax.toLocaleString()}
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan="4" className="px-4 py-3 text-right font-semibold text-gray-700">
+                                Order Total
+                              </td>
+                              <td className="px-4 py-3 text-lg font-bold text-gray-900">
+                                Rs. {costs.total.toLocaleString()}
+                              </td>
+                            </tr>
+                          </>
+                        );
+                      })()}
                     </tfoot>
                   </table>
                 </div>
