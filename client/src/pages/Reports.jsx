@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle } from 'lucide-react';
+import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle, Receipt } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers, getPayments } from '../services/api';
-import { showInfo } from '../utils/toast';
+import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers, getPayments, getExpenses } from '../services/api';
+import { showInfo, showSuccess, showError } from '../utils/toast';
+import { downloadAccountantReport, findEarliestActivityDate } from '../utils/accountantReport';
 
 const Reports = () => {
   const [stats, setStats] = useState(null);
   const [salesStats, setSalesStats] = useState(null);
   const [inventoryStats, setInventoryStats] = useState(null);
   const [monthlyData, setMonthlyData] = useState(null);
+  const [loadingMonthly, setLoadingMonthly] = useState(true);
   const [outstandingCredits, setOutstandingCredits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [totalProfit, setTotalProfit] = useState(0);
@@ -29,6 +31,12 @@ const Reports = () => {
   const [paymentsList, setPaymentsList] = useState([]);
   const [salesForPayments, setSalesForPayments] = useState([]);
   const [selectedPaymentDetail, setSelectedPaymentDetail] = useState(null);
+  const [expenseTotals, setExpenseTotals] = useState({
+    general: 0,
+    product: 0,
+    total: 0
+  });
+  const [exportingAccountant, setExportingAccountant] = useState(false);
 
   // Load data once on mount; refetch only when user clicks Apply
   useEffect(() => {
@@ -37,25 +45,35 @@ const Reports = () => {
     fetchPaymentsReport();
   }, []);
 
+  const toDateValue = (val) => {
+    if (val == null) return null;
+    if (val instanceof Date) return val;
+    if (val?.toDate && typeof val.toDate === 'function') return val.toDate();
+    if (val?.seconds != null) return new Date(val.seconds * 1000);
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const isProductExpense = (expense) =>
+    !!(expense.inventoryId) ||
+    expense.expenseScope === 'product';
+
   const fetchPaymentsReport = async () => {
     try {
-      const [paymentsRes, salesRes] = await Promise.all([
+      const [paymentsRes, salesRes, expensesRes] = await Promise.all([
         getPayments({ startDate: dateRange.startDate, endDate: dateRange.endDate }),
-        getSales()
+        getSales(),
+        getExpenses({ startDate: dateRange.startDate, endDate: dateRange.endDate })
       ]);
       const fromCollection = paymentsRes.data || [];
       const sales = salesRes.data || [];
+      const expenses = expensesRes.data || [];
+      const existingSaleIds = new Set(sales.map((s) => s.id || s._id).filter(Boolean));
 
       const start = dateRange.startDate ? new Date(dateRange.startDate + 'T00:00:00') : null;
       const end = dateRange.endDate ? new Date(dateRange.endDate + 'T23:59:59.999') : null;
 
-      const toDate = (val) => {
-        if (val == null) return null;
-        if (val instanceof Date) return val;
-        if (val?.toDate && typeof val.toDate === 'function') return val.toDate();
-        if (val?.seconds != null) return new Date(val.seconds * 1000);
-        return new Date(val);
-      };
+      const toDate = toDateValue;
 
       const inRange = (dateObj) => {
         if (!dateObj || isNaN(dateObj.getTime())) return false;
@@ -64,8 +82,33 @@ const Reports = () => {
         return true;
       };
 
+      // Expenses already filtered by API date range; still guard client-side
+      let generalExpense = 0;
+      let productExpense = 0;
+      expenses.forEach((expense) => {
+        const expenseDate = toDate(expense.expenseDate);
+        if (!inRange(expenseDate)) return;
+        const amount = parseFloat(expense.amount) || 0;
+        if (isProductExpense(expense)) {
+          productExpense += amount;
+        } else {
+          generalExpense += amount;
+        }
+      });
+      setExpenseTotals({
+        general: Math.round(generalExpense),
+        product: Math.round(productExpense),
+        total: Math.round(generalExpense + productExpense)
+      });
+
+      // Drop orphan payments whose sale was deleted (older deletes left payment docs behind)
+      const validFromCollection = fromCollection.filter((p) => {
+        if (!p.saleId) return true;
+        return existingSaleIds.has(p.saleId);
+      });
+
       const collectionKeys = new Set(
-        fromCollection.map(p => {
+        validFromCollection.map(p => {
           const d = p.paymentDate;
           const dateObj = d instanceof Date ? d : toDate(d);
           const key = dateObj ? dateObj.toISOString().split('T')[0] : '';
@@ -102,7 +145,7 @@ const Reports = () => {
         });
       });
 
-      const merged = [...fromCollection, ...fromSales].sort((a, b) => {
+      const merged = [...validFromCollection, ...fromSales].sort((a, b) => {
         const da = a.paymentDate instanceof Date ? a.paymentDate : toDate(a.paymentDate);
         const db = b.paymentDate instanceof Date ? b.paymentDate : toDate(b.paymentDate);
         if (!da || !db) return 0;
@@ -122,6 +165,7 @@ const Reports = () => {
       console.error('Error fetching payments:', error);
       setPaymentsList([]);
       setSalesForPayments([]);
+      setExpenseTotals({ general: 0, product: 0, total: 0 });
     }
   };
 
@@ -401,10 +445,14 @@ const Reports = () => {
 
   const fetchMonthlyData = async () => {
     try {
+      setLoadingMonthly(true);
       const response = await getMonthlyProfitLoss(selectedYear, selectedMonth);
       setMonthlyData(response.data);
     } catch (error) {
       console.error('Error fetching monthly data:', error);
+      setMonthlyData(null);
+    } finally {
+      setLoadingMonthly(false);
     }
   };
 
@@ -492,8 +540,96 @@ const Reports = () => {
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  const handleExport = () => {
-    showInfo('Export functionality would generate PDF/Excel report here');
+  const handleExport = async () => {
+    setExportingAccountant(true);
+    try {
+      const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
+        getSales(),
+        getPayments({ startDate: dateRange.startDate, endDate: dateRange.endDate }),
+        getExpenses({ startDate: dateRange.startDate, endDate: dateRange.endDate }),
+        getInventory()
+      ]);
+
+      // Merge payments like the on-screen report (collection + sale-embedded), drop orphans
+      const sales = salesRes.data || [];
+      const existingSaleIds = new Set(sales.map((s) => s.id || s._id).filter(Boolean));
+      const fromCollection = (paymentsRes.data || []).filter(
+        (p) => !p.saleId || existingSaleIds.has(p.saleId)
+      );
+      const start = dateRange.startDate ? new Date(dateRange.startDate + 'T00:00:00') : null;
+      const end = dateRange.endDate ? new Date(dateRange.endDate + 'T23:59:59.999') : null;
+      const collectionKeys = new Set(
+        fromCollection.map((p) => {
+          const d = toDateValue(p.paymentDate);
+          const key = d ? d.toISOString().split('T')[0] : '';
+          return `${p.saleId || ''}_${p.amount}_${key}`;
+        })
+      );
+      const fromSales = [];
+      sales.forEach((sale) => {
+        const saleId = sale.id || sale._id;
+        (sale.payments || []).forEach((p, index) => {
+          const paymentDate = toDateValue(p.date);
+          if (!paymentDate) return;
+          if (start && paymentDate < start) return;
+          if (end && paymentDate > end) return;
+          const amount = parseFloat(p.amount) || 0;
+          const dateKey = paymentDate.toISOString().split('T')[0];
+          const dedupeKey = `${saleId}_${amount}_${dateKey}`;
+          if (collectionKeys.has(dedupeKey)) return;
+          fromSales.push({
+            saleId,
+            invoiceNumber: sale.invoiceNumber || '',
+            customerName: (sale.customer?.name || '').trim(),
+            amount,
+            paymentDate,
+            paymentType: p.paymentType || (index === 0 ? 'Initial Sale' : 'Recovery'),
+            paymentMethod: p.paymentMethod || 'Cash',
+            addedBy: p.addedBy || ''
+          });
+        });
+      });
+
+      const result = downloadAccountantReport({
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        sales,
+        payments: [...fromCollection, ...fromSales],
+        expenses: expensesRes.data || [],
+        inventory: inventoryRes.data || []
+      });
+
+      showSuccess(
+        `PDF ready. Est. net profit: Rs. ${Math.round(result.summary.estimatedNetProfit || 0).toLocaleString()}`
+      );
+    } catch (error) {
+      console.error(error);
+      showError(error.message || 'Failed to generate accountant report');
+    } finally {
+      setExportingAccountant(false);
+    }
+  };
+
+  const handleSetFullHistoryRange = async () => {
+    try {
+      showInfo('Finding earliest activity…');
+      const [salesRes, paymentsRes, expensesRes] = await Promise.all([
+        getSales(),
+        getPayments({}),
+        getExpenses({})
+      ]);
+      const earliest = findEarliestActivityDate({
+        sales: salesRes.data || [],
+        payments: paymentsRes.data || [],
+        expenses: expensesRes.data || []
+      });
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = earliest || '2024-01-01';
+      setDateRange({ startDate, endDate });
+      showSuccess(`Range set: ${startDate} → ${endDate}. Click Apply, then Export.`);
+    } catch (error) {
+      showError(error.message || 'Could not detect start date');
+    }
   };
 
   const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -552,6 +688,9 @@ const Reports = () => {
     .map(([date, v]) => ({ date: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), total: v.total, count: v.count, _sortKey: date }))
     .sort((a, b) => b._sortKey.localeCompare(a._sortKey))
     .slice(0, 31);
+  const paymentsInRange = paymentsList.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  // Product expense is recovered via customer payments — only general expense counts here
+  const netAfterExpenses = paymentsInRange - expenseTotals.general;
 
   return (
     <div className="space-y-6">
@@ -563,18 +702,50 @@ const Reports = () => {
         </div>
         <button
           onClick={handleExport}
-          className="btn-primary flex items-center gap-2"
+          disabled={exportingAccountant}
+          className="btn-primary flex items-center gap-2 disabled:opacity-60"
         >
           <Download size={20} />
-          Export Report
+          {exportingAccountant ? 'Preparing PDF…' : 'Export Accountant PDF'}
         </button>
+      </div>
+
+      {/* Accountant pack helper */}
+      <div className="card border border-neutral-200 bg-white">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-ink">Accountant report pack</h3>
+            <p className="text-sm text-neutral-500 mt-1 max-w-2xl">
+              Simple PDF: kitna paisa aaya, maal ki cost, kharcha, aur <strong>andaza net profit</strong>.
+              Tax amount is mein nahi — woh accountant batayega. From/To dates use hoti hain.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleSetFullHistoryRange}
+              className="btn-secondary text-sm min-h-[40px]"
+            >
+              Set From = business start
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exportingAccountant}
+              className="btn-primary text-sm min-h-[40px] flex items-center gap-2 disabled:opacity-60"
+            >
+              <Download size={16} />
+              {exportingAccountant ? 'Generating…' : 'Download PDF'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Date Range Filter */}
       <div className="card">
-        <div className="flex items-center gap-4">
-          <Calendar className="text-gray-400" size={20} />
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+          <Calendar className="text-gray-400 hidden sm:block mb-2" size={20} />
+          <div className="flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-xs text-gray-600 mb-1">From</label>
               <input
@@ -595,12 +766,15 @@ const Reports = () => {
             </div>
             <button
               onClick={() => { fetchStats(); fetchOutstandingCredits(); fetchPaymentsReport(); }}
-              className="btn-primary mt-6"
+              className="btn-primary"
             >
               Apply
             </button>
           </div>
         </div>
+        <p className="text-xs text-neutral-400 mt-3">
+          Tip: click <em>Set From = business start</em>, then <em>Apply</em>, then download PDF to see everything from first sale/expense until today.
+        </p>
       </div>
 
       {/* Payment Received (Initial + Recovery) */}
@@ -610,9 +784,10 @@ const Reports = () => {
           Payment Received
         </h3>
         <p className="text-sm text-gray-600 mb-4">
-          All money received in the selected period (initial sale payments and recovery payments on invoices).
+          Money received vs <strong>general expenses</strong> in the selected date range.
+          Product expenses are not counted here — they are treated as recovered through customer payments.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
           <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Today</p>
             <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsToday.toLocaleString()}</p>
@@ -622,14 +797,37 @@ const Reports = () => {
             <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsThisMonth.toLocaleString()}</p>
           </div>
           <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">In Date Range</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Payment In Range</p>
             <p className="text-2xl font-bold text-emerald-700 mt-1">
-              Rs. {paymentsList.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0).toLocaleString()}
+              Rs. {paymentsInRange.toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transactions</p>
             <p className="text-2xl font-bold text-emerald-700 mt-1">{paymentsList.length}</p>
+          </div>
+        </div>
+
+        {/* Only general expense vs received (product expense excluded — recovered via payments) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="bg-white rounded-lg p-4 border border-amber-200 shadow-sm">
+            <p className="text-xs font-medium text-amber-700/80 uppercase tracking-wide flex items-center gap-1.5">
+              <Receipt size={14} />
+              General Expense
+            </p>
+            <p className="text-2xl font-bold text-amber-800 mt-1">
+              Rs. {expenseTotals.general.toLocaleString()}
+            </p>
+            <p className="text-[11px] text-gray-500 mt-1">Main shop / daily expenses only</p>
+          </div>
+          <div className={`rounded-lg p-4 border shadow-sm ${netAfterExpenses >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Net (Received − General Expense)</p>
+            <p className={`text-2xl font-bold mt-1 ${netAfterExpenses >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              Rs. {netAfterExpenses.toLocaleString()}
+            </p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Received Rs. {paymentsInRange.toLocaleString()} − General Rs. {expenseTotals.general.toLocaleString()}
+            </p>
           </div>
         </div>
         {paymentsByDateData.length > 0 && (
@@ -887,14 +1085,16 @@ const Reports = () => {
       <div className="card bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div>
-            <h3 className="text-2xl font-bold mb-2">Monthly Profit & Loss</h3>
-            <p className="text-indigo-100">Track your monthly earnings and expenses</p>
+            <h3 className="text-2xl font-bold mb-2">Is Month Profit</h3>
+            <p className="text-indigo-100">
+              Paid − biki maal cost − general expenses
+            </p>
           </div>
           <div className="flex gap-3">
             <select
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-              className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-white/50"
+              className="bg-white border border-white/40 rounded-lg px-4 py-2 text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-white/60"
             >
               <option value="1">January</option>
               <option value="2">February</option>
@@ -912,7 +1112,7 @@ const Reports = () => {
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-              className="bg-white/20 border border-white/30 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-white/50"
+              className="bg-white border border-white/40 rounded-lg px-4 py-2 text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-white/60"
             >
               {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
                 <option key={year} value={year}>{year}</option>
@@ -921,78 +1121,135 @@ const Reports = () => {
           </div>
         </div>
 
-        {monthlyData ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div
-              className="bg-white/10 rounded-lg p-6 backdrop-blur-sm cursor-pointer hover:bg-white/20 transition-all duration-200"
-              onClick={fetchMonthlySalesDetail}
-              title="Click to view detailed sales report"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-indigo-100 text-sm">Total Sales</p>
-                <ArrowUp className="w-5 h-5 text-green-300" />
-              </div>
-              <p className="text-3xl font-bold">Rs. {(parseFloat(monthlyData.totalSales) || 0).toLocaleString()}</p>
-              <p className="text-indigo-200 text-xs mt-1">{monthlyData.salesCount} transactions - Click for details</p>
+        {loadingMonthly ? (
+          <div className="space-y-4" aria-busy="true" aria-label="Loading month data">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="h-4 w-28 rounded bg-white/25 animate-pulse" />
+                    <div className="h-5 w-5 rounded-full bg-white/25 animate-pulse" />
+                  </div>
+                  <div className="h-9 w-36 rounded mb-3 bg-white/30 animate-pulse" />
+                  <div className="h-3 w-full rounded mb-2 bg-white/20 animate-pulse" />
+                  <div className="h-3 w-2/3 rounded bg-white/20 animate-pulse" />
+                </div>
+              ))}
             </div>
-
-            <div className="bg-white/10 rounded-lg p-6 backdrop-blur-sm">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-indigo-100 text-sm">Total Expenses</p>
-                <ArrowDown className="w-5 h-5 text-red-300" />
-              </div>
-              <p className="text-3xl font-bold">Rs. {(parseFloat(monthlyData.totalExpenses) || 0).toLocaleString()}</p>
-              <p className="text-indigo-200 text-xs mt-1">{monthlyData.expensesCount} expenses</p>
+            <div className="bg-white/10 rounded-lg px-4 py-4 space-y-2">
+              <div className="h-4 w-full max-w-xl rounded bg-white/25 animate-pulse" />
+              <div className="h-3 w-48 rounded bg-white/20 animate-pulse" />
             </div>
-
-            <div
-              className={`bg-white/10 rounded-lg p-6 backdrop-blur-sm cursor-pointer hover:bg-white/20 transition-all duration-200 ${totalProfit >= 0 ? 'border-2 border-emerald-300' : 'border-2 border-red-300'}`}
-              onClick={() => setShowProfitDetailModal(true)}
-              title="Click to view profit calculation details"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-indigo-100 text-sm">Realized Profit</p>
-                {totalProfit >= 0 ? (
-                  <TrendingUp className="w-5 h-5 text-emerald-300" />
-                ) : (
-                  <TrendingDown className="w-5 h-5 text-red-300" />
-                )}
-              </div>
-              <p className={`text-3xl font-bold ${totalProfit >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                {totalProfit >= 0 ? '+' : ''}Rs. {Math.abs(totalProfit || 0).toLocaleString()}
-              </p>
-              <p className="text-indigo-200 text-xs mt-1">
-                Paid received − Stock cost
-              </p>
-              {profitBreakdown?.totalRemaining > 0 && (
-                <p className="text-amber-200 text-xs mt-2 font-medium">
-                  Remaining due: Rs. {profitBreakdown.totalRemaining.toLocaleString()}
+            <p className="text-indigo-100 text-xs text-center">Month data load ho rahi hai…</p>
+          </div>
+        ) : monthlyData ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div
+                className="bg-white/10 rounded-lg p-5 backdrop-blur-sm cursor-pointer hover:bg-white/20 transition-all duration-200"
+                onClick={fetchMonthlySalesDetail}
+                title="Click to view sales detail"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-indigo-100 text-sm">1. Paise aaye (Paid)</p>
+                  <ArrowUp className="w-5 h-5 text-green-300" />
+                </div>
+                <p className="text-3xl font-bold">
+                  Rs. {(parseFloat(monthlyData.totalPaid ?? monthlyData.totalSales) || 0).toLocaleString()}
                 </p>
-              )}
-              <p className="text-indigo-200 text-xs mt-1">Click for product & customer details</p>
+                <p className="text-indigo-200 text-xs mt-1">
+                  Bill Rs. {(parseFloat(monthlyData.totalSales) || 0).toLocaleString()}
+                  {(monthlyData.monthDue || 0) > 0 && (
+                    <> · Due Rs. {(monthlyData.monthDue || 0).toLocaleString()}</>
+                  )}
+                </p>
+                <p className="text-indigo-200 text-xs mt-1">
+                  {(monthlyData.soldQty || 0).toLocaleString()} pcs bikay · {monthlyData.salesCount || 0} sales · click detail
+                </p>
+              </div>
+
+              <div className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-indigo-100 text-sm">2. Biki maal cost</p>
+                  <Package className="w-5 h-5 text-amber-200" />
+                </div>
+                <p className="text-3xl font-bold">
+                  Rs. {(parseFloat(monthlyData.soldCost) || 0).toLocaleString()}
+                </p>
+                <p className="text-indigo-200 text-xs mt-1">
+                  {(monthlyData.soldQty || 0).toLocaleString()} pcs × cost per piece
+                </p>
+              </div>
+
+              <div className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-indigo-100 text-sm">3. General expenses</p>
+                  <ArrowDown className="w-5 h-5 text-red-300" />
+                </div>
+                <p className="text-3xl font-bold">
+                  Rs. {(parseFloat(monthlyData.generalExpenses ?? monthlyData.totalExpenses) || 0).toLocaleString()}
+                </p>
+                <p className="text-indigo-200 text-xs mt-1">
+                  {monthlyData.expensesCount || 0} expenses · product cost alag
+                </p>
+              </div>
+
+              {(() => {
+                const monthProfit = parseFloat(monthlyData.netProfit) || 0;
+                const isMonthProfit = monthProfit >= 0;
+                const sign = isMonthProfit ? '+' : '-';
+                return (
+              <div
+                className={`bg-white/10 rounded-lg p-5 backdrop-blur-sm border-2 ${
+                  isMonthProfit ? 'border-green-300' : 'border-red-300'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-indigo-100 text-sm">
+                    4. Is month {isMonthProfit ? 'profit' : 'loss'}
+                  </p>
+                  {isMonthProfit ? (
+                    <TrendingUp className="w-5 h-5 text-green-300" />
+                  ) : (
+                    <TrendingDown className="w-5 h-5 text-red-300" />
+                  )}
+                </div>
+                <p className={`text-3xl font-bold ${isMonthProfit ? 'text-green-300' : 'text-red-300'}`}>
+                  {sign}Rs. {Math.abs(monthProfit).toLocaleString()}
+                </p>
+                <p className={`text-xs mt-1 font-semibold ${isMonthProfit ? 'text-green-200' : 'text-red-200'}`}>
+                  {isMonthProfit ? 'Profit' : 'Loss'} {sign}
+                </p>
+              </div>
+                );
+              })()}
             </div>
 
-            <div className={`bg-white/10 rounded-lg p-6 backdrop-blur-sm ${monthlyData.netProfit >= 0 ? 'border-2 border-green-300' : 'border-2 border-red-300'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-indigo-100 text-sm">Net Profit/Loss</p>
-                {monthlyData.netProfit >= 0 ? (
-                  <TrendingUp className="w-5 h-5 text-green-300" />
-                ) : (
-                  <TrendingDown className="w-5 h-5 text-red-300" />
-                )}
-              </div>
-              <p className={`text-3xl font-bold ${monthlyData.netProfit >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                {monthlyData.netProfit >= 0 ? '+' : ''}Rs. {Math.abs(parseFloat(monthlyData.netProfit) || 0).toLocaleString()}
+            <div className="bg-white/10 rounded-lg px-4 py-3 text-sm text-indigo-50">
+              <p className="font-medium break-words">
+                Paid Rs. {(parseFloat(monthlyData.totalPaid) || 0).toLocaleString()}
+                {' - '}
+                Cost Rs. {(parseFloat(monthlyData.soldCost) || 0).toLocaleString()}
+                {' - '}
+                Expenses Rs. {(parseFloat(monthlyData.generalExpenses ?? monthlyData.totalExpenses) || 0).toLocaleString()}
+                {' = '}
+                <span className={(monthlyData.netProfit || 0) >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
+                  {(monthlyData.netProfit || 0) >= 0 ? '+' : '-'}Rs.{' '}
+                  {Math.abs(parseFloat(monthlyData.netProfit) || 0).toLocaleString()}
+                </span>
               </p>
-              <p className="text-indigo-200 text-xs mt-1">
-                {monthlyData.netProfit >= 0 ? 'Profit' : 'Loss'}
-              </p>
+              <button
+                type="button"
+                onClick={() => setShowProfitDetailModal(true)}
+                className="mt-2 text-xs text-indigo-200 underline hover:text-white"
+              >
+                All-time product profit detail (alag hisab)
+              </button>
             </div>
           </div>
         ) : (
           <div className="text-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
-            <p className="text-indigo-100 mt-2">Loading monthly data...</p>
+            <p className="text-indigo-100">Is month ka data load nahi hua. Dobara try karein.</p>
           </div>
         )}
       </div>

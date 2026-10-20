@@ -15,6 +15,7 @@ import Reports from './pages/Reports';
 import Expenses from './pages/Expenses';
 import Slider from './pages/Slider';
 import Orders from './pages/Orders';
+import Investors from './pages/Investors';
 import Reviews from './pages/Reviews';
 
 function App() {
@@ -83,6 +84,7 @@ function App() {
                     <Route path="/slider" element={<Slider />} />
                     <Route path="/orders" element={<Orders />} />
                     <Route path="/reviews" element={<Reviews />} />
+                    <Route path="/investors" element={<Investors />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

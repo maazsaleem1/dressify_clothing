@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';
-import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats, getProductExpenses, createExpensesBatch, deleteExpense } from '../services/api';
+import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats, getProductExpenses, createExpensesBatch, deleteExpense, getInvestors } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
 import { showSuccess, showError } from '../utils/toast';
 import { TableRowShimmer } from '../components/Shimmer';
@@ -10,6 +10,7 @@ const Inventory = () => {
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
   const [sales, setSales] = useState([]);
+  const [investors, setInvestors] = useState([]);
   const [onlineSales, setOnlineSales] = useState({}); // Store online sales per product
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -49,6 +50,10 @@ const Inventory = () => {
     quantity: '',
     basePurchaseCost: '',
     costPerUnit: '',
+    fundingOwnAmount: '',
+    fundingInvestorId: '',
+    fundingInvestorName: '',
+    fundingInvestorAmount: '',
     sellingPrice: '', // Original price (Was price for sale items)
     onlinePrice: '', // Online/website price (Now price for sale items)
     sku: '', // Product SKU/Model number
@@ -115,16 +120,18 @@ const Inventory = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [invRes, brandsRes, catsRes, salesRes] = await Promise.all([
+      const [invRes, brandsRes, catsRes, salesRes, investorsRes] = await Promise.all([
         getInventory({ brand: filterBrand, category: filterCategory, lowStock: showLowStock }),
         getBrands(),
         getCategories(),
-        getSales()
+        getSales(),
+        getInvestors()
       ]);
       setInventory(invRes.data);
       setBrands(brandsRes.data);
       setCategories(catsRes.data);
       setSales(salesRes.data);
+      setInvestors(investorsRes.data || []);
 
       // Fetch online sales stats and map to products
       try {
@@ -322,6 +329,15 @@ const Inventory = () => {
           ? baseCost
           : unitCost * newInitialQty;
 
+        const invAmt = parseFloat(formData.fundingInvestorAmount) || 0;
+        const ownAmt = parseFloat(formData.fundingOwnAmount);
+        dataToSubmit.fundingInvestorAmount = invAmt;
+        dataToSubmit.fundingInvestorId = formData.fundingInvestorId || null;
+        dataToSubmit.fundingInvestorName = formData.fundingInvestorName || '';
+        dataToSubmit.fundingOwnAmount = !isNaN(ownAmt) && ownAmt >= 0
+          ? ownAmt
+          : Math.max(0, dataToSubmit.basePurchaseCost - invAmt);
+
         // Final cleanup before update
         const finalData = Object.fromEntries(
           Object.entries(dataToSubmit).filter(([_, value]) => value !== undefined)
@@ -347,6 +363,15 @@ const Inventory = () => {
         dataToSubmit.basePurchaseCost = !isNaN(baseCost) && baseCost > 0
           ? baseCost
           : unitCost * newTotalQty;
+
+        const invAmt = parseFloat(formData.fundingInvestorAmount) || 0;
+        const ownAmt = parseFloat(formData.fundingOwnAmount);
+        dataToSubmit.fundingInvestorAmount = invAmt;
+        dataToSubmit.fundingInvestorId = formData.fundingInvestorId || null;
+        dataToSubmit.fundingInvestorName = formData.fundingInvestorName || '';
+        dataToSubmit.fundingOwnAmount = !isNaN(ownAmt) && ownAmt >= 0
+          ? ownAmt
+          : Math.max(0, dataToSubmit.basePurchaseCost - invAmt);
 
         // Final cleanup before create
         const finalData = Object.fromEntries(
@@ -406,6 +431,14 @@ const Inventory = () => {
         : ''),
       costPerUnit: item.costPerUnit != null && item.costPerUnit !== ''
         ? Math.round(parseFloat(item.costPerUnit) || 0)
+        : '',
+      fundingOwnAmount: item.fundingOwnAmount != null && item.fundingOwnAmount !== ''
+        ? String(item.fundingOwnAmount)
+        : '',
+      fundingInvestorId: item.fundingInvestorId || '',
+      fundingInvestorName: item.fundingInvestorName || '',
+      fundingInvestorAmount: item.fundingInvestorAmount != null && item.fundingInvestorAmount !== ''
+        ? String(item.fundingInvestorAmount)
         : '',
       sellingPrice: item.sellingPrice,
       onlinePrice: item.onlinePrice || '',
@@ -605,6 +638,10 @@ const Inventory = () => {
       quantity: '',
       basePurchaseCost: '',
       costPerUnit: '',
+      fundingOwnAmount: '',
+      fundingInvestorId: '',
+      fundingInvestorName: '',
+      fundingInvestorAmount: '',
       sellingPrice: '',
       onlinePrice: '',
       sku: '',
@@ -1726,7 +1763,17 @@ const Inventory = () => {
                       type="number"
                       min="0"
                       value={formData.basePurchaseCost}
-                      onChange={(e) => setFormData(applyPurchaseCostSync({ basePurchaseCost: e.target.value }))}
+                      onChange={(e) => {
+                        const basePurchaseCost = e.target.value;
+                        const base = parseFloat(basePurchaseCost) || 0;
+                        const invAmt = parseFloat(formData.fundingInvestorAmount) || 0;
+                        setFormData(applyPurchaseCostSync({
+                          basePurchaseCost,
+                          fundingOwnAmount: formData.fundingInvestorId
+                            ? String(Math.max(0, base - invAmt))
+                            : (base > 0 ? String(base) : formData.fundingOwnAmount)
+                        }));
+                      }}
                       className="input-field"
                       placeholder="e.g. 2000000 for full batch"
                     />
@@ -1751,6 +1798,90 @@ const Inventory = () => {
                     />
                     <p className="text-xs text-gray-500 mt-1">Updates when you add product expenses via Costing</p>
                   </div>
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-amber-100">
+                  <p className="text-sm font-semibold text-amber-900 mb-1">Who funded this purchase?</p>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Own + investor amounts should match purchase cost. Product expenses (transport, rafu) stay as your cost and raise landed cost before profit.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Your money (Rs.)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.fundingOwnAmount}
+                        onChange={(e) => setFormData({ ...formData, fundingOwnAmount: e.target.value })}
+                        className="input-field"
+                        placeholder="Own capital in purchase"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Investor</label>
+                      <select
+                        value={formData.fundingInvestorId}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const inv = investors.find((i) => (i.id || i._id) === id);
+                          const base = parseFloat(formData.basePurchaseCost) || 0;
+                          const invAmt = parseFloat(formData.fundingInvestorAmount) || 0;
+                          setFormData({
+                            ...formData,
+                            fundingInvestorId: id,
+                            fundingInvestorName: inv?.name || '',
+                            fundingOwnAmount: id
+                              ? String(Math.max(0, base - invAmt))
+                              : (base > 0 ? String(base) : formData.fundingOwnAmount),
+                            fundingInvestorAmount: id ? formData.fundingInvestorAmount : ''
+                          });
+                        }}
+                        className="input-field"
+                      >
+                        <option value="">None (100% own)</option>
+                        {investors.map((inv) => (
+                          <option key={inv.id || inv._id} value={inv.id || inv._id}>
+                            {inv.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Investor money (Rs.)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        disabled={!formData.fundingInvestorId}
+                        value={formData.fundingInvestorAmount}
+                        onChange={(e) => {
+                          const fundingInvestorAmount = e.target.value;
+                          const base = parseFloat(formData.basePurchaseCost) || 0;
+                          const invAmt = parseFloat(fundingInvestorAmount) || 0;
+                          setFormData({
+                            ...formData,
+                            fundingInvestorAmount,
+                            fundingOwnAmount: String(Math.max(0, base - invAmt))
+                          });
+                        }}
+                        className="input-field disabled:bg-gray-50"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                  {formData.fundingInvestorId && (() => {
+                    const base = parseFloat(formData.basePurchaseCost) || 0;
+                    const own = parseFloat(formData.fundingOwnAmount) || 0;
+                    const invAmt = parseFloat(formData.fundingInvestorAmount) || 0;
+                    const sum = own + invAmt;
+                    const mismatch = base > 0 && Math.abs(sum - base) > 1;
+                    return (
+                      <p className={`text-xs mt-2 ${mismatch ? 'text-rose-600 font-medium' : 'text-emerald-700'}`}>
+                        {mismatch
+                          ? `Warning: Own (${own.toLocaleString()}) + Investor (${invAmt.toLocaleString()}) = ${sum.toLocaleString()} ≠ purchase ${base.toLocaleString()}`
+                          : `Split OK: Own Rs. ${own.toLocaleString()} + Investor Rs. ${invAmt.toLocaleString()} = Rs. ${sum.toLocaleString()}`}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -2051,12 +2182,26 @@ const Inventory = () => {
                 const expTotal = parseFloat(costingItem.productExpensesTotal) || productExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
                 const total = parseFloat(costingItem.totalLandedCost) || base + expTotal;
                 const perPiece = qty > 0 ? total / qty : parseFloat(costingItem.costPerUnit) || 0;
+                const invFund = parseFloat(costingItem.fundingInvestorAmount) || 0;
+                const ownFund = parseFloat(costingItem.fundingOwnAmount);
+                const ownDisplay = !isNaN(ownFund) ? ownFund : Math.max(0, base - invFund);
                 return (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Original qty</p><p className="font-bold">{qty.toLocaleString()}</p></div>
-                    <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Base purchase</p><p className="font-bold">Rs. {base.toLocaleString()}</p></div>
-                    <div className="bg-amber-50 p-3 rounded-lg border border-amber-100"><p className="text-xs text-gray-500">Product expenses</p><p className="font-bold text-amber-800">Rs. {expTotal.toLocaleString()}</p></div>
-                    <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200"><p className="text-xs text-gray-500">Cost / piece</p><p className="font-bold text-emerald-800">Rs. {Math.round(perPiece).toLocaleString()}</p></div>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Original qty</p><p className="font-bold">{qty.toLocaleString()}</p></div>
+                      <div className="bg-gray-50 p-3 rounded-lg border"><p className="text-xs text-gray-500">Base purchase</p><p className="font-bold">Rs. {base.toLocaleString()}</p></div>
+                      <div className="bg-amber-50 p-3 rounded-lg border border-amber-100"><p className="text-xs text-gray-500">Product expenses (your cost)</p><p className="font-bold text-amber-800">Rs. {expTotal.toLocaleString()}</p></div>
+                      <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-200"><p className="text-xs text-gray-500">Landed / piece</p><p className="font-bold text-emerald-800">Rs. {Math.round(perPiece).toLocaleString()}</p></div>
+                    </div>
+                    {(invFund > 0 || costingItem.fundingInvestorName) && (
+                      <p className="text-xs text-gray-600 bg-white border rounded-lg px-3 py-2">
+                        Purchase funding: Own Rs. {ownDisplay.toLocaleString()}
+                        {costingItem.fundingInvestorName
+                          ? ` · ${costingItem.fundingInvestorName} Rs. ${invFund.toLocaleString()}`
+                          : ''}
+                        . Profit starts after landed Rs. {total.toLocaleString()} is recovered from payments.
+                      </p>
+                    )}
                   </div>
                 );
               })()}

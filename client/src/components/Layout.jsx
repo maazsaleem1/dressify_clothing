@@ -13,6 +13,7 @@ import {
   Image as ImageIcon,
   ShoppingBag,
   Star,
+  Landmark,
   LogOut,
   Receipt
 } from 'lucide-react';
@@ -59,6 +60,7 @@ const Layout = ({ children }) => {
     { path: '/sales', icon: ShoppingCart, label: 'Sales & Credit' },
     { path: '/production', icon: Factory, label: 'Production' },
     { path: '/expenses', icon: Receipt, label: 'Daily Expenses' },
+    { path: '/investors', icon: Landmark, label: 'Investors' },
     { path: '/reports', icon: FileText, label: 'Reports' },
     { path: '/slider', icon: ImageIcon, label: 'Homepage Slider' },
     { path: '/orders', icon: ShoppingBag, label: 'Orders' },

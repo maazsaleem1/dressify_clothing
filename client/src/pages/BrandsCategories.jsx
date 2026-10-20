@@ -10,8 +10,8 @@ const BrandsCategories = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
-  const [activeTab, setActiveTab] = useState('brands');
   const [showModal, setShowModal] = useState(false);
+  const [activeTab, setActiveTab] = useState('brands');
   const [editingItem, setEditingItem] = useState(null);
   const [modalType, setModalType] = useState('brand');
 

@@ -147,6 +147,7 @@ export const updateBrand = async (id, brandData) => {
   }
 };
 
+
 export const deleteBrand = async (id) => {
   try {
     await deleteDoc(doc(db, 'brands', id));
@@ -238,8 +239,26 @@ export const getInventory = async (filters = {}) => {
       q = query(q, where('categoryId', '==', filters.category));
     }
 
-    q = query(q, orderBy('productName'));
-    const snapshot = await getDocs(q);
+    // Prefer latest-first; fall back if createdAt index missing with filters
+    try {
+      q = query(q, orderBy('createdAt', 'desc'));
+    } catch (_) {
+      q = query(q, orderBy('productName'));
+    }
+    let snapshot;
+    try {
+      snapshot = await getDocs(q);
+    } catch (indexError) {
+      // Composite index missing (brand/category + createdAt) — fetch without order, sort client-side
+      let fallbackQ = collection(db, 'inventory');
+      if (filters.brand) {
+        fallbackQ = query(fallbackQ, where('brandId', '==', filters.brand));
+      }
+      if (filters.category) {
+        fallbackQ = query(fallbackQ, where('categoryId', '==', filters.category));
+      }
+      snapshot = await getDocs(fallbackQ);
+    }
     let inventory = snapshot.docs.map(docToObject);
 
     // Filter low stock items if needed
@@ -263,6 +282,17 @@ export const getInventory = async (filters = {}) => {
       brand: brands.find(b => (b.id || b._id) === item.brandId),
       category: categories.find(c => (c.id || c._id) === item.categoryId)
     }));
+
+    // Latest products on top (createdAt desc); items without date go last
+    const toMs = (v) => {
+      if (!v) return 0;
+      if (v instanceof Date) return v.getTime();
+      if (typeof v?.toDate === 'function') return v.toDate().getTime();
+      if (v?.seconds != null) return v.seconds * 1000;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    };
+    inventory.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
 
     return { data: inventory };
   } catch (error) {
@@ -354,7 +384,13 @@ export const createInventoryItem = async (itemData) => {
       basePurchaseCost,
       productExpensesTotal: 0,
       totalLandedCost: basePurchaseCost,
-      costPerUnit
+      costPerUnit,
+      fundingOwnAmount: parseFloat(itemData.fundingOwnAmount) >= 0
+        ? parseFloat(itemData.fundingOwnAmount)
+        : Math.max(0, basePurchaseCost - (parseFloat(itemData.fundingInvestorAmount) || 0)),
+      fundingInvestorId: itemData.fundingInvestorId || null,
+      fundingInvestorName: itemData.fundingInvestorName || '',
+      fundingInvestorAmount: parseFloat(itemData.fundingInvestorAmount) || 0
     });
 
     return { data: { id: docRef.id, ...finalData, basePurchaseCost, costPerUnit } };
@@ -928,11 +964,18 @@ export const addPayment = async (saleId, paymentData) => {
       } catch (_) { }
     }
 
+    const recoveryDate = paymentData.paymentDate || paymentData.date
+      ? Timestamp.fromDate(new Date(
+        (paymentData.paymentDate || paymentData.date) +
+        ((String(paymentData.paymentDate || paymentData.date).includes('T')) ? '' : 'T12:00:00')
+      ))
+      : Timestamp.now();
+
     const recoveryPayment = {
       amount: paymentAmount,
       paymentMethod,
       notes: paymentData.notes || '',
-      date: Timestamp.now(),
+      date: recoveryDate,
       paymentType: 'Recovery',
       addedBy: paymentData.addedBy || ''
     };
@@ -946,7 +989,7 @@ export const addPayment = async (saleId, paymentData) => {
       customerId: saleData.customerId || null,
       customerName,
       amount: paymentAmount,
-      paymentDate: Timestamp.now(),
+      paymentDate: recoveryDate,
       paymentType: 'Recovery',
       paymentMethod,
       notes: paymentData.notes || '',
@@ -1179,6 +1222,16 @@ export const deleteSale = async (id) => {
           }
         }
       }
+    }
+
+    // Remove related payment docs so Reports "Payment breakdown" stays in sync
+    try {
+      const paySnap = await getDocs(
+        query(collection(db, 'payments'), where('saleId', '==', id))
+      );
+      await Promise.all(paySnap.docs.map((d) => deleteDoc(d.ref)));
+    } catch (payErr) {
+      console.warn('Could not delete related payment docs for sale:', id, payErr);
     }
 
     await deleteDoc(saleRef);
@@ -2114,85 +2167,469 @@ export const deleteExpense = async (id) => {
   }
 };
 
-export const getMonthlyProfitLoss = async (year, month) => {
-  try {
-    // Get sales for the month
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59);
-    const startTimestamp = Timestamp.fromDate(startDate);
-    const endTimestamp = Timestamp.fromDate(endDate);
+/**
+ * Month profit = Paid (this month) − COGS (sold this month) − General expenses (this month)
+ */
+const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inventory) => {
+  const inMonth = (dateVal) => {
+    const d = convertTimestamp(dateVal);
+    if (!d || isNaN(d.getTime())) return false;
+    return d.getFullYear() === year && d.getMonth() === month - 1;
+  };
 
-    const salesQuery = query(
-      collection(db, 'sales'),
-      where('saleDate', '>=', startTimestamp),
-      where('saleDate', '<=', endTimestamp),
-      orderBy('saleDate', 'desc')
-    );
-    const salesSnapshot = await getDocs(salesQuery);
-    const sales = salesSnapshot.docs.map(docToObject);
-    const totalSales = sales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0);
+  const monthSales = sales.filter((s) => inMonth(s.saleDate || s.createdAt));
+  const inventoryById = {};
+  (inventory || []).forEach((inv) => {
+    const id = inv.id || inv._id;
+    if (id) inventoryById[id] = inv;
+  });
 
-    // Get expenses for the month
-    const expensesQuery = query(
-      collection(db, 'expenses'),
-      where('expenseDate', '>=', startTimestamp),
-      where('expenseDate', '<=', endTimestamp),
-      orderBy('expenseDate', 'desc')
-    );
-    const expensesSnapshot = await getDocs(expensesQuery);
-    const expenses = expensesSnapshot.docs.map(docToObject);
-    const totalExpenses = expenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+  let totalSales = 0; // billed
+  let soldQty = 0;
+  let soldCost = 0; // COGS
+  let monthDue = 0;
 
-    const netProfit = totalSales - totalExpenses;
+  monthSales.forEach((sale) => {
+    const items = sale.items || [];
+    const saleTotal =
+      parseFloat(sale.totalAmount) ||
+      items.reduce((sum, item) => {
+        return (
+          sum +
+          (parseFloat(item.totalPrice) ||
+            (parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0))
+        );
+      }, 0) ||
+      0;
+    totalSales += saleTotal;
 
-    return {
-      data: {
-        month,
-        year,
-        totalSales: parseFloat(totalSales) || 0,
-        totalExpenses: parseFloat(totalExpenses) || 0,
-        netProfit: parseFloat(netProfit) || 0,
-        salesCount: sales.length,
-        expensesCount: expenses.length
+    const salePaid = parseFloat(sale.paidAmount) || 0;
+    const saleRemaining =
+      parseFloat(sale.remainingAmount) >= 0
+        ? parseFloat(sale.remainingAmount)
+        : Math.max(0, saleTotal - salePaid);
+    monthDue += saleRemaining;
+
+    items.forEach((item) => {
+      const qty = parseFloat(item.quantity) || 0;
+      soldQty += qty;
+      const invId = item.inventoryId || item.inventory;
+      const inv = invId ? inventoryById[invId] : null;
+      let costPerUnit = parseFloat(inv?.costPerUnit) || 0;
+      if (!costPerUnit && inv?.productName) {
+        // fallback: match by product name if id missing
+        const byName = (inventory || []).find((i) => i.productName === item.productName);
+        costPerUnit = parseFloat(byName?.costPerUnit) || 0;
       }
-    };
+      if (!costPerUnit) {
+        costPerUnit = parseFloat(item.costPerUnit) || 0;
+      }
+      soldCost += qty * costPerUnit;
+    });
+  });
+
+  // Paise aaye = valid payments with paymentDate in this month
+  const saleIds = new Set(sales.map((s) => s.id || s._id).filter(Boolean));
+  let totalPaid = 0;
+  let paymentsCount = 0;
+  (payments || []).forEach((p) => {
+    if (!inMonth(p.paymentDate || p.date || p.createdAt)) return;
+    if (p.saleId && !saleIds.has(p.saleId)) return; // orphan
+    totalPaid += parseFloat(p.amount) || 0;
+    paymentsCount += 1;
+  });
+
+  // If some sales have paidAmount but no payment docs, cover gap for this month's sales only
+  const paidFromPaymentDocsForMonthSales = (payments || []).reduce((sum, p) => {
+    if (!p.saleId || !saleIds.has(p.saleId)) return sum;
+    if (!inMonth(p.paymentDate || p.date || p.createdAt)) return sum;
+    const sale = monthSales.find((s) => (s.id || s._id) === p.saleId);
+    if (!sale) return sum;
+    return sum + (parseFloat(p.amount) || 0);
+  }, 0);
+  const paidOnMonthSalesRecords = monthSales.reduce(
+    (sum, s) => sum + (parseFloat(s.paidAmount) || 0),
+    0
+  );
+  // Prefer payment-collection total (cash in month). Keep as-is.
+  // Note: recoveries for old sales in this month correctly count as "paise aaye".
+
+  let generalExpenses = 0;
+  let productExpenses = 0;
+  let generalExpensesCount = 0;
+  (expenses || []).forEach((expense) => {
+    if (!inMonth(expense.expenseDate || expense.createdAt)) return;
+    const amount = parseFloat(expense.amount) || 0;
+    const isProduct = !!(expense.inventoryId) || expense.expenseScope === 'product';
+    if (isProduct) {
+      productExpenses += amount;
+    } else {
+      generalExpenses += amount;
+      generalExpensesCount += 1;
+    }
+  });
+
+  // Month profit = Paid − biki maal cost − general expenses
+  const netProfit = totalPaid - soldCost - generalExpenses;
+  const tradingProfit = totalPaid - soldCost;
+
+  return {
+    month,
+    year,
+    totalSales: Math.round(totalSales),
+    totalPaid: Math.round(totalPaid),
+    soldQty: Math.round(soldQty),
+    soldCost: Math.round(soldCost),
+    monthDue: Math.round(monthDue),
+    totalExpenses: Math.round(generalExpenses), // general only (for UI "expenses")
+    generalExpenses: Math.round(generalExpenses),
+    productExpenses: Math.round(productExpenses),
+    tradingProfit: Math.round(tradingProfit),
+    netProfit: Math.round(netProfit),
+    salesCount: monthSales.length,
+    expensesCount: generalExpensesCount,
+    paymentsCount,
+    // unused but keep names stable for older UI
+    paidOnMonthSalesRecords: Math.round(paidOnMonthSalesRecords),
+    paidFromPaymentDocsForMonthSales: Math.round(paidFromPaymentDocsForMonthSales)
+  };
+};
+
+export const getMonthlyProfitLoss = async (year, month) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  const startStr = `${year}-${pad(month)}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const endStr = `${year}-${pad(month)}-${pad(lastDay)}`;
+
+  try {
+    const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
+      getSales(),
+      getPayments({ startDate: startStr, endDate: endStr }),
+      getExpenses({ startDate: startStr, endDate: endStr }),
+      getInventory()
+    ]);
+
+    const data = buildMonthlyProfitLossData(
+      year,
+      month,
+      salesRes.data || [],
+      paymentsRes.data || [],
+      expensesRes.data || [],
+      inventoryRes.data || []
+    );
+
+    return { data };
   } catch (error) {
-    // Fallback to client-side calculation if index doesn't exist
+    // Fallback without date filters on payments/expenses
     try {
-      const [salesRes, expensesRes] = await Promise.all([
+      const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
         getSales(),
-        getExpenses()
+        getPayments(),
+        getExpenses(),
+        getInventory()
       ]);
 
-      const sales = salesRes.data.filter(sale => {
-        const saleDate = convertTimestamp(sale.saleDate);
-        if (!saleDate) return false;
-        return saleDate.getFullYear() === year && saleDate.getMonth() === month - 1;
-      });
+      const data = buildMonthlyProfitLossData(
+        year,
+        month,
+        salesRes.data || [],
+        paymentsRes.data || [],
+        expensesRes.data || [],
+        inventoryRes.data || []
+      );
 
-      const expenses = expensesRes.data.filter(expense => {
-        const expenseDate = convertTimestamp(expense.expenseDate);
-        if (!expenseDate) return false;
-        return expenseDate.getFullYear() === year && expenseDate.getMonth() === month - 1;
-      });
-
-      const totalSales = sales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0);
-      const totalExpenses = expenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
-      const netProfit = totalSales - totalExpenses;
-
-      return {
-        data: {
-          month,
-          year,
-          totalSales: parseFloat(totalSales) || 0,
-          totalExpenses: parseFloat(totalExpenses) || 0,
-          netProfit: parseFloat(netProfit) || 0,
-          salesCount: sales.length,
-          expensesCount: expenses.length
-        }
-      };
+      return { data };
     } catch (fallbackError) {
       throw fallbackError;
     }
+  }
+};
+
+// ==================== INVESTORS ====================
+
+export const getInvestors = async () => {
+  try {
+    const snapshot = await getDocs(query(collection(db, 'investors'), orderBy('name', 'asc')));
+    return { data: snapshot.docs.map(docToObject) };
+  } catch (error) {
+    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
+      const snapshot = await getDocs(collection(db, 'investors'));
+      const data = snapshot.docs.map(docToObject).sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+      );
+      return { data };
+    }
+    throw error;
+  }
+};
+
+export const createInvestor = async (investorData) => {
+  try {
+    const data = {
+      name: (investorData.name || '').trim(),
+      contact: investorData.contact || '',
+      notes: investorData.notes || '',
+      isActive: investorData.isActive !== false,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, 'investors'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const updateInvestor = async (id, investorData) => {
+  try {
+    const data = {
+      name: (investorData.name || '').trim(),
+      contact: investorData.contact || '',
+      notes: investorData.notes || '',
+      isActive: investorData.isActive !== false,
+      updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, 'investors', id), data);
+    return { data: { id, ...data } };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const deleteInvestor = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'investors', id));
+    return { success: true };
+  } catch (error) {
+    throw error;
+  }
+};
+
+/** Ledger: capital_in (money received from investor) | payout (money given to investor) */
+export const getInvestorLedger = async (investorId) => {
+  try {
+    const q = query(
+      collection(db, 'investorLedger'),
+      where('investorId', '==', investorId),
+      orderBy('date', 'desc')
+    );
+    const snapshot = await getDocs(q);
+    return { data: snapshot.docs.map(docToObject) };
+  } catch (error) {
+    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
+      const snapshot = await getDocs(collection(db, 'investorLedger'));
+      const data = snapshot.docs
+        .map(docToObject)
+        .filter((e) => e.investorId === investorId)
+        .sort((a, b) => {
+          const da = convertTimestamp(a.date) || new Date(0);
+          const db_ = convertTimestamp(b.date) || new Date(0);
+          return db_.getTime() - da.getTime();
+        });
+      return { data };
+    }
+    throw error;
+  }
+};
+
+export const addInvestorLedgerEntry = async (entryData) => {
+  try {
+    const type = entryData.type === 'payout' ? 'payout' : 'capital_in';
+    const data = {
+      investorId: entryData.investorId,
+      investorName: entryData.investorName || '',
+      type,
+      amount: parseFloat(entryData.amount) || 0,
+      notes: entryData.notes || '',
+      date: entryData.date
+        ? Timestamp.fromDate(new Date(entryData.date + (String(entryData.date).includes('T') ? '' : 'T12:00:00')))
+        : Timestamp.now(),
+      createdAt: Timestamp.now(),
+      addedBy: entryData.addedBy || ''
+    };
+    const docRef = await addDoc(collection(db, 'investorLedger'), data);
+    return { data: { id: docRef.id, ...data } };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export const deleteInvestorLedgerEntry = async (id) => {
+  try {
+    await deleteDoc(doc(db, 'investorLedger', id));
+    return { success: true };
+  } catch (error) {
+    throw error;
+  }
+};
+
+const getSaleLineTotalForInvestor = (item) =>
+  parseFloat(item.totalPrice) ||
+  ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
+
+const getProductSalePaymentStatsForItem = (sales, inventoryItemId) => {
+  let soldQty = 0;
+  let soldAmount = 0;
+  let paidAmount = 0;
+  let remainingAmount = 0;
+
+  (sales || []).forEach((sale) => {
+    const items = sale.items || [];
+    if (!items.length) return;
+    const saleTotal =
+      parseFloat(sale.totalAmount) ||
+      items.reduce((sum, line) => sum + getSaleLineTotalForInvestor(line), 0) ||
+      0;
+    const salePaid = parseFloat(sale.paidAmount) || 0;
+    const saleRemaining =
+      parseFloat(sale.remainingAmount) >= 0
+        ? parseFloat(sale.remainingAmount)
+        : Math.max(0, saleTotal - salePaid);
+
+    items.forEach((item) => {
+      const invId = item.inventoryId || item.inventory;
+      if (invId !== inventoryItemId) return;
+      const lineTotal = getSaleLineTotalForInvestor(item);
+      soldQty += parseFloat(item.quantity) || 0;
+      soldAmount += lineTotal;
+      if (saleTotal > 0) {
+        const share = lineTotal / saleTotal;
+        paidAmount += salePaid * share;
+        remainingAmount += saleRemaining * share;
+      }
+    });
+  });
+
+  return {
+    soldQty,
+    soldAmount: Math.round(soldAmount),
+    paidAmount: Math.round(paidAmount),
+    remainingAmount: Math.round(remainingAmount)
+  };
+};
+
+/**
+ * Portfolio for one investor: linked products, pro-rata recovery of investor capital
+ * vs total landed cost (purchase + product expenses). Product expenses count as own capital.
+ */
+export const getInvestorPortfolio = async (investorId) => {
+  try {
+    const [invRes, salesRes, ledgerRes] = await Promise.all([
+      getInventory(),
+      getSales(),
+      getInvestorLedger(investorId)
+    ]);
+
+    const inventory = invRes.data || [];
+    const sales = salesRes.data || [];
+    const ledger = ledgerRes.data || [];
+
+    const linkedProducts = inventory.filter(
+      (item) => item.fundingInvestorId === investorId && (parseFloat(item.fundingInvestorAmount) || 0) > 0
+    );
+
+    let capitalAllocated = 0;
+    let soldBilled = 0;
+    let paidReceived = 0;
+    let customerDue = 0;
+    let investorRecovered = 0;
+    let ownCapitalInProducts = 0;
+    let productExpensesOwn = 0;
+    let totalLandedLinked = 0;
+    let totalProfitAboveCost = 0;
+
+    const products = linkedProducts.map((item) => {
+      const itemId = item.id || item._id;
+      const basePurchase = parseFloat(item.basePurchaseCost) || 0;
+      const expenses = parseFloat(item.productExpensesTotal) || 0;
+      const landed =
+        parseFloat(item.totalLandedCost) || basePurchase + expenses || 0;
+      const investorAmt = parseFloat(item.fundingInvestorAmount) || 0;
+      const ownPurchase =
+        parseFloat(item.fundingOwnAmount) >= 0
+          ? parseFloat(item.fundingOwnAmount)
+          : Math.max(0, basePurchase - investorAmt);
+      // Product expenses always own
+      const ownTotalInLanded = ownPurchase + expenses;
+
+      const stats = getProductSalePaymentStatsForItem(sales, itemId);
+      const investorShare = landed > 0 ? investorAmt / landed : 0;
+      const investorSharePct = Math.round(investorShare * 1000) / 10; // 1 decimal
+      const recovered = Math.min(
+        investorAmt,
+        Math.round(stats.paidAmount * investorShare)
+      );
+      const costRecoveredTotal = Math.min(landed, stats.paidAmount);
+      const profitAboveCost = Math.max(0, stats.paidAmount - landed);
+      const recoveryPctOfInvestor =
+        investorAmt > 0 ? Math.round((recovered / investorAmt) * 1000) / 10 : 0;
+
+      capitalAllocated += investorAmt;
+      soldBilled += stats.soldAmount;
+      paidReceived += stats.paidAmount;
+      customerDue += stats.remainingAmount;
+      investorRecovered += recovered;
+      ownCapitalInProducts += ownTotalInLanded;
+      productExpensesOwn += expenses;
+      totalLandedLinked += landed;
+      totalProfitAboveCost += profitAboveCost;
+
+      return {
+        id: itemId,
+        productName: item.productName || 'N/A',
+        basePurchaseCost: Math.round(basePurchase),
+        productExpensesTotal: Math.round(expenses),
+        totalLandedCost: Math.round(landed),
+        fundingOwnAmount: Math.round(ownPurchase),
+        fundingInvestorAmount: Math.round(investorAmt),
+        ownCapitalWithExpenses: Math.round(ownTotalInLanded),
+        investorSharePct,
+        recoveryPctOfInvestor,
+        soldQty: stats.soldQty,
+        soldAmount: stats.soldAmount,
+        paidAmount: stats.paidAmount,
+        remainingAmount: stats.remainingAmount,
+        investorRecovered: recovered,
+        investorStillInStock: Math.max(0, investorAmt - recovered),
+        costRecoveredTotal: Math.round(costRecoveredTotal),
+        profitAboveCost: Math.round(profitAboveCost)
+      };
+    });
+
+    const capitalIn = ledger
+      .filter((e) => e.type === 'capital_in')
+      .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    const payouts = ledger
+      .filter((e) => e.type === 'payout')
+      .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+    return {
+      data: {
+        products,
+        summary: {
+          capitalReceived: Math.round(capitalIn),
+          capitalPaidOut: Math.round(payouts),
+          capitalBalanceWithYou: Math.round(capitalIn - payouts),
+          capitalAllocatedToStock: Math.round(capitalAllocated),
+          ownCapitalInLinkedProducts: Math.round(ownCapitalInProducts),
+          productExpensesOwn: Math.round(productExpensesOwn),
+          totalLandedLinked: Math.round(totalLandedLinked),
+          soldBilled: Math.round(soldBilled),
+          paidReceived: Math.round(paidReceived),
+          customerDue: Math.round(customerDue),
+          investorCapitalRecovered: Math.round(investorRecovered),
+          investorCapitalStillIn: Math.max(0, Math.round(capitalAllocated - investorRecovered)),
+          totalProfitAboveCost: Math.round(totalProfitAboveCost),
+          // Overall funding % of this investor across linked stock
+          overallInvestorSharePct:
+            totalLandedLinked > 0
+              ? Math.round((capitalAllocated / totalLandedLinked) * 1000) / 10
+              : 0
+        },
+        ledger
+      }
+    };
+  } catch (error) {
+    throw error;
   }
 };

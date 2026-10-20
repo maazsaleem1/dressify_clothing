@@ -63,14 +63,16 @@ const Sales = () => {
         amount: '',
         method: 'Cash',
         notes: '',
-        addedBy: ''
+        addedBy: '',
+        paymentDate: new Date().toISOString().split('T')[0]
     });
 
     const [editPaymentData, setEditPaymentData] = useState({
         amount: '',
         method: 'Cash',
         notes: '',
-        editedBy: ''
+        editedBy: '',
+        paymentDate: new Date().toISOString().split('T')[0]
     });
 
     const [newCustomerData, setNewCustomerData] = useState({
@@ -371,6 +373,10 @@ const Sales = () => {
             showError('Please select who is adding this payment');
             return;
         }
+        if (!paymentData.paymentDate) {
+            showError('Please select the payment date');
+            return;
+        }
 
         setSaving(true);
         try {
@@ -379,11 +385,19 @@ const Sales = () => {
                 paymentMethod: paymentData.method,
                 method: paymentData.method,
                 notes: paymentData.notes,
-                addedBy: paymentData.addedBy
+                addedBy: paymentData.addedBy,
+                paymentDate: paymentData.paymentDate,
+                date: paymentData.paymentDate
             });
             showSuccess('Payment added successfully!');
             setShowPaymentModal(false);
-            setPaymentData({ amount: '', method: 'Cash', notes: '', addedBy: '' });
+            setPaymentData({
+                amount: '',
+                method: 'Cash',
+                notes: '',
+                addedBy: '',
+                paymentDate: new Date().toISOString().split('T')[0]
+            });
             await refreshSelectedSale();
         } catch (error) {
             showError(error.message || 'Error adding payment');
@@ -404,12 +418,21 @@ const Sales = () => {
         payment.paymentId || payment.collectionId || `idx-${index}`;
 
     const openEditPayment = (payment) => {
+        const d = payment.date;
+        let dateStr = new Date().toISOString().split('T')[0];
+        if (d) {
+            const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+            if (!isNaN(dateObj.getTime())) {
+                dateStr = dateObj.toISOString().split('T')[0];
+            }
+        }
         setEditingPaymentKey(payment._paymentKey || getPaymentKey(payment, 0));
         setEditPaymentData({
             amount: payment.amount != null ? String(payment.amount) : '',
             method: payment.paymentMethod || 'Cash',
             notes: payment.notes || '',
-            editedBy: ''
+            editedBy: '',
+            paymentDate: dateStr
         });
         setShowEditPaymentModal(true);
     };
@@ -424,6 +447,10 @@ const Sales = () => {
             showError('Please select who is editing this payment');
             return;
         }
+        if (!editPaymentData.paymentDate) {
+            showError('Please select the payment date');
+            return;
+        }
         setSaving(true);
         try {
             await updateSalePayment(selectedSale.id || selectedSale._id, editingPaymentKey, {
@@ -431,7 +458,8 @@ const Sales = () => {
                 paymentMethod: editPaymentData.method,
                 method: editPaymentData.method,
                 notes: editPaymentData.notes,
-                editedBy: editPaymentData.editedBy
+                editedBy: editPaymentData.editedBy,
+                date: editPaymentData.paymentDate
             });
             showSuccess('Payment updated successfully!');
             setShowEditPaymentModal(false);
@@ -1097,11 +1125,10 @@ const Sales = () => {
                                     setFilterStatus(f.value);
                                     setCurrentPage(1);
                                 }}
-                                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0 min-h-[40px] ${
-                                    filterStatus === f.value
-                                        ? 'bg-ink text-white'
-                                        : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                                }`}
+                                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0 min-h-[40px] ${filterStatus === f.value
+                                    ? 'bg-ink text-white'
+                                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                                    }`}
                             >
                                 {f.label}
                             </button>
@@ -1219,6 +1246,13 @@ const Sales = () => {
                                                     type="button"
                                                     onClick={() => {
                                                         setSelectedSale(sale);
+                                                        setPaymentData({
+                                                            amount: '',
+                                                            method: 'Cash',
+                                                            notes: '',
+                                                            addedBy: '',
+                                                            paymentDate: new Date().toISOString().split('T')[0]
+                                                        });
                                                         setShowPaymentModal(true);
                                                     }}
                                                     className="flex-1 min-h-[44px] rounded-xl bg-ink text-white text-sm font-medium"
@@ -1350,7 +1384,17 @@ const Sales = () => {
                                                             <Eye className="w-4 h-4" />
                                                         </button>
                                                         {sale.paymentStatus !== 'Paid' && (
-                                                            <button type="button" onClick={() => { setSelectedSale(sale); setShowPaymentModal(true); }} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Add Payment">
+                                                            <button type="button" onClick={() => {
+                                                                setSelectedSale(sale);
+                                                                setPaymentData({
+                                                                    amount: '',
+                                                                    method: 'Cash',
+                                                                    notes: '',
+                                                                    addedBy: '',
+                                                                    paymentDate: new Date().toISOString().split('T')[0]
+                                                                });
+                                                                setShowPaymentModal(true);
+                                                            }} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Add Payment">
                                                                 <DollarSign className="w-4 h-4" />
                                                             </button>
                                                         )}
@@ -2208,6 +2252,20 @@ const Sales = () => {
                                 </select>
                             </div>
                             <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+                                <input
+                                    type="date"
+                                    required
+                                    value={paymentData.paymentDate}
+                                    onChange={(e) => setPaymentData({ ...paymentData, paymentDate: e.target.value })}
+                                    max={new Date().toISOString().split('T')[0]}
+                                    className="input-field"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Select the date customer actually paid (e.g. backdate if entered late).
+                                </p>
+                            </div>
+                            <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
                                 <input
                                     type="text"
@@ -2302,6 +2360,17 @@ const Sales = () => {
                                         <option key={name} value={name}>{name}</option>
                                     ))}
                                 </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+                                <input
+                                    type="date"
+                                    required
+                                    value={editPaymentData.paymentDate}
+                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, paymentDate: e.target.value })}
+                                    max={new Date().toISOString().split('T')[0]}
+                                    className="input-field"
+                                />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
