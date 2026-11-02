@@ -2168,7 +2168,10 @@ export const deleteExpense = async (id) => {
 };
 
 /**
- * Month profit = Paid (this month) − COGS (sold this month) − General expenses (this month)
+ * Month closing:
+ * - This-month sales paid vs prior recovery
+ * - Own vs investor funding split (inventory tags)
+ * - COGS, closing stock, net = trading + recovery − expenses
  */
 const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inventory) => {
   const inMonth = (dateVal) => {
@@ -2177,29 +2180,123 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     return d.getFullYear() === year && d.getMonth() === month - 1;
   };
 
-  const monthSales = sales.filter((s) => inMonth(s.saleDate || s.createdAt));
+  const getCostPerUnit = (item, inventoryById) => {
+    const invId = item.inventoryId || item.inventory;
+    const inv = invId ? inventoryById[invId] : null;
+    let costPerUnit = parseFloat(inv?.costPerUnit) || 0;
+    if (!costPerUnit && item.productName) {
+      const byName = (inventory || []).find((i) => i.productName === item.productName);
+      costPerUnit = parseFloat(byName?.costPerUnit) || 0;
+    }
+    if (!costPerUnit) costPerUnit = parseFloat(item.costPerUnit) || 0;
+    return costPerUnit;
+  };
+
+  const getLineTotal = (item) =>
+    parseFloat(item.totalPrice) ||
+    ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
+
   const inventoryById = {};
   (inventory || []).forEach((inv) => {
     const id = inv.id || inv._id;
     if (id) inventoryById[id] = inv;
   });
 
-  let totalSales = 0; // billed
+  const isInvestorFundedInv = (inv) =>
+    !!(inv?.fundingInvestorId) && (parseFloat(inv?.fundingInvestorAmount) || 0) > 0;
+
+  const getItemFundingMeta = (item) => {
+    const invId = item.inventoryId || item.inventory;
+    let inv = invId ? inventoryById[invId] : null;
+    if (!inv && item.productName) {
+      inv = (inventory || []).find((i) => i.productName === item.productName) || null;
+    }
+    const investor = isInvestorFundedInv(inv);
+    return {
+      inv,
+      funding: investor ? 'investor' : 'own',
+      investorId: inv?.fundingInvestorId || null,
+      investorName: inv?.fundingInvestorName || '',
+      fundingInvestorAmount: parseFloat(inv?.fundingInvestorAmount) || 0
+    };
+  };
+
+  /** Split a payment amount across sale lines by bill share → own vs investor */
+  const allocateAmountByFunding = (sale, amount) => {
+    const items = sale?.items || [];
+    if (!sale || !items.length) {
+      return { own: amount, investor: 0, lines: [] };
+    }
+    const saleTotal =
+      parseFloat(sale.totalAmount) ||
+      items.reduce((sum, item) => sum + getLineTotal(item), 0) ||
+      0;
+    let own = 0;
+    let investor = 0;
+    const lines = [];
+    items.forEach((item) => {
+      const lineBill = getLineTotal(item);
+      const share = saleTotal > 0 ? lineBill / saleTotal : 1 / items.length;
+      const lineAmt = amount * share;
+      const meta = getItemFundingMeta(item);
+      if (meta.funding === 'investor') {
+        investor += lineAmt;
+      } else {
+        own += lineAmt;
+      }
+      lines.push({
+        productName: item.productName || 'N/A',
+        size: item.size || '',
+        amount: Math.round(lineAmt),
+        funding: meta.funding,
+        investorName: meta.investorName
+      });
+    });
+    return { own, investor, lines };
+  };
+
+  /** Sale COGS split by funding (own vs investor inventory) */
+  const getSaleFundingCosts = (sale) => {
+    let ownCost = 0;
+    let investorCost = 0;
+    (sale?.items || []).forEach((item) => {
+      const qty = parseFloat(item.quantity) || 0;
+      const lineCost = qty * getCostPerUnit(item, inventoryById);
+      const meta = getItemFundingMeta(item);
+      if (meta.funding === 'investor') investorCost += lineCost;
+      else ownCost += lineCost;
+    });
+    return { ownCost, investorCost, totalCost: ownCost + investorCost };
+  };
+
+  const paymentTime = (p) =>
+    convertTimestamp(p.paymentDate || p.date || p.createdAt)?.getTime() || 0;
+
+  const salesById = {};
+  (sales || []).forEach((s) => {
+    const id = s.id || s._id;
+    if (id) salesById[id] = s;
+  });
+
+  const monthSales = (sales || []).filter((s) => inMonth(s.saleDate || s.createdAt));
+  const monthSaleIds = new Set(monthSales.map((s) => s.id || s._id).filter(Boolean));
+
+  let totalSales = 0;
   let soldQty = 0;
-  let soldCost = 0; // COGS
+  let soldCost = 0;
+  let ownSoldCost = 0;
+  let investorSoldCost = 0;
+  let ownSoldQty = 0;
+  let investorSoldQty = 0;
   let monthDue = 0;
+  const soldProductMap = {};
+  const monthSalesDetail = [];
 
   monthSales.forEach((sale) => {
     const items = sale.items || [];
     const saleTotal =
       parseFloat(sale.totalAmount) ||
-      items.reduce((sum, item) => {
-        return (
-          sum +
-          (parseFloat(item.totalPrice) ||
-            (parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0))
-        );
-      }, 0) ||
+      items.reduce((sum, item) => sum + getLineTotal(item), 0) ||
       0;
     totalSales += saleTotal;
 
@@ -2210,53 +2307,245 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
         : Math.max(0, saleTotal - salePaid);
     monthDue += saleRemaining;
 
+    const customerName = sale.customer?.name || sale.customerName || 'Unknown';
+    const invoiceNumber = sale.invoiceNumber || '';
+
+    const saleItemsDetail = [];
     items.forEach((item) => {
       const qty = parseFloat(item.quantity) || 0;
+      const costPerUnit = getCostPerUnit(item, inventoryById);
+      const lineCost = qty * costPerUnit;
+      const lineBill = getLineTotal(item);
+      const meta = getItemFundingMeta(item);
       soldQty += qty;
-      const invId = item.inventoryId || item.inventory;
-      const inv = invId ? inventoryById[invId] : null;
-      let costPerUnit = parseFloat(inv?.costPerUnit) || 0;
-      if (!costPerUnit && inv?.productName) {
-        // fallback: match by product name if id missing
-        const byName = (inventory || []).find((i) => i.productName === item.productName);
-        costPerUnit = parseFloat(byName?.costPerUnit) || 0;
+      soldCost += lineCost;
+      if (meta.funding === 'investor') {
+        investorSoldCost += lineCost;
+        investorSoldQty += qty;
+      } else {
+        ownSoldCost += lineCost;
+        ownSoldQty += qty;
       }
-      if (!costPerUnit) {
-        costPerUnit = parseFloat(item.costPerUnit) || 0;
+
+      const key = item.inventoryId || item.inventory || item.productName || 'unknown';
+      if (!soldProductMap[key]) {
+        soldProductMap[key] = {
+          productName: item.productName || 'N/A',
+          size: item.size || '',
+          qty: 0,
+          bill: 0,
+          cost: 0,
+          costPerUnit,
+          funding: meta.funding,
+          investorName: meta.investorName
+        };
       }
-      soldCost += qty * costPerUnit;
+      soldProductMap[key].qty += qty;
+      soldProductMap[key].bill += lineBill;
+      soldProductMap[key].cost += lineCost;
+
+      saleItemsDetail.push({
+        productName: item.productName || 'N/A',
+        size: item.size || '',
+        qty,
+        bill: Math.round(lineBill),
+        cost: Math.round(lineCost),
+        funding: meta.funding,
+        investorName: meta.investorName
+      });
+    });
+
+    monthSalesDetail.push({
+      id: sale.id || sale._id,
+      invoiceNumber,
+      customerName,
+      contact: sale.customer?.contact || '',
+      saleDate: sale.saleDate || sale.createdAt,
+      billed: Math.round(saleTotal),
+      paid: Math.round(salePaid),
+      due: Math.round(saleRemaining),
+      items: saleItemsDetail
     });
   });
 
-  // Paise aaye = valid payments with paymentDate in this month
-  const saleIds = new Set(sales.map((s) => s.id || s._id).filter(Boolean));
+  const saleIds = new Set((sales || []).map((s) => s.id || s._id).filter(Boolean));
+  let monthSalesPaid = 0;
+  let priorRecovery = 0;
+  let priorRecoveryCost = 0;
+  let priorRecoveryProfit = 0;
   let totalPaid = 0;
   let paymentsCount = 0;
-  (payments || []).forEach((p) => {
-    if (!inMonth(p.paymentDate || p.date || p.createdAt)) return;
-    if (p.saleId && !saleIds.has(p.saleId)) return; // orphan
-    totalPaid += parseFloat(p.amount) || 0;
-    paymentsCount += 1;
-  });
+  let ownMonthSalesPaid = 0;
+  let investorMonthSalesPaid = 0;
+  let ownPriorRecovery = 0;
+  let investorPriorRecovery = 0;
+  let ownPriorRecoveryCost = 0;
+  let ownPriorRecoveryProfit = 0;
+  let investorPriorRecoveryCost = 0;
+  let investorPriorRecoveryProfit = 0;
+  const priorRecoveryDetail = [];
+  const monthSalesPaidDetail = [];
+  const ownMonthPaidDetail = [];
+  const investorMonthPaidDetail = [];
+  const ownPriorRecoveryDetail = [];
+  const investorPriorRecoveryDetail = [];
 
-  // If some sales have paidAmount but no payment docs, cover gap for this month's sales only
-  const paidFromPaymentDocsForMonthSales = (payments || []).reduce((sum, p) => {
-    if (!p.saleId || !saleIds.has(p.saleId)) return sum;
-    if (!inMonth(p.paymentDate || p.date || p.createdAt)) return sum;
-    const sale = monthSales.find((s) => (s.id || s._id) === p.saleId);
-    if (!sale) return sum;
-    return sum + (parseFloat(p.amount) || 0);
-  }, 0);
-  const paidOnMonthSalesRecords = monthSales.reduce(
-    (sum, s) => sum + (parseFloat(s.paidAmount) || 0),
-    0
-  );
-  // Prefer payment-collection total (cash in month). Keep as-is.
-  // Note: recoveries for old sales in this month correctly count as "paise aaye".
+  // Remaining uncovered COGS per sale (own / investor), reduced as payments arrive chronologically
+  const costRemainingBySale = {};
+  const ensureCostRemaining = (saleId) => {
+    if (!costRemainingBySale[saleId]) {
+      const costs = getSaleFundingCosts(salesById[saleId]);
+      costRemainingBySale[saleId] = { own: costs.ownCost, investor: costs.investorCost };
+    }
+    return costRemainingBySale[saleId];
+  };
+
+  // Process ALL payments in date order so prior months' payments reduce remaining cost first
+  const sortedPayments = [...(payments || [])].sort((a, b) => paymentTime(a) - paymentTime(b));
+
+  const pushSplitDetails = (baseEntry, splitParts, isPrior) => {
+    const { own, investor, lines, ownCost = 0, ownProfit = 0, invCost = 0, invProfit = 0 } =
+      splitParts;
+    const ownEntry = {
+      ...baseEntry,
+      amount: Math.round(own),
+      costAmount: Math.round(ownCost),
+      profitAmount: Math.round(ownProfit),
+      funding: 'own',
+      productLines: (lines || []).filter((l) => l.funding === 'own')
+    };
+    const invEntry = {
+      ...baseEntry,
+      amount: Math.round(investor),
+      costAmount: Math.round(invCost),
+      profitAmount: Math.round(invProfit),
+      funding: 'investor',
+      productLines: (lines || []).filter((l) => l.funding === 'investor'),
+      investorNames: [
+        ...new Set(
+          (lines || [])
+            .filter((l) => l.funding === 'investor' && l.investorName)
+            .map((l) => l.investorName)
+        )
+      ]
+    };
+    if (own > 0.5) {
+      if (isPrior) {
+        ownPriorRecovery += own;
+        ownPriorRecoveryCost += ownCost;
+        ownPriorRecoveryProfit += ownProfit;
+        ownPriorRecoveryDetail.push(ownEntry);
+      } else {
+        ownMonthSalesPaid += own;
+        ownMonthPaidDetail.push(ownEntry);
+      }
+    }
+    if (investor > 0.5) {
+      if (isPrior) {
+        investorPriorRecovery += investor;
+        investorPriorRecoveryCost += invCost;
+        investorPriorRecoveryProfit += invProfit;
+        investorPriorRecoveryDetail.push(invEntry);
+      } else {
+        investorMonthSalesPaid += investor;
+        investorMonthPaidDetail.push(invEntry);
+      }
+    }
+  };
+
+  sortedPayments.forEach((p) => {
+    if (p.saleId && !saleIds.has(p.saleId)) return;
+    const amount = parseFloat(p.amount) || 0;
+    if (amount <= 0) return;
+
+    const sale = p.saleId ? salesById[p.saleId] : null;
+    const split = sale
+      ? allocateAmountByFunding(sale, amount)
+      : { own: amount, investor: 0, lines: [] };
+
+    // Apply payment against remaining COGS (capital back first, then profit)
+    let ownCostPart = 0;
+    let ownProfitPart = split.own;
+    let invCostPart = 0;
+    let invProfitPart = split.investor;
+    if (p.saleId && sale) {
+      const rem = ensureCostRemaining(p.saleId);
+      ownCostPart = Math.min(split.own, Math.max(0, rem.own));
+      rem.own -= ownCostPart;
+      ownProfitPart = split.own - ownCostPart;
+      invCostPart = Math.min(split.investor, Math.max(0, rem.investor));
+      rem.investor -= invCostPart;
+      invProfitPart = split.investor - invCostPart;
+    }
+    const costPart = ownCostPart + invCostPart;
+    const profitPart = ownProfitPart + invProfitPart;
+
+    // Only this-month payments count toward month totals / details
+    if (!inMonth(p.paymentDate || p.date || p.createdAt)) return;
+
+    totalPaid += amount;
+    paymentsCount += 1;
+
+    const saleInThisMonth = p.saleId ? monthSaleIds.has(p.saleId) : false;
+    const customerName =
+      p.customerName ||
+      sale?.customer?.name ||
+      sale?.customerName ||
+      'Unknown';
+    const invoiceNumber = p.invoiceNumber || sale?.invoiceNumber || '';
+    const entry = {
+      id: p.id || p._id,
+      amount: Math.round(amount),
+      costAmount: Math.round(costPart),
+      profitAmount: Math.round(profitPart),
+      paymentDate: p.paymentDate || p.date || p.createdAt,
+      customerName,
+      invoiceNumber,
+      saleId: p.saleId || null,
+      note: p.notes || p.method || ''
+    };
+
+    const splitParts = {
+      own: split.own,
+      investor: split.investor,
+      lines: split.lines,
+      ownCost: ownCostPart,
+      ownProfit: ownProfitPart,
+      invCost: invCostPart,
+      invProfit: invProfitPart
+    };
+
+    if (saleInThisMonth || (!p.saleId && !sale)) {
+      monthSalesPaid += amount;
+      monthSalesPaidDetail.push({
+        ...entry,
+        ownAmount: Math.round(split.own),
+        investorAmount: Math.round(split.investor),
+        customerName: saleInThisMonth ? customerName : customerName || 'Direct / unlinked'
+      });
+      pushSplitDetails(entry, splitParts, false);
+    } else {
+      priorRecovery += amount;
+      priorRecoveryCost += costPart;
+      priorRecoveryProfit += profitPart;
+      priorRecoveryDetail.push({
+        ...entry,
+        ownAmount: Math.round(split.own),
+        investorAmount: Math.round(split.investor),
+        originalSaleDate: sale?.saleDate || sale?.createdAt || null
+      });
+      pushSplitDetails(
+        { ...entry, originalSaleDate: sale?.saleDate || sale?.createdAt || null },
+        splitParts,
+        true
+      );
+    }
+  });
 
   let generalExpenses = 0;
   let productExpenses = 0;
   let generalExpensesCount = 0;
+  const expensesDetail = [];
   (expenses || []).forEach((expense) => {
     if (!inMonth(expense.expenseDate || expense.createdAt)) return;
     const amount = parseFloat(expense.amount) || 0;
@@ -2266,32 +2555,150 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     } else {
       generalExpenses += amount;
       generalExpensesCount += 1;
+      expensesDetail.push({
+        id: expense.id || expense._id,
+        title: expense.title || expense.category || expense.description || 'Expense',
+        category: expense.category || '',
+        amount: Math.round(amount),
+        expenseDate: expense.expenseDate || expense.createdAt,
+        notes: expense.notes || ''
+      });
     }
   });
 
-  // Month profit = Paid − biki maal cost − general expenses
-  const netProfit = totalPaid - soldCost - generalExpenses;
-  const tradingProfit = totalPaid - soldCost;
+  let closingStockQty = 0;
+  let closingStockValue = 0;
+  let ownClosingStockValue = 0;
+  let investorClosingStockValue = 0;
+  let ownClosingStockQty = 0;
+  let investorClosingStockQty = 0;
+  const closingStockDetail = [];
+  (inventory || []).forEach((inv) => {
+    const sizes = inv.sizes || [];
+    const qty = sizes.reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+    if (qty <= 0) return;
+    const costPerUnit = parseFloat(inv.costPerUnit) || 0;
+    const value = Math.round(qty * costPerUnit);
+    const investor = isInvestorFundedInv(inv);
+    closingStockQty += qty;
+    closingStockValue += value;
+    if (investor) {
+      investorClosingStockValue += value;
+      investorClosingStockQty += qty;
+    } else {
+      ownClosingStockValue += value;
+      ownClosingStockQty += qty;
+    }
+    closingStockDetail.push({
+      id: inv.id || inv._id,
+      productName: inv.productName || 'N/A',
+      qty: Math.round(qty),
+      costPerUnit: Math.round(costPerUnit),
+      value,
+      brand: inv.brand?.name || inv.brandName || '',
+      funding: investor ? 'investor' : 'own',
+      investorName: inv.fundingInvestorName || '',
+      fundingInvestorAmount: parseFloat(inv.fundingInvestorAmount) || 0,
+      sizes: sizes
+        .filter((s) => (parseFloat(s.quantity) || 0) > 0)
+        .map((s) => ({ size: s.size, quantity: parseFloat(s.quantity) || 0 }))
+    });
+  });
+  closingStockDetail.sort((a, b) => b.value - a.value);
+
+  const soldProducts = Object.values(soldProductMap)
+    .map((p) => ({
+      ...p,
+      qty: Math.round(p.qty),
+      bill: Math.round(p.bill),
+      cost: Math.round(p.cost),
+      profit: Math.round(p.bill - p.cost)
+    }))
+    .sort((a, b) => b.bill - a.bill);
+
+  const tradingProfit = monthSalesPaid - soldCost;
+  // Pichla recovery: sirf cost ke upar wala hissa net profit mein (cost wapas ≠ profit)
+  const netProfit = tradingProfit + priorRecoveryProfit - generalExpenses;
+  const cashAfterExpenses = totalPaid - soldCost - generalExpenses;
+  // Aapka net — own trading + own recovery-profit − expenses (cost recovery alag)
+  const ownTrading = ownMonthSalesPaid - ownSoldCost;
+  const ownNetWithRecovery = ownTrading + ownPriorRecoveryProfit - generalExpenses;
+
+  const sortByPayDate = (list) => {
+    list.sort((a, b) => {
+      const da = convertTimestamp(a.paymentDate)?.getTime() || 0;
+      const db = convertTimestamp(b.paymentDate)?.getTime() || 0;
+      return db - da;
+    });
+  };
+  sortByPayDate(priorRecoveryDetail);
+  sortByPayDate(monthSalesPaidDetail);
+  sortByPayDate(ownMonthPaidDetail);
+  sortByPayDate(investorMonthPaidDetail);
+  sortByPayDate(ownPriorRecoveryDetail);
+  sortByPayDate(investorPriorRecoveryDetail);
+  expensesDetail.sort((a, b) => {
+    const da = convertTimestamp(a.expenseDate)?.getTime() || 0;
+    const db = convertTimestamp(b.expenseDate)?.getTime() || 0;
+    return db - da;
+  });
+  monthSalesDetail.sort((a, b) => {
+    const da = convertTimestamp(a.saleDate)?.getTime() || 0;
+    const db = convertTimestamp(b.saleDate)?.getTime() || 0;
+    return db - da;
+  });
 
   return {
     month,
     year,
     totalSales: Math.round(totalSales),
     totalPaid: Math.round(totalPaid),
+    monthSalesPaid: Math.round(monthSalesPaid),
+    priorRecovery: Math.round(priorRecovery),
+    priorRecoveryCost: Math.round(priorRecoveryCost),
+    priorRecoveryProfit: Math.round(priorRecoveryProfit),
+    ownMonthSalesPaid: Math.round(ownMonthSalesPaid),
+    investorMonthSalesPaid: Math.round(investorMonthSalesPaid),
+    ownPriorRecovery: Math.round(ownPriorRecovery),
+    investorPriorRecovery: Math.round(investorPriorRecovery),
+    ownPriorRecoveryCost: Math.round(ownPriorRecoveryCost),
+    ownPriorRecoveryProfit: Math.round(ownPriorRecoveryProfit),
+    investorPriorRecoveryCost: Math.round(investorPriorRecoveryCost),
+    investorPriorRecoveryProfit: Math.round(investorPriorRecoveryProfit),
     soldQty: Math.round(soldQty),
     soldCost: Math.round(soldCost),
+    ownSoldCost: Math.round(ownSoldCost),
+    investorSoldCost: Math.round(investorSoldCost),
+    ownSoldQty: Math.round(ownSoldQty),
+    investorSoldQty: Math.round(investorSoldQty),
     monthDue: Math.round(monthDue),
-    totalExpenses: Math.round(generalExpenses), // general only (for UI "expenses")
+    totalExpenses: Math.round(generalExpenses),
     generalExpenses: Math.round(generalExpenses),
     productExpenses: Math.round(productExpenses),
     tradingProfit: Math.round(tradingProfit),
+    ownTrading: Math.round(ownTrading),
+    ownNetWithRecovery: Math.round(ownNetWithRecovery),
     netProfit: Math.round(netProfit),
+    cashAfterExpenses: Math.round(cashAfterExpenses),
+    closingStockQty: Math.round(closingStockQty),
+    closingStockValue: Math.round(closingStockValue),
+    ownClosingStockQty: Math.round(ownClosingStockQty),
+    ownClosingStockValue: Math.round(ownClosingStockValue),
+    investorClosingStockQty: Math.round(investorClosingStockQty),
+    investorClosingStockValue: Math.round(investorClosingStockValue),
     salesCount: monthSales.length,
     expensesCount: generalExpensesCount,
     paymentsCount,
-    // unused but keep names stable for older UI
-    paidOnMonthSalesRecords: Math.round(paidOnMonthSalesRecords),
-    paidFromPaymentDocsForMonthSales: Math.round(paidFromPaymentDocsForMonthSales)
+    soldProducts,
+    monthSalesDetail,
+    priorRecoveryDetail,
+    monthSalesPaidDetail,
+    ownMonthPaidDetail,
+    investorMonthPaidDetail,
+    ownPriorRecoveryDetail,
+    investorPriorRecoveryDetail,
+    expensesDetail,
+    closingStockDetail
   };
 };
 
@@ -2302,9 +2709,10 @@ export const getMonthlyProfitLoss = async (year, month) => {
   const endStr = `${year}-${pad(month)}-${pad(lastDay)}`;
 
   try {
+    // All payments needed so prior months' payments reduce remaining COGS before this month's recovery
     const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
       getSales(),
-      getPayments({ startDate: startStr, endDate: endStr }),
+      getPayments(),
       getExpenses({ startDate: startStr, endDate: endStr }),
       getInventory()
     ]);
@@ -2320,7 +2728,7 @@ export const getMonthlyProfitLoss = async (year, month) => {
 
     return { data };
   } catch (error) {
-    // Fallback without date filters on payments/expenses
+    // Fallback without date filters on expenses
     try {
       const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
         getSales(),

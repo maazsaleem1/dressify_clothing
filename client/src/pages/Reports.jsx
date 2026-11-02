@@ -37,6 +37,8 @@ const Reports = () => {
     total: 0
   });
   const [exportingAccountant, setExportingAccountant] = useState(false);
+  const [monthDetailType, setMonthDetailType] = useState(null); // paid | sold | recovery | stock | expenses | profit
+  const [partnerSharePct, setPartnerSharePct] = useState('0');
 
   // Load data once on mount; refetch only when user clicks Apply
   useEffect(() => {
@@ -1081,13 +1083,13 @@ const Reports = () => {
         );
       })()}
 
-      {/* Monthly Profit/Loss Section */}
+      {/* Monthly Closing Section */}
       <div className="card bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div>
-            <h3 className="text-2xl font-bold mb-2">Is Month Profit</h3>
+            <h3 className="text-2xl font-bold mb-2">Month Closing</h3>
             <p className="text-indigo-100">
-              Paid − biki maal cost − general expenses
+              Bika · Recovery · Own vs Investor buckets · Stock · Expenses — har card pe click = detail
             </p>
           </div>
           <div className="flex gap-3">
@@ -1123,131 +1125,215 @@ const Reports = () => {
 
         {loadingMonthly ? (
           <div className="space-y-4" aria-busy="true" aria-label="Loading month data">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[1, 2, 3, 4].map((i) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div key={i} className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="h-4 w-28 rounded bg-white/25 animate-pulse" />
-                    <div className="h-5 w-5 rounded-full bg-white/25 animate-pulse" />
-                  </div>
+                  <div className="h-4 w-28 rounded bg-white/25 animate-pulse mb-3" />
                   <div className="h-9 w-36 rounded mb-3 bg-white/30 animate-pulse" />
-                  <div className="h-3 w-full rounded mb-2 bg-white/20 animate-pulse" />
-                  <div className="h-3 w-2/3 rounded bg-white/20 animate-pulse" />
+                  <div className="h-3 w-full rounded bg-white/20 animate-pulse" />
                 </div>
               ))}
             </div>
-            <div className="bg-white/10 rounded-lg px-4 py-4 space-y-2">
-              <div className="h-4 w-full max-w-xl rounded bg-white/25 animate-pulse" />
-              <div className="h-3 w-48 rounded bg-white/20 animate-pulse" />
-            </div>
             <p className="text-indigo-100 text-xs text-center">Month data load ho rahi hai…</p>
           </div>
-        ) : monthlyData ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div
-                className="bg-white/10 rounded-lg p-5 backdrop-blur-sm cursor-pointer hover:bg-white/20 transition-all duration-200"
-                onClick={fetchMonthlySalesDetail}
-                title="Click to view sales detail"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-indigo-100 text-sm">1. Paise aaye (Paid)</p>
-                  <ArrowUp className="w-5 h-5 text-green-300" />
-                </div>
-                <p className="text-3xl font-bold">
-                  Rs. {(parseFloat(monthlyData.totalPaid ?? monthlyData.totalSales) || 0).toLocaleString()}
-                </p>
-                <p className="text-indigo-200 text-xs mt-1">
-                  Bill Rs. {(parseFloat(monthlyData.totalSales) || 0).toLocaleString()}
-                  {(monthlyData.monthDue || 0) > 0 && (
-                    <> · Due Rs. {(monthlyData.monthDue || 0).toLocaleString()}</>
-                  )}
-                </p>
-                <p className="text-indigo-200 text-xs mt-1">
-                  {(monthlyData.soldQty || 0).toLocaleString()} pcs bikay · {monthlyData.salesCount || 0} sales · click detail
-                </p>
-              </div>
+        ) : monthlyData ? (() => {
+          const trading = parseFloat(monthlyData.tradingProfit) || 0;
+          const net = parseFloat(monthlyData.netProfit) || 0;
+          const partnerPct = Math.min(100, Math.max(0, parseFloat(partnerSharePct) || 0));
+          const partnerShare = net > 0 ? Math.round((net * partnerPct) / 100) : 0;
+          const yourFinal = net - partnerShare;
+          const fmt = (n) => `Rs. ${(Math.abs(parseFloat(n) || 0)).toLocaleString()}`;
+          const openDetail = (type) => setMonthDetailType(type);
 
-              <div className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-indigo-100 text-sm">2. Biki maal cost</p>
-                  <Package className="w-5 h-5 text-amber-200" />
-                </div>
-                <p className="text-3xl font-bold">
-                  Rs. {(parseFloat(monthlyData.soldCost) || 0).toLocaleString()}
-                </p>
-                <p className="text-indigo-200 text-xs mt-1">
-                  {(monthlyData.soldQty || 0).toLocaleString()} pcs × cost per piece
-                </p>
-              </div>
-
-              <div className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-indigo-100 text-sm">3. General expenses</p>
-                  <ArrowDown className="w-5 h-5 text-red-300" />
-                </div>
-                <p className="text-3xl font-bold">
-                  Rs. {(parseFloat(monthlyData.generalExpenses ?? monthlyData.totalExpenses) || 0).toLocaleString()}
-                </p>
-                <p className="text-indigo-200 text-xs mt-1">
-                  {monthlyData.expensesCount || 0} expenses · product cost alag
-                </p>
-              </div>
-
-              {(() => {
-                const monthProfit = parseFloat(monthlyData.netProfit) || 0;
-                const isMonthProfit = monthProfit >= 0;
-                const sign = isMonthProfit ? '+' : '-';
-                return (
-              <div
-                className={`bg-white/10 rounded-lg p-5 backdrop-blur-sm border-2 ${
-                  isMonthProfit ? 'border-green-300' : 'border-red-300'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-indigo-100 text-sm">
-                    4. Is month {isMonthProfit ? 'profit' : 'loss'}
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => openDetail('sold')}
+                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
+                >
+                  <p className="text-indigo-100 text-sm mb-1">1. Is month bika</p>
+                  <p className="text-2xl font-bold">{(monthlyData.soldQty || 0).toLocaleString()} pcs</p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    Bill {fmt(monthlyData.totalSales)} · Cost {fmt(monthlyData.soldCost)}
                   </p>
-                  {isMonthProfit ? (
-                    <TrendingUp className="w-5 h-5 text-green-300" />
-                  ) : (
-                    <TrendingDown className="w-5 h-5 text-red-300" />
-                  )}
+                  <p className="text-indigo-200 text-xs mt-1 underline/50">Click — kaunsa maal bika</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('paid')}
+                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
+                >
+                  <p className="text-indigo-100 text-sm mb-1">2. Is month sales se paid</p>
+                  <p className="text-2xl font-bold text-emerald-200">{fmt(monthlyData.monthSalesPaid ?? monthlyData.totalPaid)}</p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    Due abhi {fmt(monthlyData.monthDue)} · {monthlyData.salesCount || 0} sales
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">Click — customer / invoice</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('recovery')}
+                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
+                >
+                  <p className="text-indigo-100 text-sm mb-1">3. Pichla recovery</p>
+                  <p className="text-2xl font-bold text-amber-200">{fmt(monthlyData.priorRecovery || 0)}</p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    Cost wapas {fmt(monthlyData.priorRecoveryCost || 0)} · Profit{' '}
+                    {fmt(monthlyData.priorRecoveryProfit || 0)}
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">Click — kis customer se / cost vs profit</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('stock')}
+                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
+                >
+                  <p className="text-indigo-100 text-sm mb-1">4. Stock reh gaya → next month</p>
+                  <p className="text-2xl font-bold">{(monthlyData.closingStockQty || 0).toLocaleString()} pcs</p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">Click — kaunsa maal / funding</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('expenses')}
+                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
+                >
+                  <p className="text-indigo-100 text-sm mb-1">5. General expenses</p>
+                  <p className="text-2xl font-bold text-rose-200">{fmt(monthlyData.generalExpenses)}</p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    {monthlyData.expensesCount || 0} entries · product cost alag
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">Click — expense list</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('profit')}
+                  className={`text-left rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border-2 ${net >= 0 ? 'border-green-300 bg-white/10' : 'border-red-300 bg-white/10'
+                    }`}
+                >
+                  <p className="text-indigo-100 text-sm mb-1">6. Net month {net >= 0 ? 'profit' : 'loss'}</p>
+                  <p className={`text-2xl font-bold ${net >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                    {net >= 0 ? '+' : '-'}{fmt(net)}
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">
+                    Trading + recovery profit − expenses
+                  </p>
+                  <p className="text-indigo-200 text-xs mt-1">Click — hisab + partner share</p>
+                </button>
+              </div>
+
+              {/* Own vs Investor — 4 buckets */}
+              <div className="rounded-xl border border-white/20 bg-black/10 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">Own vs Investor cash (categorized)</p>
+                  <p className="text-xs text-indigo-200 mt-0.5">
+                    Inventory pe investor tag se split — adha bika / next month recovery yahan clear
+                  </p>
                 </div>
-                <p className={`text-3xl font-bold ${isMonthProfit ? 'text-green-300' : 'text-red-300'}`}>
-                  {sign}Rs. {Math.abs(monthProfit).toLocaleString()}
-                </p>
-                <p className={`text-xs mt-1 font-semibold ${isMonthProfit ? 'text-green-200' : 'text-red-200'}`}>
-                  {isMonthProfit ? 'Profit' : 'Loss'} {sign}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => openDetail('ownPaid')}
+                    className="text-left rounded-lg bg-emerald-500/20 border border-emerald-300/30 p-4 hover:bg-emerald-500/30 transition-all"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-100">A. Meri inventory — is month paid</p>
+                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.ownMonthSalesPaid)}</p>
+                    <p className="text-[11px] text-indigo-100/80 mt-1">Cost {fmt(monthlyData.ownSoldCost)} · click detail</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDetail('investorPaid')}
+                    className="text-left rounded-lg bg-sky-500/20 border border-sky-300/30 p-4 hover:bg-sky-500/30 transition-all"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-100">B. Investor inventory — is month paid</p>
+                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.investorMonthSalesPaid)}</p>
+                    <p className="text-[11px] text-indigo-100/80 mt-1">Cost {fmt(monthlyData.investorSoldCost)} · click detail</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDetail('ownRecovery')}
+                    className="text-left rounded-lg bg-amber-500/20 border border-amber-300/30 p-4 hover:bg-amber-500/30 transition-all"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-100">C. Pichla recovery — mera</p>
+                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.ownPriorRecovery)}</p>
+                    <p className="text-[11px] text-indigo-100/80 mt-1">
+                      Cost {fmt(monthlyData.ownPriorRecoveryCost || 0)} · Profit{' '}
+                      {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDetail('investorRecovery')}
+                    className="text-left rounded-lg bg-violet-500/20 border border-violet-300/30 p-4 hover:bg-violet-500/30 transition-all"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-100">D. Pichla recovery — investor</p>
+                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.investorPriorRecovery)}</p>
+                    <p className="text-[11px] text-indigo-100/80 mt-1">
+                      Cost {fmt(monthlyData.investorPriorRecoveryCost || 0)} · Profit{' '}
+                      {fmt(monthlyData.investorPriorRecoveryProfit || 0)}
+                    </p>
+                  </button>
+                </div>
+                <p className="text-[11px] text-indigo-100/90 break-words">
+                  Stock next month: Own {fmt(monthlyData.ownClosingStockValue)} ({(monthlyData.ownClosingStockQty || 0).toLocaleString()} pcs)
+                  {' · '}
+                  Investor {fmt(monthlyData.investorClosingStockValue)} ({(monthlyData.investorClosingStockQty || 0).toLocaleString()} pcs)
+                  {' — '}
+                  Investor ko dena Investors page → Pay out se.
                 </p>
               </div>
-                );
-              })()}
-            </div>
 
-            <div className="bg-white/10 rounded-lg px-4 py-3 text-sm text-indigo-50">
-              <p className="font-medium break-words">
-                Paid Rs. {(parseFloat(monthlyData.totalPaid) || 0).toLocaleString()}
-                {' - '}
-                Cost Rs. {(parseFloat(monthlyData.soldCost) || 0).toLocaleString()}
-                {' - '}
-                Expenses Rs. {(parseFloat(monthlyData.generalExpenses ?? monthlyData.totalExpenses) || 0).toLocaleString()}
-                {' = '}
-                <span className={(monthlyData.netProfit || 0) >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
-                  {(monthlyData.netProfit || 0) >= 0 ? '+' : '-'}Rs.{' '}
-                  {Math.abs(parseFloat(monthlyData.netProfit) || 0).toLocaleString()}
-                </span>
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowProfitDetailModal(true)}
-                className="mt-2 text-xs text-indigo-200 underline hover:text-white"
-              >
-                All-time product profit detail (alag hisab)
-              </button>
+              <div className="bg-white/10 rounded-lg px-4 py-3 text-sm text-indigo-50 space-y-2">
+                <p className="font-medium break-words">
+                  Trading: Is-month paid {fmt(monthlyData.monthSalesPaid)} − Cost {fmt(monthlyData.soldCost)} ={' '}
+                  <span className={trading >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
+                    {trading >= 0 ? '+' : '-'}{fmt(trading)}
+                  </span>
+                </p>
+                <p className="font-medium break-words">
+                  Net = Trading + Recovery profit {fmt(monthlyData.priorRecoveryProfit || 0)}
+                  {' '}(cash {fmt(monthlyData.priorRecovery || 0)}, cost wapas {fmt(monthlyData.priorRecoveryCost || 0)})
+                  {' − '}Expenses {fmt(monthlyData.generalExpenses)} ={' '}
+                  <span className={net >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
+                    {net >= 0 ? '+' : '-'}{fmt(net)}
+                  </span>
+                  {partnerPct > 0 && (
+                    <> · Partner {partnerPct}% = {fmt(partnerShare)} · Aapka{' '}
+                      <span className="font-bold">{yourFinal >= 0 ? '+' : '-'}{fmt(yourFinal)}</span>
+                    </>
+                  )}
+                </p>
+                <p className="text-xs text-indigo-200 break-words">
+                  Sirf aapka slice: Own paid {fmt(monthlyData.ownMonthSalesPaid)} + Own recovery profit{' '}
+                  {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
+                  {' − '}Own cost {fmt(monthlyData.ownSoldCost)} − Expenses {fmt(monthlyData.generalExpenses)}
+                  {' = '}
+                  <span className="font-semibold">
+                    {(monthlyData.ownNetWithRecovery || 0) >= 0 ? '+' : '-'}
+                    {fmt(monthlyData.ownNetWithRecovery)}
+                  </span>
+                  {' · '}Investor cash is month {fmt((monthlyData.investorMonthSalesPaid || 0) + (monthlyData.investorPriorRecovery || 0))} (alag — Pay out)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowProfitDetailModal(true)}
+                  className="text-xs text-indigo-200 underline hover:text-white"
+                >
+                  All-time product profit detail (alag hisab)
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
+          );
+        })() : (
           <div className="text-center py-8">
             <p className="text-indigo-100">Is month ka data load nahi hua. Dobara try karein.</p>
           </div>
@@ -1565,6 +1651,621 @@ const Reports = () => {
           </div>
         )}
       </div>
+
+      {/* Month Closing Detail Modal */}
+      {monthDetailType && monthlyData && (() => {
+        const monthLabel = new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', {
+          month: 'long',
+          year: 'numeric'
+        });
+        const fmt = (n) => `Rs. ${(Math.round(parseFloat(n) || 0)).toLocaleString()}`;
+        const fmtDate = (v) => {
+          const d = toDateValue(v);
+          return d ? d.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+        };
+        const trading = parseFloat(monthlyData.tradingProfit) || 0;
+        const net = parseFloat(monthlyData.netProfit) || 0;
+        const partnerPct = Math.min(100, Math.max(0, parseFloat(partnerSharePct) || 0));
+        const partnerShare = net > 0 ? Math.round((net * partnerPct) / 100) : 0;
+        const yourFinal = net - partnerShare;
+
+        const titles = {
+          sold: 'Is month kaunsa maal bika',
+          paid: 'Is month sales se paid',
+          recovery: 'Pichla recovery — kis se aaya',
+          stock: 'Stock reh gaya → next month',
+          expenses: 'General expenses',
+          profit: 'Net profit / partner share',
+          ownPaid: 'A. Meri inventory — is month paid',
+          investorPaid: 'B. Investor inventory — is month paid',
+          ownRecovery: 'C. Pichla recovery — mera',
+          investorRecovery: 'D. Pichla recovery — investor'
+        };
+
+        const renderFundingPaymentTable = (rows, emptyMsg, { showCostSplit = false } = {}) => {
+          if (!rows?.length) {
+            return <p className="text-center text-gray-500 py-8">{emptyMsg}</p>;
+          }
+          return (
+            <div className="overflow-x-auto">
+              <table className={`w-full text-sm ${showCostSplit ? 'min-w-[640px]' : 'min-w-[520px]'}`}>
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500">Customer</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500">Invoice</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500">Date</th>
+                    <th className="text-left py-2 px-3 text-xs text-gray-500">Products</th>
+                    {showCostSplit && (
+                      <>
+                        <th className="text-right py-2 px-3 text-xs text-gray-500">Cost wapas</th>
+                        <th className="text-right py-2 px-3 text-xs text-gray-500">Profit</th>
+                      </>
+                    )}
+                    <th className="text-right py-2 px-3 text-xs text-gray-500">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.id || i} className="border-b border-gray-100">
+                      <td className="py-2.5 px-3 font-medium">{r.customerName}</td>
+                      <td className="py-2.5 px-3 text-xs text-gray-500">{r.invoiceNumber || '—'}</td>
+                      <td className="py-2.5 px-3 text-xs">{fmtDate(r.paymentDate)}</td>
+                      <td className="py-2.5 px-3 text-xs text-gray-600">
+                        {(r.productLines || []).map((l) => l.productName).join(', ') ||
+                          (r.investorNames || []).join(', ') ||
+                          '—'}
+                      </td>
+                      {showCostSplit && (
+                        <>
+                          <td className="py-2.5 px-3 text-right tabular-nums text-gray-600">
+                            {fmt(r.costAmount || 0)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right tabular-nums text-emerald-700">
+                            {fmt(r.profitAmount || 0)}
+                          </td>
+                        </>
+                      )}
+                      <td className="py-2.5 px-3 text-right font-semibold tabular-nums">{fmt(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+            <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl max-w-4xl w-full max-h-[92dvh] overflow-y-auto">
+              <div className="p-4 sm:p-5 border-b border-gray-200 sticky top-0 bg-white z-10 flex justify-between items-start gap-3">
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-gray-900">{titles[monthDetailType]}</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">{monthLabel}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMonthDetailType(null)}
+                  className="text-gray-400 hover:text-gray-700 text-2xl font-bold min-h-[44px] min-w-[44px]"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4">
+                {monthDetailType === 'sold' && (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 text-sm">
+                      <div className="rounded-lg bg-indigo-50 p-3">
+                        <p className="text-xs text-gray-500">Pcs</p>
+                        <p className="font-bold">{(monthlyData.soldQty || 0).toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg bg-indigo-50 p-3">
+                        <p className="text-xs text-gray-500">Bill</p>
+                        <p className="font-bold">{fmt(monthlyData.totalSales)}</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 p-3">
+                        <p className="text-xs text-gray-500">Cost</p>
+                        <p className="font-bold">{fmt(monthlyData.soldCost)}</p>
+                      </div>
+                    </div>
+                    {(monthlyData.soldProducts || []).length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">Is month koi sale nahi</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[560px]">
+                          <thead className="bg-gray-50 border-b">
+                            <tr>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Product</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Funding</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Qty</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Bill</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Cost</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyData.soldProducts.map((p, i) => (
+                              <tr key={i} className="border-b border-gray-100">
+                                <td className="py-2.5 px-3 font-medium">
+                                  {p.productName}
+                                  {p.size ? <span className="text-gray-400 text-xs ml-1">({p.size})</span> : null}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {p.funding === 'investor' ? (
+                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">
+                                      Investor{p.investorName ? `: ${p.investorName}` : ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                      Own
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-right tabular-nums">{p.qty}</td>
+                                <td className="py-2.5 px-3 text-right tabular-nums">{fmt(p.bill)}</td>
+                                <td className="py-2.5 px-3 text-right tabular-nums text-amber-800">{fmt(p.cost)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {(monthlyData.monthSalesDetail || []).length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-2 text-sm">Sales / customers</h4>
+                        <div className="space-y-2">
+                          {monthlyData.monthSalesDetail.map((s) => (
+                            <div key={s.id} className="rounded-lg border border-gray-100 p-3 text-sm">
+                              <div className="flex flex-wrap justify-between gap-2">
+                                <p className="font-medium">{s.customerName}</p>
+                                <p className="text-xs text-gray-500">{s.invoiceNumber || '—'} · {fmtDate(s.saleDate)}</p>
+                              </div>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Bill {fmt(s.billed)} · Paid {fmt(s.paid)} · Due {fmt(s.due)}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {(s.items || []).map((it) => `${it.productName} ×${it.qty}`).join(' · ')}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'paid' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Sirf <strong>is month ki sales</strong> pe is month jo paise aaye:{' '}
+                      <strong className="text-emerald-700">{fmt(monthlyData.monthSalesPaid)}</strong>
+                    </p>
+                    {(monthlyData.monthSalesPaidDetail || []).length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[480px]">
+                          <thead className="bg-emerald-50 border-b">
+                            <tr>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Customer</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Invoice</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Date</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Paid</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyData.monthSalesPaidDetail.map((r, i) => (
+                              <tr key={r.id || i} className="border-b border-gray-100">
+                                <td className="py-2.5 px-3 font-medium">{r.customerName}</td>
+                                <td className="py-2.5 px-3 text-xs text-gray-500">{r.invoiceNumber || '—'}</td>
+                                <td className="py-2.5 px-3 text-xs">{fmtDate(r.paymentDate)}</td>
+                                <td className="py-2.5 px-3 text-right font-semibold text-emerald-700">{fmt(r.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-center text-gray-500 py-6">Is month in sales pe koi payment record nahi</p>
+                    )}
+                    {(monthlyData.monthSalesDetail || []).length > 0 && (
+                      <div>
+                        <h4 className="font-semibold text-gray-800 mb-2 text-sm">Is month ki sales (bill / due)</h4>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm min-w-[480px]">
+                            <thead className="bg-gray-50 border-b">
+                              <tr>
+                                <th className="text-left py-2 px-3 text-xs text-gray-500">Customer</th>
+                                <th className="text-left py-2 px-3 text-xs text-gray-500">Invoice</th>
+                                <th className="text-right py-2 px-3 text-xs text-gray-500">Bill</th>
+                                <th className="text-right py-2 px-3 text-xs text-gray-500">Total paid*</th>
+                                <th className="text-right py-2 px-3 text-xs text-gray-500">Due</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {monthlyData.monthSalesDetail.map((s) => (
+                                <tr key={s.id} className="border-b border-gray-100">
+                                  <td className="py-2.5 px-3 font-medium">{s.customerName}</td>
+                                  <td className="py-2.5 px-3 text-xs text-gray-500">{s.invoiceNumber || '—'}</td>
+                                  <td className="py-2.5 px-3 text-right">{fmt(s.billed)}</td>
+                                  <td className="py-2.5 px-3 text-right text-emerald-700">{fmt(s.paid)}</td>
+                                  <td className="py-2.5 px-3 text-right text-rose-600">{fmt(s.due)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-2">* Total paid = sale pe ab tak poora paid (sirf is month nahi)</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'recovery' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Purani months ki sales ka paisa <strong>is month</strong> aaya:{' '}
+                      <strong className="text-amber-800">{fmt(monthlyData.priorRecovery)}</strong>
+                      {' — '}cost wapas{' '}
+                      <strong>{fmt(monthlyData.priorRecoveryCost || 0)}</strong>
+                      {' · '}profit (net mein){' '}
+                      <strong className="text-emerald-700">
+                        {fmt(monthlyData.priorRecoveryProfit || 0)}
+                      </strong>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Pehle payments se jo cost cover ho chuki thi — uske baad jo aaya woh profit.
+                      Baaki pehle cost wapas, phir profit.
+                    </p>
+                    {(monthlyData.priorRecoveryDetail || []).length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">Is month koi pichla recovery nahi</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[640px]">
+                          <thead className="bg-amber-50 border-b">
+                            <tr>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Customer</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Invoice</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Payment date</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Original sale</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Cost wapas</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Profit</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyData.priorRecoveryDetail.map((r, i) => (
+                              <tr key={r.id || i} className="border-b border-gray-100">
+                                <td className="py-2.5 px-3 font-medium">{r.customerName}</td>
+                                <td className="py-2.5 px-3 text-xs text-gray-500">{r.invoiceNumber || '—'}</td>
+                                <td className="py-2.5 px-3 text-xs">{fmtDate(r.paymentDate)}</td>
+                                <td className="py-2.5 px-3 text-xs text-gray-500">{fmtDate(r.originalSaleDate)}</td>
+                                <td className="py-2.5 px-3 text-right tabular-nums text-gray-600">
+                                  {fmt(r.costAmount || 0)}
+                                </td>
+                                <td className="py-2.5 px-3 text-right tabular-nums text-emerald-700">
+                                  {fmt(r.profitAmount || 0)}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-semibold text-amber-800">
+                                  {fmt(r.amount)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'stock' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Abhi inventory mein pada maal — <strong>next month ka opening</strong> hoga. Yeh loss nahi.
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mb-2">
+                      <div className="rounded-lg bg-neutral-50 p-3 border">
+                        <p className="text-xs text-gray-500">Total pcs</p>
+                        <p className="font-bold">{(monthlyData.closingStockQty || 0).toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 p-3 border border-amber-100">
+                        <p className="text-xs text-gray-500">Total value</p>
+                        <p className="font-bold">{fmt(monthlyData.closingStockValue)}</p>
+                      </div>
+                      <div className="rounded-lg bg-emerald-50 p-3 border border-emerald-100">
+                        <p className="text-xs text-gray-500">Own stock</p>
+                        <p className="font-bold">{fmt(monthlyData.ownClosingStockValue)}</p>
+                      </div>
+                      <div className="rounded-lg bg-sky-50 p-3 border border-sky-100">
+                        <p className="text-xs text-gray-500">Investor stock</p>
+                        <p className="font-bold">{fmt(monthlyData.investorClosingStockValue)}</p>
+                      </div>
+                    </div>
+                    {(monthlyData.closingStockDetail || []).length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">Stock khali</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[520px]">
+                          <thead className="bg-gray-50 border-b">
+                            <tr>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Product</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Funding</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Qty</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Cost/pc</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyData.closingStockDetail.map((p) => (
+                              <tr key={p.id} className="border-b border-gray-100">
+                                <td className="py-2.5 px-3 font-medium">
+                                  {p.productName}
+                                  {p.sizes?.length > 0 && (
+                                    <span className="block text-[10px] text-gray-400">
+                                      {p.sizes.map((s) => `${s.size}:${s.quantity}`).join(' · ')}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  {p.funding === 'investor' ? (
+                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">
+                                      Investor{p.investorName ? `: ${p.investorName}` : ''}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                      Own
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 px-3 text-right tabular-nums">{p.qty}</td>
+                                <td className="py-2.5 px-3 text-right tabular-nums text-gray-600">{fmt(p.costPerUnit)}</td>
+                                <td className="py-2.5 px-3 text-right tabular-nums font-semibold">{fmt(p.value)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'ownPaid' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Is month <strong>aapki inventory</strong> ki sales se paid:{' '}
+                      <strong className="text-emerald-700">{fmt(monthlyData.ownMonthSalesPaid)}</strong>
+                      {' · '}Cost {fmt(monthlyData.ownSoldCost)}
+                    </p>
+                    {renderFundingPaymentTable(
+                      monthlyData.ownMonthPaidDetail,
+                      'Is month own inventory pe koi payment nahi'
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'investorPaid' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Is month <strong>investor-tagged</strong> maal ki sales se paid:{' '}
+                      <strong className="text-sky-800">{fmt(monthlyData.investorMonthSalesPaid)}</strong>
+                      {' · '}Cost {fmt(monthlyData.investorSoldCost)}. Yeh capital/profit Investors → Pay out se clear karo.
+                    </p>
+                    {renderFundingPaymentTable(
+                      monthlyData.investorMonthPaidDetail,
+                      'Is month investor inventory pe koi payment nahi'
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'ownRecovery' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Purani <strong>own</strong> sales ka due is month aaya:{' '}
+                      <strong className="text-amber-800">{fmt(monthlyData.ownPriorRecovery)}</strong>
+                      {' — '}cost {fmt(monthlyData.ownPriorRecoveryCost || 0)} · profit{' '}
+                      <strong className="text-emerald-700">
+                        {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
+                      </strong>
+                    </p>
+                    {renderFundingPaymentTable(
+                      monthlyData.ownPriorRecoveryDetail,
+                      'Is month own pichla recovery nahi',
+                      { showCostSplit: true }
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'investorRecovery' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Purani <strong>investor</strong> sales ka due is month aaya:{' '}
+                      <strong className="text-violet-800">{fmt(monthlyData.investorPriorRecovery)}</strong>
+                      {' — '}cost {fmt(monthlyData.investorPriorRecoveryCost || 0)} · profit{' '}
+                      {fmt(monthlyData.investorPriorRecoveryProfit || 0)}. Next month bhi isi bucket mein.
+                    </p>
+                    {renderFundingPaymentTable(
+                      monthlyData.investorPriorRecoveryDetail,
+                      'Is month investor pichla recovery nahi',
+                      { showCostSplit: true }
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'expenses' && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      Total general: <strong>{fmt(monthlyData.generalExpenses)}</strong>
+                    </p>
+                    {(monthlyData.expensesDetail || []).length === 0 ? (
+                      <p className="text-center text-gray-500 py-8">Is month koi general expense nahi</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm min-w-[400px]">
+                          <thead className="bg-rose-50 border-b">
+                            <tr>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Title</th>
+                              <th className="text-left py-2 px-3 text-xs text-gray-500">Date</th>
+                              <th className="text-right py-2 px-3 text-xs text-gray-500">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthlyData.expensesDetail.map((e) => (
+                              <tr key={e.id} className="border-b border-gray-100">
+                                <td className="py-2.5 px-3">
+                                  <p className="font-medium">{e.title}</p>
+                                  {e.notes && <p className="text-xs text-gray-400">{e.notes}</p>}
+                                </td>
+                                <td className="py-2.5 px-3 text-xs text-gray-500">{fmtDate(e.expenseDate)}</td>
+                                <td className="py-2.5 px-3 text-right font-semibold text-rose-700">{fmt(e.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {monthDetailType === 'profit' && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-gray-200 p-4 space-y-4 text-sm">
+                      <div className="pb-3 border-b border-gray-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 mb-1">
+                          1. Is month ki sales se paise aaye
+                        </p>
+                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.monthSalesPaid)}</p>
+                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                          Is month jo bill bani, us pe customers ne <strong>is month</strong> jo cash diya.
+                          Bill alag hota hai — yahan sirf <strong>haath mein aaya paisa</strong> hai.
+                          Due abhi baaki ho to yahan count nahi.
+                        </p>
+                      </div>
+
+                      <div className="pb-3 border-b border-gray-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-1">
+                          2. − Biki maal ki cost (khareed)
+                        </p>
+                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.soldCost)}</p>
+                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                          Is month jo pcs bikay, unki <strong>aapki purchase cost</strong>
+                          (qty × cost per piece). Yeh customer se lene wala amount nahi —
+                          aapne woh maal pehle kitne ka liya tha.
+                        </p>
+                      </div>
+
+                      <div className="pb-3 border-b border-gray-100">
+                        <p className="text-xs text-gray-500 mb-1">
+                          Paise aaye − biki cost =
+                        </p>
+                        <p className="text-base">
+                          Trading:{' '}
+                          <strong className={trading >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                            {trading >= 0 ? '+' : '-'}{fmt(trading)}
+                          </strong>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Agar cost zyada aur paid kam → trading loss (due baaki ho sakta hai).
+                        </p>
+                      </div>
+
+                      <div className="pb-3 border-b border-gray-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-1">
+                          3. Pichla recovery (cash)
+                        </p>
+                        <p className="text-lg font-bold text-amber-900 tabular-nums">
+                          {fmt(monthlyData.priorRecovery || 0)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                          Purani sales ka due is month aaya. Pehle check: sale ki cost pehle payments se
+                          cover ho chuki thi? Nahi to pehle <strong>cost wapas</strong>, baqi{' '}
+                          <strong>profit</strong>.
+                        </p>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded-lg bg-gray-50 border p-2">
+                            <p className="text-gray-500">Cost wapas (net mein nahi)</p>
+                            <p className="font-bold text-gray-800 tabular-nums">
+                              {fmt(monthlyData.priorRecoveryCost || 0)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-2">
+                            <p className="text-emerald-700">+ Profit (net mein)</p>
+                            <p className="font-bold text-emerald-800 tabular-nums">
+                              {fmt(monthlyData.priorRecoveryProfit || 0)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pb-3 border-b border-gray-100">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700 mb-1">
+                          4. − General expenses
+                        </p>
+                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.generalExpenses)}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Shop / daily kharcha (rent, light, partner, etc.). Product cost alag hai.
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">
+                          Trading + recovery profit − expenses =
+                        </p>
+                        <p className="text-lg">
+                          Net month:{' '}
+                          <strong className={net >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                            {net >= 0 ? '+' : '-'}{fmt(net)}
+                          </strong>
+                        </p>
+                        <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                          Stock {fmt(monthlyData.closingStockValue)} next month jayega — yeh loss nahi, aapka maal hai.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-ink/10 bg-neutral-50 p-4">
+                      <h4 className="font-semibold text-gray-900 mb-1">Partner share (bina investment)</h4>
+                      <p className="text-xs text-gray-500 mb-3">
+                        Jo maal dhondhta / help karta hai — % of net profit. Loss pe share 0.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={partnerSharePct}
+                          onChange={(e) => setPartnerSharePct(e.target.value)}
+                          className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold"
+                        />
+                        <span className="text-sm text-gray-600">%</span>
+                        {[0, 10, 20, 25, 50].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setPartnerSharePct(String(n))}
+                            className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${partnerPct === n ? 'bg-ink text-white border-ink' : 'bg-white border-gray-200 text-gray-600'
+                              }`}
+                          >
+                            {n}%
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-lg bg-white border p-3">
+                          <p className="text-xs text-gray-500">Partner ko</p>
+                          <p className="text-lg font-bold text-ink">{fmt(partnerShare)}</p>
+                        </div>
+                        <div className="rounded-lg bg-white border p-3">
+                          <p className="text-xs text-gray-500">Aapka final</p>
+                          <p className={`text-lg font-bold ${yourFinal >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {yourFinal >= 0 ? '+' : '-'}{fmt(yourFinal)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Monthly Sales Detail Modal */}
       {showSalesDetailModal && (

@@ -33,6 +33,7 @@ const Inventory = () => {
   const newProductExpenseLine = () => ({
     key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     category: 'Labour',
+    customCategory: '',
     description: '',
     amount: ''
   });
@@ -41,6 +42,9 @@ const Inventory = () => {
   const productExpenseCategories = [
     'Tea & Food', 'Labour', 'Rafu', 'Wash', 'Weaving', 'Rent', 'Transport', 'Maintenance', 'Other'
   ];
+  const productPresetCategories = productExpenseCategories.filter((c) => c !== 'Other');
+  const resolveProductExpenseCategory = (line) =>
+    line.category === 'Other' ? (line.customCategory || '').trim() : line.category;
   const itemsPerPage = 10;
   const [formData, setFormData] = useState({
     brand: '',
@@ -583,16 +587,23 @@ const Inventory = () => {
       showError('Add at least one expense with an amount');
       return;
     }
+    if (validLines.some((l) => l.category === 'Other' && !(l.customCategory || '').trim())) {
+      showError('Other select kiya hai — custom category name likhein');
+      return;
+    }
     setSavingProductExpense(true);
     try {
-      const payloads = validLines.map(line => ({
-        description: line.description.trim() || line.category,
-        amount: parseFloat(line.amount) || 0,
-        category: line.category,
-        expenseDate: productExpenseDate,
-        inventoryId: costingItem.id || costingItem._id,
-        productName: costingItem.productName
-      }));
+      const payloads = validLines.map(line => {
+        const category = resolveProductExpenseCategory(line);
+        return {
+          description: line.description.trim() || category,
+          amount: parseFloat(line.amount) || 0,
+          category,
+          expenseDate: productExpenseDate,
+          inventoryId: costingItem.id || costingItem._id,
+          productName: costingItem.productName
+        };
+      });
       await createExpensesBatch(payloads);
       showSuccess(
         validLines.length === 1
@@ -2219,9 +2230,32 @@ const Inventory = () => {
                   {productExpenseLines.map(line => (
                     <div key={line.key} className="grid grid-cols-12 gap-2 items-start">
                       <div className="col-span-12 sm:col-span-3">
-                        <select className="input-field text-sm" value={line.category} onChange={(e) => updateProductExpenseLine(line.key, 'category', e.target.value)}>
+                        <select
+                          className="input-field text-sm"
+                          value={productPresetCategories.includes(line.category) || line.category === 'Other' ? line.category : 'Other'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setProductExpenseLines((lines) =>
+                              lines.map((l) =>
+                                l.key === line.key
+                                  ? { ...l, category: val, customCategory: val === 'Other' ? l.customCategory : '' }
+                                  : l
+                              )
+                            );
+                          }}
+                        >
                           {productExpenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
+                        {line.category === 'Other' && (
+                          <input
+                            type="text"
+                            className="input-field text-sm mt-2"
+                            placeholder="Custom category name *"
+                            value={line.customCategory || ''}
+                            onChange={(e) => updateProductExpenseLine(line.key, 'customCategory', e.target.value)}
+                            autoFocus
+                          />
+                        )}
                       </div>
                       <div className="col-span-6 sm:col-span-3">
                         <input className="input-field text-sm" placeholder="Amount (Rs.)" value={line.amount} onChange={(e) => { const v = e.target.value; if (v === '' || /^\d*\.?\d*$/.test(v)) updateProductExpenseLine(line.key, 'amount', v); }} />

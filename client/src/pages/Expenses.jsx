@@ -35,9 +35,27 @@ const Expenses = () => {
     'Other'
   ];
 
+  const PRESET_CATEGORIES = expenseCategories.filter((c) => c !== 'Other');
+
+  const resolveLineCategory = (line) => {
+    if (line.category === 'Other') {
+      return (line.customCategory || '').trim();
+    }
+    return line.category;
+  };
+
+  const categoryToLineFields = (savedCategory) => {
+    const cat = savedCategory || 'Labour';
+    if (!cat || PRESET_CATEGORIES.includes(cat)) {
+      return { category: cat || 'Labour', customCategory: '' };
+    }
+    return { category: 'Other', customCategory: cat };
+  };
+
   const newExpenseLine = (overrides = {}) => ({
     key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     category: 'Labour',
+    customCategory: '',
     description: '',
     amount: '',
     expenseId: null,
@@ -233,7 +251,7 @@ const Expenses = () => {
     });
     setExpenseLines(group.items.map(exp => newExpenseLine({
       key: `edit-${exp.id || exp._id}`,
-      category: exp.category || 'Other',
+      ...categoryToLineFields(exp.category || 'Other'),
       description: exp.description || '',
       amount: exp.amount != null ? String(exp.amount) : '',
       expenseId: exp.id || exp._id,
@@ -261,10 +279,11 @@ const Expenses = () => {
 
   const buildLinePayload = (line) => {
     const selectedProduct = inventoryList.find(p => (p.id || p._id) === formData.inventoryId);
+    const category = resolveLineCategory(line);
     return {
-      description: line.description.trim() || line.category,
+      description: line.description.trim() || category,
       amount: parseFloat(line.amount) || 0,
-      category: line.category,
+      category,
       expenseDate: formData.expenseDate,
       notes: formData.notes,
       inventoryId: formData.expenseScope === 'product' ? formData.inventoryId : '',
@@ -298,7 +317,7 @@ const Expenses = () => {
     });
     setExpenseLines([newExpenseLine({
       key: `edit-${expenseId}`,
-      category: expense.category || 'Tea & Food',
+      ...categoryToLineFields(expense.category || 'Tea & Food'),
       description: expense.description || '',
       amount: expense.amount != null ? String(expense.amount) : '',
       expenseId,
@@ -313,6 +332,13 @@ const Expenses = () => {
     const validLines = expenseLines.filter(l => parseFloat(l.amount) > 0);
     if (validLines.length === 0) {
       showError('Add at least one expense with an amount');
+      return;
+    }
+    const missingCustom = validLines.find(
+      (l) => l.category === 'Other' && !(l.customCategory || '').trim()
+    );
+    if (missingCustom) {
+      showError('Other select kiya hai — custom category name likhein');
       return;
     }
     if (formData.expenseScope === 'product' && !formData.inventoryId) {
@@ -936,14 +962,46 @@ const Expenses = () => {
                       <div className="col-span-12 sm:col-span-3">
                         <label className="text-xs text-gray-500 mb-1 block">Category</label>
                         <select
-                          value={line.category}
-                          onChange={(e) => updateExpenseLine(line.key, 'category', e.target.value)}
+                          value={PRESET_CATEGORIES.includes(line.category) || line.category === 'Other' ? line.category : 'Other'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setExpenseLines((lines) =>
+                              lines.map((l) =>
+                                l.key === line.key
+                                  ? {
+                                      ...l,
+                                      category: val,
+                                      customCategory: val === 'Other' ? l.customCategory : ''
+                                    }
+                                  : l
+                              )
+                            );
+                          }}
                           className="input-field text-sm"
                         >
                           {expenseCategories.map(cat => (
                             <option key={cat} value={cat}>{cat}</option>
                           ))}
                         </select>
+                        {line.category === 'Other' && (
+                          <div className="mt-2">
+                            <label className="text-xs font-medium text-ink mb-1 block">
+                              Custom category name *
+                            </label>
+                            <input
+                              type="text"
+                              value={line.customCategory || ''}
+                              onChange={(e) => updateExpenseLine(line.key, 'customCategory', e.target.value)}
+                              className="input-field text-sm border-ink/20 focus:ring-ink/30"
+                              placeholder="e.g. Packaging, Printing, Courier…"
+                              autoFocus
+                              required
+                            />
+                            <p className="text-[10px] text-neutral-500 mt-1">
+                              Yeh naam expense list mein category ke tor pe save hoga
+                            </p>
+                          </div>
+                        )}
                       </div>
                       <div className="col-span-6 sm:col-span-3">
                         <label className="text-xs text-gray-500 mb-1 block">Amount (Rs.)</label>
@@ -967,7 +1025,7 @@ const Expenses = () => {
                           value={line.description}
                           onChange={(e) => updateExpenseLine(line.key, 'description', e.target.value)}
                           className="input-field text-sm"
-                          placeholder={line.category}
+                          placeholder={resolveLineCategory(line) || line.category}
                         />
                       </div>
                       <div className="col-span-12 sm:col-span-1 flex sm:justify-end sm:pt-6">
