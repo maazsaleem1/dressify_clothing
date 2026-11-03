@@ -1,9 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, TrendingUp, DollarSign, Package, Users, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle, Receipt } from 'lucide-react';
+import { Download, Calendar, TrendingUp, DollarSign, Package, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle, Receipt, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers, getPayments, getExpenses } from '../services/api';
 import { showInfo, showSuccess, showError } from '../utils/toast';
 import { downloadAccountantReport, findEarliestActivityDate } from '../utils/accountantReport';
+
+const formatDisplayName = (name) => {
+  if (!name || typeof name !== 'string') return name || '';
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const formatSignedMoney = (n) => {
+  const v = parseFloat(n) || 0;
+  const sign = v > 0 ? '+' : v < 0 ? '−' : '';
+  return `${sign}Rs. ${Math.abs(v).toLocaleString()}`;
+};
 
 const Reports = () => {
   const [stats, setStats] = useState(null);
@@ -39,6 +54,7 @@ const Reports = () => {
   const [exportingAccountant, setExportingAccountant] = useState(false);
   const [monthDetailType, setMonthDetailType] = useState(null); // paid | sold | recovery | stock | expenses | profit
   const [partnerSharePct, setPartnerSharePct] = useState('0');
+  const [showPaymentBreakdown, setShowPaymentBreakdown] = useState(false);
 
   // Load data once on mount; refetch only when user clicks Apply
   useEffect(() => {
@@ -222,8 +238,7 @@ const Reports = () => {
       setSalesStats(salesRes.data);
       setInventoryStats(invRes.data);
 
-      // Calculate total profit: Same as Inventory module
-      // Total Profit = Total Revenue (from sales) - Total Stock Value (initialQty * costPerUnit)
+      // Realized profit (same as Inventory): Paid − (sold qty × cost). Unsold stock is capital.
       const sales = salesDataRes.data || [];
       const inventory = inventoryDataRes.data || [];
 
@@ -256,9 +271,10 @@ const Reports = () => {
           onlineSalesRes.data.productSales.forEach(product => {
             const key = `${product.productName}_${product.size || 'N/A'}`;
             if (!onlineSalesMap[key]) {
-              onlineSalesMap[key] = { totalRevenue: 0 };
+              onlineSalesMap[key] = { totalRevenue: 0, totalQuantity: 0 };
             }
             onlineSalesMap[key].totalRevenue += product.totalRevenue || 0;
+            onlineSalesMap[key].totalQuantity += product.totalQuantity || 0;
           });
         }
       } catch (error) {
@@ -274,7 +290,7 @@ const Reports = () => {
         totalPaid: 0,
         totalRemaining: 0,
         totalCost: 0,
-        totalProfit: 0, // paid - stock value (realized)
+        totalProfit: 0, // paid − sold cost (realized)
         productDetails: []
       };
 
@@ -329,7 +345,8 @@ const Reports = () => {
         return productProfitMap[itemId];
       };
 
-      // Offline sales: allocate paid/remaining by line share of each invoice
+      // Offline sales: allocate paid/remaining by line share (only lines matched to inventory —
+      // same scope as Inventory realized profit, so paid aur cost dono same products pe)
       sales.forEach(sale => {
         const items = sale.items || [];
         if (!items.length) return;
@@ -349,18 +366,18 @@ const Reports = () => {
         const invoiceNumber = sale.invoiceNumber || '';
 
         items.forEach(item => {
+          const inventoryItem = findInventoryItem(item);
+          if (!inventoryItem) return;
+
           const lineTotal = getLineTotal(item);
           const qty = parseFloat(item.quantity) || 0;
-          totalBilled += lineTotal;
-
           const share = saleTotal > 0 ? lineTotal / saleTotal : 0;
           const linePaid = salePaid * share;
           const lineRemaining = saleRemaining * share;
+
+          totalBilled += lineTotal;
           totalPaidReceived += linePaid;
           totalRemainingDue += lineRemaining;
-
-          const inventoryItem = findInventoryItem(item);
-          if (!inventoryItem) return;
 
           const entry = ensureProductEntry(inventoryItem);
           entry.soldQty += qty;
@@ -389,7 +406,6 @@ const Reports = () => {
 
       // Online revenue treated as fully paid (already received)
       inventory.forEach(item => {
-        const itemId = item.id || item._id;
         const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
         const onlineData = onlineSalesMap[productKey];
 
@@ -397,11 +413,14 @@ const Reports = () => {
           const entry = ensureProductEntry(item);
           entry.onlineRevenue += onlineData.totalRevenue;
           entry.paidAmount += onlineData.totalRevenue;
+          entry.soldQty += parseFloat(onlineData.totalQuantity) || 0;
           totalBilled += onlineData.totalRevenue;
           totalPaidReceived += onlineData.totalRevenue;
         }
       });
 
+      let totalSoldCost = 0;
+      let totalProductProfit = 0;
       Object.values(productProfitMap).forEach(product => {
         product.totalRevenue = product.offlineRevenue + product.onlineRevenue;
         product.paidAmount = Math.round(product.paidAmount);
@@ -409,8 +428,11 @@ const Reports = () => {
         product.offlineRevenue = Math.round(product.offlineRevenue);
         product.onlineRevenue = Math.round(product.onlineRevenue);
         product.totalRevenue = Math.round(product.totalRevenue);
-        // Realized profit = money received so far - product stock cost
-        product.totalProfit = product.paidAmount - product.stockValue;
+        // Same as Inventory: realized = Paid − (sold qty × cost). Unsold stock is capital, not loss.
+        product.soldCost = Math.round(product.soldQty * product.costPerUnit);
+        product.unsoldQty = Math.max(0, (product.initialQty || 0) - (product.soldQty || 0));
+        product.unsoldStockValue = Math.round(product.unsoldQty * product.costPerUnit);
+        product.totalProfit = Math.round(product.paidAmount - product.soldCost);
         product.customersRemainingList = Object.values(product.customersRemaining)
           .map(c => ({
             ...c,
@@ -421,21 +443,25 @@ const Reports = () => {
           .sort((a, b) => b.remainingAmount - a.remainingAmount);
         delete product.customersRemaining;
         totalStockValue += product.stockValue;
+        totalSoldCost += product.soldCost;
+        totalProductProfit += product.totalProfit;
       });
 
       const roundedPaid = Math.round(totalPaidReceived);
       const roundedRemaining = Math.round(totalRemainingDue);
       const roundedBilled = Math.round(totalBilled);
-      const calculatedTotalProfit = roundedPaid - totalStockValue;
+      // Sum of product profits (= paid − sold cost) — matches Inventory + modal rows
+      const calculatedTotalProfit = totalProductProfit;
       setTotalProfit(calculatedTotalProfit);
 
       profitBreakdownData.totalRevenue = roundedBilled;
       profitBreakdownData.totalPaid = roundedPaid;
       profitBreakdownData.totalRemaining = roundedRemaining;
-      profitBreakdownData.totalCost = totalStockValue;
+      profitBreakdownData.totalCost = totalSoldCost;
+      profitBreakdownData.totalStockCapital = Math.round(totalStockValue);
       profitBreakdownData.totalProfit = calculatedTotalProfit;
       profitBreakdownData.productDetails = Object.values(productProfitMap)
-        .filter(p => p.totalRevenue > 0 || p.paidAmount > 0 || p.remainingAmount > 0 || p.stockValue > 0)
+        .filter(p => p.totalRevenue > 0 || p.paidAmount > 0 || p.remainingAmount > 0 || p.soldQty > 0)
         .sort((a, b) => b.remainingAmount - a.remainingAmount || b.totalProfit - a.totalProfit);
 
       setProfitBreakdown(profitBreakdownData);
@@ -846,69 +872,90 @@ const Reports = () => {
             </ResponsiveContainer>
           </div>
         )}
-        <div>
-          <h4 className="font-medium text-gray-700 mb-1">Payment breakdown by invoice</h4>
-          <p className="text-xs text-gray-500 mb-3">Click any row (customer or invoice) to see which products this payment covers.</p>
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            {paymentsList.length === 0 ? (
-              <p className="p-6 text-gray-500 text-center">No payments in the selected date range.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">By</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-100">
-                  {paymentsList.map((p) => {
-                    const d = p.paymentDate;
-                    const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
-                    const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
-                    return (
-                      <tr
-                        key={p.id || p._id}
-                        onClick={() => openPaymentDetail(p)}
-                        className="cursor-pointer hover:bg-emerald-50/60 transition-colors"
-                        title="View payment details"
-                      >
-                        <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{dateStr}</td>
-                        <td className="px-4 py-2.5 font-medium text-emerald-700 underline underline-offset-2 decoration-emerald-300">
-                          {p.invoiceNumber || '–'}
-                        </td>
-                        <td className="px-4 py-2.5 font-medium text-ink underline underline-offset-2 decoration-neutral-300">
-                          {p.customerName || '–'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-semibold text-emerald-700">Rs. {(parseFloat(p.amount) || 0).toLocaleString()}</td>
-                        <td className="px-4 py-2.5">
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${p.paymentType === 'Initial Sale' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'}`}>
-                            {p.paymentType || '–'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-gray-600">{p.paymentMethod || 'Cash'}</td>
-                        <td className="px-4 py-2.5 text-gray-700 text-xs">
-                          {p.editedBy ? (
-                            <span>Edited: <strong>{p.editedBy}</strong></span>
-                          ) : p.addedBy ? (
-                            <span>Added: <strong>{p.addedBy}</strong></span>
-                          ) : p.saleAddedBy ? (
-                            <span>Sale: <strong>{p.saleAddedBy}</strong></span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+        <div className="rounded-xl border border-neutral-200/90 bg-white overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowPaymentBreakdown((v) => !v)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-neutral-50/80 transition-colors"
+            aria-expanded={showPaymentBreakdown}
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">Payment breakdown by invoice</p>
+              <p className="text-xs text-ink-muted mt-0.5">
+                {paymentsList.length} transaction{paymentsList.length !== 1 ? 's' : ''}
+                {showPaymentBreakdown ? ' · tap row for products' : ' · open to view list'}
+              </p>
+            </div>
+            <span className="w-8 h-8 rounded-full bg-neutral-50 border border-neutral-200 flex items-center justify-center text-ink-muted shrink-0">
+              {showPaymentBreakdown ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </span>
+          </button>
+
+          {showPaymentBreakdown && (
+            <div className="border-t border-neutral-100">
+              <div className="overflow-x-auto">
+                {paymentsList.length === 0 ? (
+                  <p className="p-6 text-ink-muted text-center text-sm">No payments in the selected date range.</p>
+                ) : (
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead className="bg-neutral-50 border-b border-neutral-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Date</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Invoice</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Customer</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-ink-muted">Amount</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Type</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Method</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">By</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-50">
+                      {paymentsList.map((p) => {
+                        const d = p.paymentDate;
+                        const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+                        const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
+                        return (
+                          <tr
+                            key={p.id || p._id}
+                            onClick={() => openPaymentDetail(p)}
+                            className="cursor-pointer hover:bg-neutral-50/80 transition-colors"
+                            title="View payment details"
+                          >
+                            <td className="px-4 py-3 text-ink-muted whitespace-nowrap tabular-nums">{dateStr}</td>
+                            <td className="px-4 py-3 font-medium text-ink">{p.invoiceNumber || '–'}</td>
+                            <td className="px-4 py-3 font-medium text-ink">{formatDisplayName(p.customerName) || '–'}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums">
+                              Rs. {(parseFloat(p.amount) || 0).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${p.paymentType === 'Initial Sale'
+                                ? 'bg-sky-50 text-sky-800 border-sky-100'
+                                : 'bg-amber-50 text-amber-900 border-amber-100'
+                                }`}>
+                                {p.paymentType || '–'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-ink-muted">{p.paymentMethod || 'Cash'}</td>
+                            <td className="px-4 py-3 text-ink-muted text-xs">
+                              {p.editedBy ? (
+                                <span>Edited: <strong className="text-ink">{p.editedBy}</strong></span>
+                              ) : p.addedBy ? (
+                                <span>Added: <strong className="text-ink">{p.addedBy}</strong></span>
+                              ) : p.saleAddedBy ? (
+                                <span>Sale: <strong className="text-ink">{p.saleAddedBy}</strong></span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1341,47 +1388,64 @@ const Reports = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
         <div
-          className="card bg-gradient-to-br from-blue-500 to-blue-600 text-white cursor-pointer hover:shadow-lg transition-all duration-200"
+          className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300 transition-colors"
           onClick={() => setShowStockDetailModal(true)}
           title="Click to view product-wise stock details"
         >
-          <div className="flex items-center justify-between mb-2">
-            <Package size={24} />
-            <TrendingUp size={20} className="opacity-75" />
+          <div className="flex items-center justify-between mb-3">
+            <span className="w-10 h-10 rounded-xl bg-sky-50 text-sky-700 flex items-center justify-center">
+              <Package size={20} />
+            </span>
           </div>
-          <p className="text-blue-100 text-sm mb-1">Total Stock Value</p>
-          <p className="text-2xl font-bold">Rs. {(inventoryStats?.totalValue || 0).toLocaleString()}</p>
-          <p className="text-blue-200 text-xs mt-1">{stockDetails.length} products • Click for details</p>
+          <p className="text-xs font-medium text-ink-muted">Total stock value</p>
+          <p className="text-2xl font-bold text-ink tabular-nums tracking-tight mt-1">
+            Rs. {(inventoryStats?.totalValue || 0).toLocaleString()}
+          </p>
+          <p className="text-xs text-ink-muted mt-1.5">{stockDetails.length} products · tap for details</p>
         </div>
 
-        <div className="card bg-gradient-to-br from-green-500 to-green-600 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <DollarSign size={24} />
-            <TrendingUp size={20} className="opacity-75" />
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+              <DollarSign size={20} />
+            </span>
           </div>
-          <p className="text-green-100 text-sm mb-1">Total Sales</p>
-          <p className="text-2xl font-bold">Rs. {(salesStats?.totalSales || 0).toLocaleString()}</p>
+          <p className="text-xs font-medium text-ink-muted">Total sales</p>
+          <p className="text-2xl font-bold text-ink tabular-nums tracking-tight mt-1">
+            Rs. {(salesStats?.totalSales || 0).toLocaleString()}
+          </p>
         </div>
 
-        <div className="card bg-gradient-to-br from-orange-500 to-orange-600 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <CreditCard size={24} />
-            <AlertCircle size={20} className="opacity-75" />
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
+              <CreditCard size={20} />
+            </span>
           </div>
-          <p className="text-orange-100 text-sm mb-1">Outstanding Credit</p>
-          <p className="text-2xl font-bold">Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}</p>
-          <p className="text-orange-200 text-xs mt-1">{outstandingCredits.length} pending payments</p>
+          <p className="text-xs font-medium text-ink-muted">Outstanding credit</p>
+          <p className="text-2xl font-bold text-ink tabular-nums tracking-tight mt-1">
+            Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
+          </p>
+          <p className="text-xs text-ink-muted mt-1.5">{outstandingCredits.length} pending</p>
         </div>
 
-        <div className="card bg-gradient-to-br from-purple-500 to-purple-600 text-white">
-          <div className="flex items-center justify-between mb-2">
-            <Users size={24} />
-            <TrendingUp size={20} className="opacity-75" />
+        <div
+          className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300 transition-colors"
+          onClick={() => setShowProfitDetailModal(true)}
+          title="Paid − sold cost · same as Inventory"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className={`w-10 h-10 rounded-xl flex items-center justify-center ${totalProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+              {totalProfit >= 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+            </span>
           </div>
-          <p className="text-purple-100 text-sm mb-1">Total Customers</p>
-          <p className="text-2xl font-bold">{stats?.customers?.total || 0}</p>
+          <p className="text-xs font-medium text-ink-muted">Realized profit</p>
+          <p className={`text-2xl font-bold tabular-nums tracking-tight mt-1 ${totalProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+            {formatSignedMoney(totalProfit)}
+          </p>
+          <p className="text-xs text-ink-muted mt-1.5">Paid − sold cost · tap for products</p>
         </div>
       </div>
 
@@ -1675,7 +1739,7 @@ const Reports = () => {
           recovery: 'Pichla recovery — kis se aaya',
           stock: 'Stock reh gaya → next month',
           expenses: 'General expenses',
-          profit: 'Net profit / partner share',
+          profit: 'Month profit',
           ownPaid: 'A. Meri inventory — is month paid',
           investorPaid: 'B. Investor inventory — is month paid',
           ownRecovery: 'C. Pichla recovery — mera',
@@ -1735,19 +1799,26 @@ const Reports = () => {
         };
 
         return (
-          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-            <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl max-w-4xl w-full max-h-[92dvh] overflow-y-auto">
-              <div className="p-4 sm:p-5 border-b border-gray-200 sticky top-0 bg-white z-10 flex justify-between items-start gap-3">
-                <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-900">{titles[monthDetailType]}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">{monthLabel}</p>
+          <div
+            className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+            onClick={() => setMonthDetailType(null)}
+          >
+            <div
+              className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-2xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 sticky top-0 bg-white/95 backdrop-blur z-10 flex justify-between items-start gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">{titles[monthDetailType]}</h3>
+                  <p className="text-sm text-ink-muted mt-0.5">{monthLabel}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setMonthDetailType(null)}
-                  className="text-gray-400 hover:text-gray-700 text-2xl font-bold min-h-[44px] min-w-[44px]"
+                  className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                  aria-label="Close"
                 >
-                  ×
+                  <X size={18} />
                 </button>
               </div>
 
@@ -2125,136 +2196,143 @@ const Reports = () => {
 
                 {monthDetailType === 'profit' && (
                   <div className="space-y-4">
-                    <div className="rounded-xl border border-gray-200 p-4 space-y-4 text-sm">
-                      <div className="pb-3 border-b border-gray-100">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 mb-1">
-                          1. Is month ki sales se paise aaye
-                        </p>
-                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.monthSalesPaid)}</p>
-                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                          Is month jo bill bani, us pe customers ne <strong>is month</strong> jo cash diya.
-                          Bill alag hota hai — yahan sirf <strong>haath mein aaya paisa</strong> hai.
-                          Due abhi baaki ho to yahan count nahi.
-                        </p>
-                      </div>
+                    {/* Result hero */}
+                    <div className={`rounded-2xl border p-5 ${net >= 0 ? 'bg-emerald-50/80 border-emerald-100' : 'bg-rose-50/80 border-rose-100'}`}>
+                      <p className="text-[11px] font-medium text-ink-muted">
+                        {net >= 0 ? 'Net profit this month' : 'Net loss this month'}
+                      </p>
+                      <p className={`text-3xl sm:text-4xl font-bold tabular-nums tracking-tight mt-1 ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
+                      </p>
+                      <p className="text-xs text-ink-muted mt-2 text-pretty">
+                        Paid − sold cost + recovery profit − expenses
+                      </p>
+                    </div>
 
-                      <div className="pb-3 border-b border-gray-100">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-1">
-                          2. − Biki maal ki cost (khareed)
-                        </p>
-                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.soldCost)}</p>
-                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                          Is month jo pcs bikay, unki <strong>aapki purchase cost</strong>
-                          (qty × cost per piece). Yeh customer se lene wala amount nahi —
-                          aapne woh maal pehle kitne ka liya tha.
-                        </p>
+                    {/* Clean P&L rows */}
+                    <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                      <div className="px-4 sm:px-5 py-3 border-b border-neutral-100">
+                        <h4 className="text-sm font-semibold text-ink">How it adds up</h4>
                       </div>
-
-                      <div className="pb-3 border-b border-gray-100">
-                        <p className="text-xs text-gray-500 mb-1">
-                          Paise aaye − biki cost =
-                        </p>
-                        <p className="text-base">
-                          Trading:{' '}
-                          <strong className={trading >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-                            {trading >= 0 ? '+' : '-'}{fmt(trading)}
-                          </strong>
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Agar cost zyada aur paid kam → trading loss (due baaki ho sakta hai).
-                        </p>
-                      </div>
-
-                      <div className="pb-3 border-b border-gray-100">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-1">
-                          3. Pichla recovery (cash)
-                        </p>
-                        <p className="text-lg font-bold text-amber-900 tabular-nums">
-                          {fmt(monthlyData.priorRecovery || 0)}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                          Purani sales ka due is month aaya. Pehle check: sale ki cost pehle payments se
-                          cover ho chuki thi? Nahi to pehle <strong>cost wapas</strong>, baqi{' '}
-                          <strong>profit</strong>.
-                        </p>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                          <div className="rounded-lg bg-gray-50 border p-2">
-                            <p className="text-gray-500">Cost wapas (net mein nahi)</p>
-                            <p className="font-bold text-gray-800 tabular-nums">
-                              {fmt(monthlyData.priorRecoveryCost || 0)}
+                      <ul className="divide-y divide-neutral-100 text-sm">
+                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
+                          <div className="min-w-0">
+                            <p className="font-medium text-ink">Cash from this month’s sales</p>
+                            <p className="text-xs text-ink-muted mt-0.5">Only money received · dues not included</p>
+                          </div>
+                          <p className="font-semibold text-emerald-700 tabular-nums shrink-0">{fmt(monthlyData.monthSalesPaid)}</p>
+                        </li>
+                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
+                          <div className="min-w-0">
+                            <p className="font-medium text-ink">− Sold cost</p>
+                            <p className="text-xs text-ink-muted mt-0.5">Qty sold × your purchase cost</p>
+                          </div>
+                          <p className="font-semibold text-ink tabular-nums shrink-0">{fmt(monthlyData.soldCost)}</p>
+                        </li>
+                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5 bg-neutral-50/70">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-ink">Trading</p>
+                            <p className="text-xs text-ink-muted mt-0.5">Cash − sold cost</p>
+                          </div>
+                          <p className={`font-bold tabular-nums shrink-0 ${trading >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {trading >= 0 ? '+' : '−'}{fmt(Math.abs(trading))}
+                          </p>
+                        </li>
+                        <li className="px-4 sm:px-5 py-3.5 space-y-2.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-medium text-ink">Prior recovery (cash)</p>
+                              <p className="text-xs text-ink-muted mt-0.5">Old dues collected this month</p>
+                            </div>
+                            <p className="font-semibold text-amber-800 tabular-nums shrink-0">
+                              {fmt(monthlyData.priorRecovery || 0)}
                             </p>
                           </div>
-                          <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-2">
-                            <p className="text-emerald-700">+ Profit (net mein)</p>
-                            <p className="font-bold text-emerald-800 tabular-nums">
-                              {fmt(monthlyData.priorRecoveryProfit || 0)}
-                            </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl bg-neutral-50 border border-neutral-200/80 px-3 py-2.5">
+                              <p className="text-[11px] text-ink-muted">Cost returned</p>
+                              <p className="text-sm font-semibold text-ink tabular-nums mt-0.5">
+                                {fmt(monthlyData.priorRecoveryCost || 0)}
+                              </p>
+                              <p className="text-[10px] text-ink-muted mt-0.5">Not in net</p>
+                            </div>
+                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2.5">
+                              <p className="text-[11px] text-emerald-800">+ Profit part</p>
+                              <p className="text-sm font-semibold text-emerald-800 tabular-nums mt-0.5">
+                                {fmt(monthlyData.priorRecoveryProfit || 0)}
+                              </p>
+                              <p className="text-[10px] text-emerald-700/80 mt-0.5">Added to net</p>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-
-                      <div className="pb-3 border-b border-gray-100">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700 mb-1">
-                          4. − General expenses
-                        </p>
-                        <p className="text-lg font-bold text-ink tabular-nums">{fmt(monthlyData.generalExpenses)}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Shop / daily kharcha (rent, light, partner, etc.). Product cost alag hai.
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs text-gray-500 mb-1">
-                          Trading + recovery profit − expenses =
-                        </p>
-                        <p className="text-lg">
-                          Net month:{' '}
-                          <strong className={net >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-                            {net >= 0 ? '+' : '-'}{fmt(net)}
-                          </strong>
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2 leading-relaxed">
-                          Stock {fmt(monthlyData.closingStockValue)} next month jayega — yeh loss nahi, aapka maal hai.
+                        </li>
+                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
+                          <div className="min-w-0">
+                            <p className="font-medium text-ink">− Expenses</p>
+                            <p className="text-xs text-ink-muted mt-0.5">Rent, utilities, shop costs</p>
+                          </div>
+                          <p className="font-semibold text-rose-700 tabular-nums shrink-0">{fmt(monthlyData.generalExpenses)}</p>
+                        </li>
+                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-4 bg-ink text-white">
+                          <div className="min-w-0">
+                            <p className="font-semibold">Net month</p>
+                            <p className="text-xs text-white/70 mt-0.5">Trading + recovery profit − expenses</p>
+                          </div>
+                          <p className="text-lg font-bold tabular-nums shrink-0">
+                            {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
+                          </p>
+                        </li>
+                      </ul>
+                      <div className="px-4 sm:px-5 py-3 border-t border-neutral-100 bg-neutral-50/50">
+                        <p className="text-xs text-ink-muted text-pretty">
+                          Closing stock {fmt(monthlyData.closingStockValue)} carries to next month — capital, not a loss.
                         </p>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-ink/10 bg-neutral-50 p-4">
-                      <h4 className="font-semibold text-gray-900 mb-1">Partner share (bina investment)</h4>
-                      <p className="text-xs text-gray-500 mb-3">
-                        Jo maal dhondhta / help karta hai — % of net profit. Loss pe share 0.
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={partnerSharePct}
-                          onChange={(e) => setPartnerSharePct(e.target.value)}
-                          className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold"
-                        />
-                        <span className="text-sm text-gray-600">%</span>
+                    {/* Partner share */}
+                    <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-4">
+                      <div>
+                        <h4 className="text-sm font-semibold text-ink">Partner share</h4>
+                        <p className="text-xs text-ink-muted mt-0.5">
+                          % of net profit · 0 if month is in loss
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={partnerSharePct}
+                            onChange={(e) => setPartnerSharePct(e.target.value)}
+                            className="w-14 bg-transparent text-sm font-semibold text-ink outline-none tabular-nums"
+                            aria-label="Partner percent"
+                          />
+                          <span className="text-sm text-ink-muted">%</span>
+                        </div>
                         {[0, 10, 20, 25, 50].map((n) => (
                           <button
                             key={n}
                             type="button"
                             onClick={() => setPartnerSharePct(String(n))}
-                            className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${partnerPct === n ? 'bg-ink text-white border-ink' : 'bg-white border-gray-200 text-gray-600'
+                            className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-colors min-h-[40px] ${partnerPct === n
+                              ? 'bg-ink text-white border-ink'
+                              : 'bg-white border-neutral-200 text-ink-muted hover:bg-neutral-50'
                               }`}
                           >
                             {n}%
                           </button>
                         ))}
                       </div>
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-lg bg-white border p-3">
-                          <p className="text-xs text-gray-500">Partner ko</p>
-                          <p className="text-lg font-bold text-ink">{fmt(partnerShare)}</p>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="rounded-xl border border-neutral-200/90 bg-neutral-50 px-3.5 py-3">
+                          <p className="text-[11px] font-medium text-ink-muted">Partner gets</p>
+                          <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(partnerShare)}</p>
                         </div>
-                        <div className="rounded-lg bg-white border p-3">
-                          <p className="text-xs text-gray-500">Aapka final</p>
-                          <p className={`text-lg font-bold ${yourFinal >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {yourFinal >= 0 ? '+' : '-'}{fmt(yourFinal)}
+                        <div className={`rounded-xl border px-3.5 py-3 ${yourFinal >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                          <p className="text-[11px] font-medium text-ink-muted">Your final</p>
+                          <p className={`text-lg font-bold tabular-nums mt-1 ${yourFinal >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {yourFinal >= 0 ? '+' : '−'}{fmt(Math.abs(yourFinal))}
                           </p>
                         </div>
                       </div>
@@ -2437,188 +2515,201 @@ const Reports = () => {
         </div>
       )}
 
-      {/* Total Profit Detail Modal */}
+      {/* Realized profit detail — same rule as Inventory: Paid − sold cost */}
       {showProfitDetailModal && profitBreakdown && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-6xl w-full max-h-[92dvh] overflow-y-auto">
-            <div className="p-4 sm:p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
-              <div className="flex justify-between items-center gap-3">
-                <div className="min-w-0">
-                  <h3 className="text-xl sm:text-2xl font-bold text-gray-800">Realized Profit & Remaining</h3>
-                  <p className="text-sm text-gray-600 mt-1">Profit only from payments received. Remaining shows unpaid recovery.</p>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowProfitDetailModal(false);
-                    setExpandedProfitProduct(null);
-                  }}
-                  className="text-gray-400 hover:text-gray-600 text-2xl font-bold shrink-0 min-h-[44px] min-w-[44px]"
-                >
-                  ×
-                </button>
+        <div
+          className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+          onClick={() => {
+            setShowProfitDetailModal(false);
+            setExpandedProfitProduct(null);
+          }}
+        >
+          <div
+            className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-4xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 sm:px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Realized profit</h3>
+                <p className="text-sm text-ink-muted mt-0.5">
+                  Paid − sold cost · due clear hone pe profit badhega
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfitDetailModal(false);
+                  setExpandedProfitProduct(null);
+                }}
+                className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="p-4 sm:p-6">
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 bg-gradient-to-r from-emerald-50 to-green-50 p-4 rounded-lg">
-                  <div>
-                    <p className="text-xs sm:text-sm text-gray-600 mb-1">Billed (Sales)</p>
-                    <p className="text-lg sm:text-2xl font-bold text-indigo-600 break-words">
-                      Rs. {(profitBreakdown.totalRevenue || 0).toLocaleString()}
+            <div className="p-4 sm:p-6 space-y-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {[
+                  { label: 'Billed', value: `Rs. ${(profitBreakdown.totalRevenue || 0).toLocaleString()}`, tone: 'text-ink' },
+                  { label: 'Paid', value: `Rs. ${(profitBreakdown.totalPaid || 0).toLocaleString()}`, tone: 'text-emerald-700' },
+                  { label: 'Due', value: `Rs. ${(profitBreakdown.totalRemaining || 0).toLocaleString()}`, tone: (profitBreakdown.totalRemaining || 0) > 0 ? 'text-amber-800' : 'text-emerald-700' },
+                  { label: 'Realized profit', value: formatSignedMoney(profitBreakdown.totalProfit), tone: (profitBreakdown.totalProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' }
+                ].map((m) => (
+                  <div key={m.label} className="bg-white rounded-xl border border-neutral-200/90 px-3.5 py-3 shadow-soft">
+                    <p className="text-[11px] font-medium text-ink-muted normal-case">{m.label}</p>
+                    <p className={`mt-1 text-base sm:text-lg font-bold tabular-nums tracking-tight break-words ${m.tone}`}>
+                      {m.value}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-gray-600 mb-1">Paid Received</p>
-                    <p className="text-lg sm:text-2xl font-bold text-emerald-600 break-words">
-                      Rs. {(profitBreakdown.totalPaid || 0).toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-gray-600 mb-1">Remaining Due</p>
-                    <p className="text-lg sm:text-2xl font-bold text-rose-600 break-words">
-                      Rs. {(profitBreakdown.totalRemaining || 0).toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-gray-600 mb-1">Realized Profit</p>
-                    <p className={`text-lg sm:text-2xl font-bold break-words ${profitBreakdown.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {profitBreakdown.totalProfit >= 0 ? '+' : ''}Rs. {Math.abs(profitBreakdown.totalProfit).toLocaleString()}
-                    </p>
-                  </div>
+                ))}
+              </div>
+
+              <div className="bg-white rounded-xl border border-neutral-200/90 p-4 shadow-soft space-y-2">
+                <p className="text-[11px] font-medium text-ink-muted">Calculation</p>
+                <p className="text-sm text-ink">
+                  Realized profit = Paid − sold cost
+                </p>
+                <p className="text-sm text-ink-muted tabular-nums">
+                  Rs. {(profitBreakdown.totalPaid || 0).toLocaleString()} − Rs. {(profitBreakdown.totalCost || 0).toLocaleString()}{' '}
+                  = <span className={`font-bold ${(profitBreakdown.totalProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {formatSignedMoney(profitBreakdown.totalProfit)}
+                  </span>
+                </p>
+                <p className="text-xs text-ink-muted">
+                  Unsold stock is capital (not loss). Due payments are not profit until collected.
+                </p>
+              </div>
+
+              <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100">
+                  <h4 className="text-sm font-semibold text-ink">Products</h4>
+                  <p className="text-xs text-ink-muted mt-0.5">Paid · due · realized profit</p>
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-sm font-semibold text-blue-800 mb-2">Calculation</p>
-                  <p className="text-sm sm:text-base text-blue-900 font-mono break-words">
-                    Realized Profit = Paid Received − Stock Cost
-                  </p>
-                  <p className="text-sm text-blue-700 mt-2 break-words">
-                    = Rs. {(profitBreakdown.totalPaid || 0).toLocaleString()} − Rs. {(profitBreakdown.totalCost || 0).toLocaleString()}
-                  </p>
-                  <p className="text-base font-bold text-blue-900 mt-2">
-                    = Rs. {(profitBreakdown.totalProfit || 0).toLocaleString()}
-                  </p>
-                  <p className="text-xs text-blue-700 mt-3">
-                    Unpaid bills are not counted in profit — they show under Remaining Due until recovered.
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="text-lg font-semibold text-gray-800 mb-3">Product-wise · Paid / Remaining / Customers</h4>
-                  <div className="space-y-3">
-                    {profitBreakdown.productDetails.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500 border rounded-lg">No products sold yet</div>
-                    ) : (
-                      profitBreakdown.productDetails.map((product, index) => {
-                        const key = `${product.productName}-${index}`;
-                        const isOpen = expandedProfitProduct === key;
-                        const customers = product.customersRemainingList || [];
-                        return (
-                          <div key={key} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedProfitProduct(isOpen ? null : key)}
-                              className="w-full text-left p-4 hover:bg-gray-50 transition-colors"
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-gray-900">{index + 1}. {product.productName}</p>
-                                  <p className="text-xs text-gray-500 mt-0.5">
-                                    Sold {product.soldQty || 0} pcs · Cost Rs. {(product.stockValue || 0).toLocaleString()}
-                                  </p>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2 sm:gap-4 text-sm">
+                {profitBreakdown.productDetails.length === 0 ? (
+                  <div className="text-center py-12 text-ink-muted text-sm">No products sold yet</div>
+                ) : (
+                  <ul className="divide-y divide-neutral-100">
+                    {profitBreakdown.productDetails.map((product, index) => {
+                      const key = `${product.productName}-${index}`;
+                      const isOpen = expandedProfitProduct === key;
+                      const customers = product.customersRemainingList || [];
+                      const profit = product.totalProfit || 0;
+                      return (
+                        <li key={key}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedProfitProduct(isOpen ? null : key)}
+                            className="w-full text-left px-4 sm:px-5 py-4 hover:bg-neutral-50/80 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-semibold text-ink">
+                                  {index + 1}. {product.productName}
+                                </p>
+                                <p className="text-xs text-ink-muted mt-0.5">
+                                  Sold {product.soldQty || 0} pcs · sold cost Rs. {(product.soldCost || 0).toLocaleString()}
+                                  {(product.unsoldQty || 0) > 0 && (
+                                    <> · unsold {product.unsoldQty} (Rs. {(product.unsoldStockValue || 0).toLocaleString()})</>
+                                  )}
+                                </p>
+                                <div className="mt-2.5 grid grid-cols-3 gap-2 text-xs sm:text-sm max-w-md">
                                   <div>
-                                    <p className="text-[10px] uppercase text-gray-400 font-semibold">Paid</p>
-                                    <p className="font-bold text-emerald-700">Rs. {(product.paidAmount || 0).toLocaleString()}</p>
+                                    <p className="text-[10px] font-medium text-ink-muted">Paid</p>
+                                    <p className="font-semibold text-emerald-700 tabular-nums">Rs. {(product.paidAmount || 0).toLocaleString()}</p>
                                   </div>
                                   <div>
-                                    <p className="text-[10px] uppercase text-gray-400 font-semibold">Due</p>
-                                    <p className={`font-bold ${(product.remainingAmount || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                    <p className="text-[10px] font-medium text-ink-muted">Due</p>
+                                    <p className={`font-semibold tabular-nums ${(product.remainingAmount || 0) > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
                                       Rs. {(product.remainingAmount || 0).toLocaleString()}
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-[10px] uppercase text-gray-400 font-semibold">Profit</p>
-                                    <p className={`font-bold ${product.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                      {product.totalProfit >= 0 ? '+' : ''}Rs. {Math.abs(product.totalProfit || 0).toLocaleString()}
+                                    <p className="text-[10px] font-medium text-ink-muted">Profit</p>
+                                    <p className={`font-bold tabular-nums ${profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                      {formatSignedMoney(profit)}
                                     </p>
                                   </div>
+                                </div>
+                                {(product.remainingAmount || 0) > 0 && (
+                                  <p className="text-[11px] text-amber-800 mt-2">
+                                    {customers.length} customer{customers.length !== 1 ? 's' : ''} with due
+                                  </p>
+                                )}
+                              </div>
+                              <span className="w-8 h-8 rounded-full bg-neutral-50 border border-neutral-200 flex items-center justify-center text-ink-muted shrink-0">
+                                {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                              </span>
+                            </div>
+                          </button>
+
+                          {isOpen && (
+                            <div className="px-4 sm:px-5 pb-4 space-y-3 bg-neutral-50/60 border-t border-neutral-100">
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 text-xs">
+                                <div className="bg-white rounded-xl p-3 border border-neutral-200/80">
+                                  <p className="text-ink-muted">Billed</p>
+                                  <p className="font-semibold tabular-nums mt-0.5">Rs. {(product.totalRevenue || 0).toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-3 border border-neutral-200/80">
+                                  <p className="text-ink-muted">Paid</p>
+                                  <p className="font-semibold text-emerald-700 tabular-nums mt-0.5">Rs. {(product.paidAmount || 0).toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-3 border border-neutral-200/80">
+                                  <p className="text-ink-muted">Sold cost</p>
+                                  <p className="font-semibold tabular-nums mt-0.5">Rs. {(product.soldCost || 0).toLocaleString()}</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-3 border border-neutral-200/80">
+                                  <p className="text-ink-muted">Due</p>
+                                  <p className={`font-semibold tabular-nums mt-0.5 ${(product.remainingAmount || 0) > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                                    Rs. {(product.remainingAmount || 0).toLocaleString()}
+                                  </p>
                                 </div>
                               </div>
-                              {(product.remainingAmount || 0) > 0 && (
-                                <p className="text-xs text-amber-700 mt-2">
-                                  {customers.length} customer{customers.length !== 1 ? 's' : ''} with remaining · tap to view
-                                </p>
-                              )}
-                            </button>
 
-                            {isOpen && (
-                              <div className="border-t border-gray-100 bg-gray-50 p-4 space-y-3">
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                                  <div className="bg-white rounded-lg p-2 border">
-                                    <p className="text-gray-500">Billed</p>
-                                    <p className="font-semibold">Rs. {(product.totalRevenue || 0).toLocaleString()}</p>
-                                  </div>
-                                  <div className="bg-white rounded-lg p-2 border">
-                                    <p className="text-gray-500">Paid</p>
-                                    <p className="font-semibold text-emerald-700">Rs. {(product.paidAmount || 0).toLocaleString()}</p>
-                                  </div>
-                                  <div className="bg-white rounded-lg p-2 border">
-                                    <p className="text-gray-500">Remaining</p>
-                                    <p className="font-semibold text-rose-600">Rs. {(product.remainingAmount || 0).toLocaleString()}</p>
-                                  </div>
-                                  <div className="bg-white rounded-lg p-2 border">
-                                    <p className="text-gray-500">Stock Cost</p>
-                                    <p className="font-semibold">Rs. {(product.stockValue || 0).toLocaleString()}</p>
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <p className="text-sm font-semibold text-gray-800 mb-2">Customers with remaining on this product</p>
-                                  {customers.length === 0 ? (
-                                    <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
-                                      No remaining — fully recovered for this product.
-                                    </p>
-                                  ) : (
-                                    <div className="overflow-x-auto">
-                                      <table className="w-full text-sm min-w-[480px]">
-                                        <thead className="bg-white border-b">
-                                          <tr>
-                                            <th className="text-left py-2 px-3 text-xs text-gray-500">Customer</th>
-                                            <th className="text-left py-2 px-3 text-xs text-gray-500">Invoice</th>
-                                            <th className="text-right py-2 px-3 text-xs text-gray-500">Billed</th>
-                                            <th className="text-right py-2 px-3 text-xs text-gray-500">Paid</th>
-                                            <th className="text-right py-2 px-3 text-xs text-gray-500">Due</th>
+                              <div>
+                                <p className="text-sm font-semibold text-ink mb-2">Customers with due</p>
+                                {customers.length === 0 ? (
+                                  <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                                    Fully recovered for this product
+                                  </p>
+                                ) : (
+                                  <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white">
+                                    <table className="w-full text-sm min-w-[480px]">
+                                      <thead className="bg-neutral-50 border-b border-neutral-100">
+                                        <tr>
+                                          <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Customer</th>
+                                          <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Invoice</th>
+                                          <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Billed</th>
+                                          <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Paid</th>
+                                          <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Due</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {customers.map((c, ci) => (
+                                          <tr key={ci} className="border-b border-neutral-50">
+                                            <td className="py-2.5 px-3">
+                                              <p className="font-medium text-ink">{formatDisplayName(c.customerName)}</p>
+                                              {c.contact && <p className="text-xs text-ink-muted">{c.contact}</p>}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-ink-muted text-xs">{c.invoiceNumber || '—'}</td>
+                                            <td className="py-2.5 px-3 text-right tabular-nums">Rs. {c.billedAmount.toLocaleString()}</td>
+                                            <td className="py-2.5 px-3 text-right text-emerald-700 tabular-nums">Rs. {c.paidAmount.toLocaleString()}</td>
+                                            <td className="py-2.5 px-3 text-right font-semibold text-amber-800 tabular-nums">Rs. {c.remainingAmount.toLocaleString()}</td>
                                           </tr>
-                                        </thead>
-                                        <tbody>
-                                          {customers.map((c, ci) => (
-                                            <tr key={ci} className="border-b border-gray-100 bg-white">
-                                              <td className="py-2.5 px-3">
-                                                <p className="font-medium text-gray-900">{c.customerName}</p>
-                                                {c.contact && <p className="text-xs text-gray-500">{c.contact}</p>}
-                                              </td>
-                                              <td className="py-2.5 px-3 text-gray-600 text-xs">{c.invoiceNumber || '—'}</td>
-                                              <td className="py-2.5 px-3 text-right">Rs. {c.billedAmount.toLocaleString()}</td>
-                                              <td className="py-2.5 px-3 text-right text-emerald-700">Rs. {c.paidAmount.toLocaleString()}</td>
-                                              <td className="py-2.5 px-3 text-right font-semibold text-rose-600">Rs. {c.remainingAmount.toLocaleString()}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  )}
-                                </div>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
           </div>

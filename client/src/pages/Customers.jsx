@@ -141,8 +141,8 @@ const Customers = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Customer Management</h2>
-          <p className="text-gray-600 mt-1">Manage your customer database and credit accounts</p>
+          <h2 className="page-title">Customers</h2>
+          <p className="page-subtitle">Manage customer database and credit accounts</p>
         </div>
         <button
           onClick={() => {

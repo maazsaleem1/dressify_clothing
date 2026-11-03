@@ -99,34 +99,32 @@ const Dashboard = () => {
   ].filter(d => d.value > 0);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 sm:space-y-5">
       {/* Hero strip */}
-      <div className="relative overflow-hidden rounded-2xl bg-ink text-white p-6 sm:p-8 border border-neutral-800 shadow-elevated">
-        <div className="absolute inset-0 opacity-[0.07]" style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-          backgroundSize: '20px 20px'
-        }} />
-        <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="relative overflow-hidden rounded-2xl bg-[#0c0c0e] text-white p-5 sm:p-7 border border-neutral-800/80 shadow-elevated">
+        <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full bg-white/[0.04] blur-2xl pointer-events-none" />
+        <div className="absolute -left-10 bottom-0 w-40 h-40 rounded-full bg-white/[0.03] blur-xl pointer-events-none" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
           <div>
-            <div className="flex items-center gap-2 text-neutral-400 text-xs uppercase tracking-[0.2em] mb-2">
-              <Activity size={14} />
+            <div className="inline-flex items-center gap-2 text-neutral-400 text-[12px] font-medium mb-3 px-2.5 py-1 rounded-full bg-white/[0.06] border border-white/[0.08] normal-case">
+              <Activity size={12} />
               Overview
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
               Business at a glance
             </h1>
-            <p className="text-neutral-400 mt-2 text-sm max-w-md">
-              Track inventory, sales, credit, and production from one clean dashboard.
+            <p className="text-neutral-400 mt-2 text-sm max-w-md leading-relaxed">
+              Inventory, sales, credit recovery aur production — ek jagah.
             </p>
           </div>
-          <div className="flex gap-6 sm:gap-8">
-            <div className="text-center sm:text-right">
-              <p className="text-[10px] uppercase tracking-widest text-neutral-500">Products</p>
-              <p className="text-2xl font-bold mt-1">{stats?.inventory?.totalProducts || 0}</p>
+          <div className="flex gap-3 sm:gap-4">
+            <div className="rounded-2xl bg-white/[0.06] border border-white/[0.08] px-4 py-3 min-w-[100px]">
+              <p className="text-[11px] font-medium text-neutral-500 normal-case">Products</p>
+              <p className="text-2xl font-bold mt-1 tabular-nums">{stats?.inventory?.totalProducts || 0}</p>
             </div>
-            <div className="text-center sm:text-right border-l border-white/10 pl-6 sm:pl-8">
-              <p className="text-[10px] uppercase tracking-widest text-neutral-500">Transactions</p>
-              <p className="text-2xl font-bold mt-1">{stats?.sales?.totalTransactions || 0}</p>
+            <div className="rounded-2xl bg-white/[0.06] border border-white/[0.08] px-4 py-3 min-w-[100px]">
+              <p className="text-[11px] font-medium text-neutral-500 normal-case">Sales</p>
+              <p className="text-2xl font-bold mt-1 tabular-nums">{stats?.sales?.totalTransactions || 0}</p>
             </div>
           </div>
         </div>
@@ -135,14 +133,14 @@ const Dashboard = () => {
       <HomepageSlider />
 
       {/* Stats grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           return (
             <div key={index} className="stat-card group">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 mb-2">
+                  <p className="text-[12px] font-medium text-neutral-500 mb-2 normal-case">
                     {stat.title}
                   </p>
                   <h3 className="text-xl sm:text-2xl font-bold text-ink mb-3 break-words tracking-tight">

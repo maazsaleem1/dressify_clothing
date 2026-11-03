@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText, AlertTriangle, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Eye, DollarSign, CreditCard, Trash2, ShoppingCart, ChevronLeft, ChevronRight, Edit2, Printer, UserPlus, Share2, FileText, AlertTriangle, MoreHorizontal, X, Wallet, AlertCircle } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSales, getCustomers, getInventory, createSale, updateSale, addItemsToSale, addPayment, updateSalePayment, deleteSalePayment, deleteSale, createCustomer } from '../services/api';
@@ -16,6 +16,16 @@ const getCustomerInitial = (name) => {
     return (parts[0][0] || 'C').toUpperCase();
 };
 
+/** Clean display name: "dawood international" → "Dawood International" */
+const formatDisplayName = (name) => {
+    if (!name || typeof name !== 'string') return name || '';
+    return name
+        .trim()
+        .split(/\s+/)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
+};
+
 const Sales = () => {
     const [sales, setSales] = useState([]);
     const [customers, setCustomers] = useState([]);
@@ -28,6 +38,7 @@ const Sales = () => {
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
     const [editingPaymentKey, setEditingPaymentKey] = useState(null);
+    const [originalEditPaymentAmount, setOriginalEditPaymentAmount] = useState(0);
     const [deletingPaymentKey, setDeletingPaymentKey] = useState(null);
     const [showDeletePaymentModal, setShowDeletePaymentModal] = useState(false);
     const [paymentToDelete, setPaymentToDelete] = useState(null);
@@ -231,12 +242,14 @@ const Sales = () => {
                 const selectedInventory = inventory.find(inv => (inv.id || inv._id) === value);
                 if (selectedInventory) {
                     const sizes = selectedInventory.sizes || [];
-                    if (sizes.length > 0 && !updated.size) {
-                        updated.size = sizes[0].size;
-                    }
-                    updated.unitPrice = selectedInventory.sellingPrice || '';
+                    const preferred =
+                        sizes.find((s) => (parseFloat(s.quantity) || 0) > 0) || sizes[0];
+                    updated.size = preferred?.size || '';
+                    updated.unitPrice = selectedInventory.sellingPrice ?? '';
+                } else {
+                    updated.size = '';
+                    updated.unitPrice = '';
                 }
-                updated.size = '';
             }
 
             if (field === 'quantity' || field === 'unitPrice') {
@@ -316,6 +329,9 @@ const Sales = () => {
         }));
     };
 
+    const getSaleItemsTotal = (items = saleFormData.items) =>
+        items.reduce((sum, item) => sum + (parseFloat(item.totalPrice) || ((parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0))), 0);
+
     const handleSubmitSale = async (e) => {
         e.preventDefault();
 
@@ -328,11 +344,22 @@ const Sales = () => {
             return;
         }
 
+        const itemsTotal = getSaleItemsTotal();
+        const paidNow = saleFormData.paidAmount === '' ? 0 : parseFloat(saleFormData.paidAmount) || 0;
+        if (paidNow < 0) {
+            showError('Paid amount cannot be negative');
+            return;
+        }
+        if (paidNow > itemsTotal + 0.001) {
+            showError(`Paid amount cannot exceed bill total (Rs. ${itemsTotal.toLocaleString()})`);
+            return;
+        }
+
         setSaving(true);
         try {
             const saleDataToSubmit = {
                 ...saleFormData,
-                paidAmount: saleFormData.paidAmount === '' ? 0 : parseFloat(saleFormData.paidAmount) || 0,
+                paidAmount: paidNow,
                 items: saleFormData.items.map(item => ({
                     ...item,
                     quantity: parseFloat(item.quantity) || 0,
@@ -369,6 +396,16 @@ const Sales = () => {
             showError('Please enter payment amount');
             return;
         }
+        const amount = parseFloat(paymentData.amount);
+        const remaining = parseFloat(selectedSale?.remainingAmount) || 0;
+        if (!(amount > 0)) {
+            showError('Amount must be greater than 0');
+            return;
+        }
+        if (amount > remaining + 0.001) {
+            showError(`Amount cannot exceed remaining due (Rs. ${remaining.toLocaleString()})`);
+            return;
+        }
         if (!paymentData.addedBy) {
             showError('Please select who is adding this payment');
             return;
@@ -381,7 +418,7 @@ const Sales = () => {
         setSaving(true);
         try {
             await addPayment(selectedSale.id || selectedSale._id, {
-                amount: parseFloat(paymentData.amount),
+                amount,
                 paymentMethod: paymentData.method,
                 method: paymentData.method,
                 notes: paymentData.notes,
@@ -426,7 +463,9 @@ const Sales = () => {
                 dateStr = dateObj.toISOString().split('T')[0];
             }
         }
+        const originalAmt = parseFloat(payment.amount) || 0;
         setEditingPaymentKey(payment._paymentKey || getPaymentKey(payment, 0));
+        setOriginalEditPaymentAmount(originalAmt);
         setEditPaymentData({
             amount: payment.amount != null ? String(payment.amount) : '',
             method: payment.paymentMethod || 'Cash',
@@ -443,6 +482,17 @@ const Sales = () => {
             showError('Please enter payment amount');
             return;
         }
+        const amount = parseFloat(editPaymentData.amount);
+        const remaining = parseFloat(selectedSale.remainingAmount) || 0;
+        const maxAllowed = remaining + (originalEditPaymentAmount || 0);
+        if (!(amount > 0)) {
+            showError('Amount must be greater than 0');
+            return;
+        }
+        if (amount > maxAllowed + 0.001) {
+            showError(`Amount cannot exceed Rs. ${maxAllowed.toLocaleString()} (remaining + this payment)`);
+            return;
+        }
         if (!editPaymentData.editedBy) {
             showError('Please select who is editing this payment');
             return;
@@ -454,7 +504,7 @@ const Sales = () => {
         setSaving(true);
         try {
             await updateSalePayment(selectedSale.id || selectedSale._id, editingPaymentKey, {
-                amount: parseFloat(editPaymentData.amount),
+                amount,
                 paymentMethod: editPaymentData.method,
                 method: editPaymentData.method,
                 notes: editPaymentData.notes,
@@ -464,6 +514,7 @@ const Sales = () => {
             showSuccess('Payment updated successfully!');
             setShowEditPaymentModal(false);
             setEditingPaymentKey(null);
+            setOriginalEditPaymentAmount(0);
             await refreshSelectedSale();
         } catch (error) {
             showError(error.message || 'Error updating payment');
@@ -1045,9 +1096,16 @@ const Sales = () => {
     ];
 
     const statusBadgeClass = (status) => {
-        if (status === 'Paid') return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-        if (status === 'Partial') return 'bg-amber-50 text-amber-700 border-amber-100';
-        return 'bg-rose-50 text-rose-700 border-rose-100';
+        if (status === 'Paid') return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+        if (status === 'Partial') return 'bg-amber-50 text-amber-900 border-amber-200';
+        return 'bg-rose-50 text-rose-800 border-rose-200';
+    };
+
+    const getPaidPercent = (sale) => {
+        const total = parseFloat(sale.totalAmount) || 0;
+        const paid = parseFloat(sale.paidAmount) || 0;
+        if (total <= 0) return 0;
+        return Math.min(100, Math.round((paid / total) * 100));
     };
 
     const openSaleDetails = (sale) => {
@@ -1056,96 +1114,182 @@ const Sales = () => {
         setOpenMenuId(null);
     };
 
+    const openAddPayment = (sale) => {
+        setSelectedSale(sale);
+        setPaymentData({
+            amount: '',
+            method: 'Cash',
+            notes: '',
+            addedBy: '',
+            paymentDate: new Date().toISOString().split('T')[0]
+        });
+        setShowPaymentModal(true);
+        setOpenMenuId(null);
+    };
+
+    const collectionRate = salesSummary.totalAmount > 0
+        ? Math.round((salesSummary.paidAmount / salesSummary.totalAmount) * 100)
+        : 0;
+
+    // Counts are accurate only on "All" (API already filters by status)
+    const filterCounts = !filterStatus
+        ? {
+            '': filteredSales.length,
+            Paid: salesSummary.paidCount,
+            Partial: salesSummary.partialCount,
+            Unpaid: salesSummary.unpaidCount
+        }
+        : null;
+
     return (
-        <div className="space-y-4 sm:space-y-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-                <div className="min-w-0">
-                    <h1 className="text-2xl sm:text-3xl font-bold text-ink tracking-tight hidden sm:block">Sales & Credit</h1>
-                    <p className="text-sm text-neutral-500 sm:mt-1">
-                        {filteredSales.length} sale{filteredSales.length !== 1 ? 's' : ''}
+        <div className="space-y-5 pb-8">
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+                <div>
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                        <h1 className="page-title">Sales & credit</h1>
+                        <span className="text-lg font-medium text-ink-muted tabular-nums">
+                            {filteredSales.length}
+                        </span>
+                    </div>
+                    <p className="page-subtitle">
+                        Invoices, collections & outstanding dues
                         {filterStatus ? ` · ${filterStatus}` : ''}
                     </p>
                 </div>
                 <button
+                    type="button"
                     onClick={() => {
                         resetSaleForm();
                         setShowSaleModal(true);
                     }}
                     className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
                 >
-                    <Plus className="w-4 h-4" />
-                    New Sale
+                    <Plus size={18} />
+                    <span>New sale</span>
                 </button>
             </div>
 
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-                <div className="stat-card !p-3.5 sm:!p-6">
-                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.totalAmount)}</p>
-                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Total Sales</p>
-                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{filteredSales.length} invoices</p>
+                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="w-9 h-9 rounded-xl bg-sky-50 text-sky-700 flex items-center justify-center">
+                            <ShoppingCart size={18} />
+                        </span>
+                    </div>
+                    <p className="text-[11px] font-medium text-ink-muted">Total billed</p>
+                    <p className="text-xl sm:text-2xl font-bold text-ink tabular-nums tracking-tight mt-1 break-words">
+                        {formatMoney(salesSummary.totalAmount)}
+                    </p>
+                    <p className="text-xs text-ink-muted mt-1.5">{filteredSales.length} invoices</p>
                 </div>
-                <div className="stat-card !p-3.5 sm:!p-6">
-                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.paidAmount)}</p>
-                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Collected</p>
-                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.paidCount} paid</p>
+                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                            <Wallet size={18} />
+                        </span>
+                        <span className="text-[11px] font-semibold tabular-nums text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                            {collectionRate}%
+                        </span>
+                    </div>
+                    <p className="text-[11px] font-medium text-ink-muted">Collected</p>
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-700 tabular-nums tracking-tight mt-1 break-words">
+                        {formatMoney(salesSummary.paidAmount)}
+                    </p>
+                    <div className="mt-2.5 h-1.5 rounded-full bg-neutral-100 overflow-hidden">
+                        <div
+                            className="h-full rounded-full bg-emerald-500 transition-all"
+                            style={{ width: `${collectionRate}%` }}
+                        />
+                    </div>
+                    <p className="text-xs text-ink-muted mt-1.5">{salesSummary.paidCount} fully paid</p>
                 </div>
-                <div className="stat-card !p-3.5 sm:!p-6">
-                    <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums break-words leading-tight">{formatMoney(salesSummary.outstanding)}</p>
-                    <p className="text-xs sm:text-sm font-medium text-ink mt-2">Outstanding</p>
-                    <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.partialCount + salesSummary.unpaidCount} pending</p>
+                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="w-9 h-9 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
+                            <CreditCard size={18} />
+                        </span>
+                    </div>
+                    <p className="text-[11px] font-medium text-ink-muted">Outstanding</p>
+                    <p className={`text-xl sm:text-2xl font-bold tabular-nums tracking-tight mt-1 break-words ${salesSummary.outstanding > 0 ? 'text-amber-800' : 'text-ink'}`}>
+                        {formatMoney(salesSummary.outstanding)}
+                    </p>
+                    <p className="text-xs text-ink-muted mt-1.5">
+                        {salesSummary.partialCount + salesSummary.unpaidCount} pending
+                    </p>
                 </div>
-                <div className="stat-card !p-3.5 sm:!p-6 col-span-2 xl:col-span-1">
-                    <div className="flex items-end justify-between gap-4">
-                        <div>
-                            <p className="text-lg sm:text-2xl xl:text-3xl font-semibold tracking-tight text-ink tabular-nums">{salesSummary.unpaidCount}</p>
-                            <p className="text-xs sm:text-sm font-medium text-ink mt-2">Unpaid</p>
-                            <p className="text-[11px] sm:text-xs text-neutral-500 mt-0.5">{salesSummary.partialCount} partial</p>
-                        </div>
-                        <div className="flex items-end gap-1 h-10 mb-1">
+                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 col-span-2 xl:col-span-1">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="w-9 h-9 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center" aria-hidden>
+                            <AlertCircle size={18} strokeWidth={2} />
+                        </span>
+                        <div className="flex items-end gap-1 h-8">
                             {[salesSummary.paidCount, salesSummary.partialCount, salesSummary.unpaidCount].map((v, i) => (
                                 <div
                                     key={i}
-                                    className="w-2 rounded-sm bg-neutral-200"
-                                    style={{ height: `${Math.max(8, Math.min(40, (v / Math.max(1, filteredSales.length)) * 40))}px`, backgroundColor: i === 0 ? '#0a0a0a' : i === 1 ? '#a3a3a3' : '#e5e5e5' }}
+                                    className="w-2 rounded-sm"
+                                    style={{
+                                        height: `${Math.max(6, Math.min(32, (v / Math.max(1, filteredSales.length)) * 32))}px`,
+                                        backgroundColor: i === 0 ? '#059669' : i === 1 ? '#d97706' : '#e11d48'
+                                    }}
+                                    title={i === 0 ? 'Paid' : i === 1 ? 'Partial' : 'Unpaid'}
                                 />
                             ))}
                         </div>
                     </div>
+                    <p className="text-[11px] font-medium text-ink-muted">Unpaid / partial</p>
+                    <p className="text-xl sm:text-2xl font-bold text-ink tabular-nums tracking-tight mt-1">
+                        {salesSummary.unpaidCount}
+                        <span className="text-base font-semibold text-ink-muted"> / {salesSummary.partialCount}</span>
+                    </p>
+                    <p className="text-xs text-ink-muted mt-1.5">Need follow-up</p>
                 </div>
             </div>
 
-            <div className="card !p-0 overflow-hidden">
-                <div className="p-3 sm:p-5 border-b border-neutral-100 flex flex-col gap-3">
-                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin">
-                        {statusFilters.map((f) => (
-                            <button
-                                key={f.value || 'all'}
-                                type="button"
-                                onClick={() => {
-                                    setFilterStatus(f.value);
+            <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                <div className="p-4 sm:p-5 border-b border-neutral-100 space-y-3">
+                    <div className="flex flex-col lg:flex-row gap-3 lg:items-center">
+                        <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-thin">
+                            {statusFilters.map((f) => {
+                                const active = filterStatus === f.value;
+                                const count = filterCounts
+                                    ? filterCounts[f.value === '' ? '' : f.value]
+                                    : (active ? filteredSales.length : null);
+                                return (
+                                    <button
+                                        key={f.value || 'all'}
+                                        type="button"
+                                        onClick={() => {
+                                            setFilterStatus(f.value);
+                                            setCurrentPage(1);
+                                        }}
+                                        className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap shrink-0 min-h-[40px] border ${active
+                                            ? 'bg-ink text-white border-ink'
+                                            : 'bg-white text-ink-muted border-neutral-200 hover:bg-neutral-50'
+                                            }`}
+                                    >
+                                        {f.label}
+                                        {count != null && (
+                                            <span className={`tabular-nums text-[11px] px-1.5 py-0.5 rounded-full ${active ? 'bg-white/20 text-white' : 'bg-neutral-100 text-ink-muted'}`}>
+                                                {count}
+                                            </span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="relative flex-1 lg:max-w-md lg:ml-auto">
+                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" size={18} />
+                            <input
+                                type="text"
+                                placeholder="Search invoices, customers…"
+                                value={searchTerm}
+                                onChange={(e) => {
+                                    setSearchTerm(e.target.value);
                                     setCurrentPage(1);
                                 }}
-                                className={`px-3.5 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap shrink-0 min-h-[40px] ${filterStatus === f.value
-                                    ? 'bg-ink text-white'
-                                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                                    }`}
-                            >
-                                {f.label}
-                            </button>
-                        ))}
-                    </div>
-                    <div className="relative w-full">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 w-4 h-4" />
-                        <input
-                            type="text"
-                            placeholder="Search invoices, customers..."
-                            value={searchTerm}
-                            onChange={(e) => {
-                                setSearchTerm(e.target.value);
-                                setCurrentPage(1);
-                            }}
-                            className="input-field pl-9 !py-2.5 text-sm"
-                        />
+                                className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink placeholder-neutral-400 focus:bg-white focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400 outline-none transition-colors"
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -1154,18 +1298,19 @@ const Sales = () => {
                         <ListItemShimmer count={5} />
                     </div>
                 ) : filteredSales.length === 0 ? (
-                    <div className="py-12 sm:py-16 px-4 sm:px-6 text-center">
-                        <div className="w-12 h-12 rounded-full bg-neutral-100 flex items-center justify-center mx-auto mb-4">
-                            <ShoppingCart className="w-5 h-5 text-neutral-400" />
+                    <div className="py-14 sm:py-20 px-4 sm:px-6 text-center">
+                        <div className="w-14 h-14 rounded-2xl bg-neutral-50 border border-neutral-100 flex items-center justify-center mx-auto mb-4">
+                            <ShoppingCart className="w-6 h-6 text-ink-faint" />
                         </div>
                         <h3 className="text-lg font-semibold text-ink">No sales found</h3>
-                        <p className="text-sm text-neutral-500 mt-1 max-w-sm mx-auto">
+                        <p className="text-sm text-ink-muted mt-1.5 max-w-sm mx-auto text-pretty">
                             {searchTerm || filterStatus
                                 ? 'Try a different search or status filter.'
                                 : 'Create your first sale to start tracking credit and payments.'}
                         </p>
                         {!searchTerm && !filterStatus && (
                             <button
+                                type="button"
                                 onClick={() => {
                                     resetSaleForm();
                                     setShowSaleModal(true);
@@ -1173,7 +1318,7 @@ const Sales = () => {
                                 className="btn-secondary mt-5 inline-flex items-center gap-2"
                             >
                                 <Plus className="w-4 h-4" />
-                                New Sale
+                                New sale
                             </button>
                         )}
                     </div>
@@ -1184,56 +1329,69 @@ const Sales = () => {
                             {paginatedSales.map((sale) => {
                                 const saleId = sale.id || sale._id;
                                 const dateParts = formatDateParts(sale.saleDate);
-                                const customerName = sale.customer?.name || 'Walk-in';
+                                const customerName = formatDisplayName(sale.customer?.name || 'Walk-in');
                                 const remaining = parseFloat(sale.remainingAmount) || 0;
+                                const paidPct = getPaidPercent(sale);
                                 const isMenuOpen = openMenuId === saleId;
 
                                 return (
-                                    <div key={saleId} className="p-4 space-y-3">
+                                    <div key={saleId} className="p-4 space-y-3.5 hover:bg-neutral-50/50">
                                         <div className="flex items-start justify-between gap-3">
                                             <button
                                                 type="button"
                                                 onClick={() => openSaleDetails(sale)}
                                                 className="flex items-center gap-3 min-w-0 text-left"
                                             >
-                                                <div className="w-10 h-10 rounded-full bg-neutral-900 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+                                                <div className="w-10 h-10 rounded-full bg-ink text-white text-xs font-semibold flex items-center justify-center shrink-0">
                                                     {getCustomerInitial(customerName)}
                                                 </div>
                                                 <div className="min-w-0">
                                                     <p className="text-sm font-semibold text-ink truncate">{customerName}</p>
-                                                    <p className="text-xs text-neutral-500 truncate mt-0.5">{sale.invoiceNumber}</p>
+                                                    <p className="text-xs text-ink-muted truncate mt-0.5">
+                                                        {sale.invoiceNumber}
+                                                        <span className="text-neutral-300"> · </span>
+                                                        {dateParts.day}
+                                                    </p>
                                                 </div>
                                             </button>
-                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium border shrink-0 ${statusBadgeClass(sale.paymentStatus)}`}>
+                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border shrink-0 ${statusBadgeClass(sale.paymentStatus)}`}>
                                                 {sale.paymentStatus || 'N/A'}
                                             </span>
                                         </div>
 
-                                        <div className="grid grid-cols-3 gap-2 rounded-xl bg-neutral-50 border border-neutral-100 p-3">
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Total</p>
-                                                <p className="text-sm font-semibold text-ink tabular-nums mt-0.5 break-all">{formatMoney(sale.totalAmount)}</p>
+                                        <div className="rounded-xl bg-neutral-50 border border-neutral-100 p-3 space-y-2.5">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <p className="text-base font-bold text-ink tabular-nums">{formatMoney(sale.totalAmount)}</p>
+                                                <p className="text-xs text-ink-muted tabular-nums">{paidPct}% collected</p>
                                             </div>
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Paid</p>
-                                                <p className="text-sm font-medium text-neutral-700 tabular-nums mt-0.5 break-all">{formatMoney(sale.paidAmount)}</p>
+                                            <div className="h-1.5 rounded-full bg-neutral-200/80 overflow-hidden">
+                                                <div
+                                                    className={`h-full rounded-full ${paidPct >= 100 ? 'bg-emerald-500' : paidPct > 0 ? 'bg-amber-500' : 'bg-neutral-300'}`}
+                                                    style={{ width: `${paidPct}%` }}
+                                                />
                                             </div>
-                                            <div>
-                                                <p className="text-[10px] uppercase tracking-wide text-neutral-400 font-semibold">Due</p>
-                                                <p className={`text-sm font-semibold tabular-nums mt-0.5 break-all ${remaining > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                    {formatMoney(remaining)}
-                                                </p>
+                                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                                <div>
+                                                    <p className="text-ink-muted">Paid</p>
+                                                    <p className="font-semibold text-emerald-700 tabular-nums mt-0.5">{formatMoney(sale.paidAmount)}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-ink-muted">Due</p>
+                                                    <p className={`font-semibold tabular-nums mt-0.5 ${remaining > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                                                        {formatMoney(remaining)}
+                                                    </p>
+                                                </div>
                                             </div>
                                         </div>
 
-                                        <div className="flex items-center justify-between gap-2 text-xs text-neutral-500">
-                                            <span>{dateParts.day} · {dateParts.time}</span>
+                                        <div className="flex items-center justify-between gap-2 text-xs text-ink-muted">
+                                            <span>{dateParts.time}</span>
                                             {sale.addedBy && (
-                                                <span className="px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-700 font-medium">{sale.addedBy}</span>
+                                                <span className="px-2 py-0.5 rounded-md bg-neutral-100 text-ink font-medium">{sale.addedBy}</span>
                                             )}
                                         </div>
 
-                                        <div className="flex items-center gap-2 pt-1">
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
                                                 onClick={() => openSaleDetails(sale)}
@@ -1244,27 +1402,17 @@ const Sales = () => {
                                             {sale.paymentStatus !== 'Paid' && (
                                                 <button
                                                     type="button"
-                                                    onClick={() => {
-                                                        setSelectedSale(sale);
-                                                        setPaymentData({
-                                                            amount: '',
-                                                            method: 'Cash',
-                                                            notes: '',
-                                                            addedBy: '',
-                                                            paymentDate: new Date().toISOString().split('T')[0]
-                                                        });
-                                                        setShowPaymentModal(true);
-                                                    }}
+                                                    onClick={() => openAddPayment(sale)}
                                                     className="flex-1 min-h-[44px] rounded-xl bg-ink text-white text-sm font-medium"
                                                 >
-                                                    Pay
+                                                    Collect
                                                 </button>
                                             )}
                                             <button
                                                 type="button"
                                                 onClick={() => handleEditSale(sale)}
-                                                className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-neutral-600"
-                                                title="Edit"
+                                                className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-ink-muted"
+                                                aria-label="Edit"
                                             >
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
@@ -1272,20 +1420,20 @@ const Sales = () => {
                                                 <button
                                                     type="button"
                                                     onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)}
-                                                    className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-neutral-600"
-                                                    title="More"
+                                                    className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-ink-muted"
+                                                    aria-label="More"
                                                 >
                                                     <MoreHorizontal className="w-4 h-4" />
                                                 </button>
                                                 {isMenuOpen && (
-                                                    <div className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 z-30">
-                                                        <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                    <div className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-neutral-200 rounded-xl shadow-elevated py-1 z-30">
+                                                        <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                             <Printer className="w-3.5 h-3.5" /> Print receipt
                                                         </button>
-                                                        <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                        <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                             <Share2 className="w-3.5 h-3.5" /> Share WhatsApp
                                                         </button>
-                                                        <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                        <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                             <FileText className="w-3.5 h-3.5" /> Send PDF
                                                         </button>
                                                         <div className="my-1 border-t border-neutral-100" />
@@ -1303,117 +1451,117 @@ const Sales = () => {
 
                         {/* Desktop table */}
                         <div className="hidden md:block overflow-x-auto">
-                            <table className="w-full min-w-[900px]">
+                            <table className="w-full min-w-[960px]">
                                 <thead>
-                                    <tr className="border-b border-neutral-100 bg-neutral-50/60">
-                                        <th className="text-left py-3 px-5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Invoice</th>
-                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Customer</th>
-                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Date</th>
-                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Total</th>
-                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Paid</th>
-                                        <th className="text-right py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Due</th>
-                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Status</th>
-                                        <th className="text-left py-3 px-4 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Staff</th>
-                                        <th className="text-right py-3 px-5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Actions</th>
+                                    <tr className="border-b border-neutral-100 bg-neutral-50/80">
+                                        <th className="text-left py-3.5 px-5 text-xs font-medium text-ink-muted">Customer</th>
+                                        <th className="text-left py-3.5 px-4 text-xs font-medium text-ink-muted">Invoice</th>
+                                        <th className="text-left py-3.5 px-4 text-xs font-medium text-ink-muted">Date</th>
+                                        <th className="text-right py-3.5 px-4 text-xs font-medium text-ink-muted">Amount</th>
+                                        <th className="text-left py-3.5 px-4 text-xs font-medium text-ink-muted min-w-[140px]">Payment</th>
+                                        <th className="text-right py-3.5 px-4 text-xs font-medium text-ink-muted">Due</th>
+                                        <th className="text-left py-3.5 px-4 text-xs font-medium text-ink-muted">Status</th>
+                                        <th className="text-left py-3.5 px-4 text-xs font-medium text-ink-muted">Staff</th>
+                                        <th className="text-right py-3.5 px-5 text-xs font-medium text-ink-muted">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {paginatedSales.map((sale) => {
                                         const saleId = sale.id || sale._id;
                                         const dateParts = formatDateParts(sale.saleDate);
-                                        const customerName = sale.customer?.name || 'Walk-in';
+                                        const customerName = formatDisplayName(sale.customer?.name || 'Walk-in');
                                         const remaining = parseFloat(sale.remainingAmount) || 0;
+                                        const paidPct = getPaidPercent(sale);
                                         const isMenuOpen = openMenuId === saleId;
 
                                         return (
-                                            <tr key={saleId} className="border-b border-neutral-100 hover:bg-neutral-50/80 transition-colors">
+                                            <tr key={saleId} className="border-b border-neutral-50 hover:bg-neutral-50/80 transition-colors group">
                                                 <td className="py-4 px-5">
                                                     <button
                                                         type="button"
                                                         onClick={() => openSaleDetails(sale)}
-                                                        className="text-sm font-medium text-ink hover:underline underline-offset-2 text-left"
+                                                        className="flex items-center gap-2.5 min-w-0 text-left"
                                                     >
-                                                        {sale.invoiceNumber}
-                                                    </button>
-                                                </td>
-                                                <td className="py-4 px-4">
-                                                    <div className="flex items-center gap-2.5 min-w-0">
-                                                        <div className="w-8 h-8 rounded-full bg-neutral-900 text-white text-xs font-semibold flex items-center justify-center shrink-0">
+                                                        <div className="w-9 h-9 rounded-full bg-ink text-white text-xs font-semibold flex items-center justify-center shrink-0">
                                                             {getCustomerInitial(customerName)}
                                                         </div>
                                                         <div className="min-w-0">
-                                                            <p className="text-sm font-medium text-ink truncate">{customerName}</p>
+                                                            <p className="text-sm font-semibold text-ink truncate group-hover:underline underline-offset-2">{customerName}</p>
                                                             {sale.customer?.shopName && (
-                                                                <p className="text-xs text-neutral-500 truncate">{sale.customer.shopName}</p>
+                                                                <p className="text-xs text-ink-muted truncate">{formatDisplayName(sale.customer.shopName)}</p>
                                                             )}
                                                         </div>
-                                                    </div>
+                                                    </button>
+                                                </td>
+                                                <td className="py-4 px-4">
+                                                    <p className="text-sm font-medium text-ink tabular-nums">{sale.invoiceNumber}</p>
                                                 </td>
                                                 <td className="py-4 px-4 whitespace-nowrap">
                                                     <p className="text-sm text-ink">{dateParts.day}</p>
-                                                    <p className="text-xs text-neutral-500">{dateParts.time}</p>
+                                                    <p className="text-xs text-ink-muted">{dateParts.time}</p>
                                                 </td>
-                                                <td className="py-4 px-4 text-right text-sm font-medium text-ink tabular-nums whitespace-nowrap">
+                                                <td className="py-4 px-4 text-right text-sm font-semibold text-ink tabular-nums whitespace-nowrap">
                                                     {formatMoney(sale.totalAmount)}
                                                 </td>
-                                                <td className="py-4 px-4 text-right text-sm text-neutral-600 tabular-nums whitespace-nowrap">
-                                                    {formatMoney(sale.paidAmount)}
+                                                <td className="py-4 px-4">
+                                                    <div className="space-y-1.5 min-w-[120px]">
+                                                        <div className="flex items-center justify-between gap-2 text-xs">
+                                                            <span className="text-emerald-700 font-medium tabular-nums">{formatMoney(sale.paidAmount)}</span>
+                                                            <span className="text-ink-muted tabular-nums">{paidPct}%</span>
+                                                        </div>
+                                                        <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full ${paidPct >= 100 ? 'bg-emerald-500' : paidPct > 0 ? 'bg-amber-500' : 'bg-neutral-300'}`}
+                                                                style={{ width: `${paidPct}%` }}
+                                                            />
+                                                        </div>
+                                                    </div>
                                                 </td>
                                                 <td className="py-4 px-4 text-right text-sm font-semibold tabular-nums whitespace-nowrap">
-                                                    <span className={remaining > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                    <span className={remaining > 0 ? 'text-amber-800' : 'text-emerald-700'}>
                                                         {formatMoney(remaining)}
                                                     </span>
                                                 </td>
                                                 <td className="py-4 px-4">
-                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${statusBadgeClass(sale.paymentStatus)}`}>
+                                                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${statusBadgeClass(sale.paymentStatus)}`}>
                                                         {sale.paymentStatus || 'N/A'}
                                                     </span>
                                                 </td>
                                                 <td className="py-4 px-4">
                                                     {sale.addedBy ? (
-                                                        <span className="inline-flex px-2 py-1 rounded-md text-xs font-medium bg-neutral-100 text-neutral-700">
+                                                        <span className="inline-flex px-2 py-1 rounded-lg text-xs font-medium bg-neutral-50 text-ink border border-neutral-200">
                                                             {sale.addedBy}
                                                         </span>
                                                     ) : (
-                                                        <span className="text-neutral-400 text-sm">—</span>
+                                                        <span className="text-ink-faint text-sm">—</span>
                                                     )}
                                                 </td>
                                                 <td className="py-4 px-5">
-                                                    <div className="flex items-center justify-end gap-1">
-                                                        <button type="button" onClick={() => openSaleDetails(sale)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="View">
+                                                    <div className="flex items-center justify-end gap-0.5">
+                                                        <button type="button" onClick={() => openSaleDetails(sale)} className="w-9 h-9 text-ink-muted hover:text-ink hover:bg-neutral-100 rounded-lg flex items-center justify-center transition-colors" aria-label="View" title="View">
                                                             <Eye className="w-4 h-4" />
                                                         </button>
                                                         {sale.paymentStatus !== 'Paid' && (
-                                                            <button type="button" onClick={() => {
-                                                                setSelectedSale(sale);
-                                                                setPaymentData({
-                                                                    amount: '',
-                                                                    method: 'Cash',
-                                                                    notes: '',
-                                                                    addedBy: '',
-                                                                    paymentDate: new Date().toISOString().split('T')[0]
-                                                                });
-                                                                setShowPaymentModal(true);
-                                                            }} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Add Payment">
+                                                            <button type="button" onClick={() => openAddPayment(sale)} className="w-9 h-9 text-ink-muted hover:text-ink hover:bg-neutral-100 rounded-lg flex items-center justify-center transition-colors" aria-label="Collect payment" title="Collect">
                                                                 <DollarSign className="w-4 h-4" />
                                                             </button>
                                                         )}
-                                                        <button type="button" onClick={() => handleEditSale(sale)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="Edit">
+                                                        <button type="button" onClick={() => handleEditSale(sale)} className="w-9 h-9 text-ink-muted hover:text-ink hover:bg-neutral-100 rounded-lg flex items-center justify-center transition-colors" aria-label="Edit" title="Edit">
                                                             <Edit2 className="w-4 h-4" />
                                                         </button>
                                                         <div className="relative" ref={isMenuOpen ? menuRef : null}>
-                                                            <button type="button" onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)} className="p-2 text-neutral-500 hover:text-ink hover:bg-neutral-100 rounded-lg transition-colors" title="More actions">
+                                                            <button type="button" onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)} className="w-9 h-9 text-ink-muted hover:text-ink hover:bg-neutral-100 rounded-lg flex items-center justify-center transition-colors" aria-label="More actions" title="More">
                                                                 <MoreHorizontal className="w-4 h-4" />
                                                             </button>
                                                             {isMenuOpen && (
-                                                                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-200 rounded-xl shadow-lg py-1 z-20">
-                                                                    <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-neutral-200 rounded-xl shadow-elevated py-1 z-20">
+                                                                    <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                                         <Printer className="w-3.5 h-3.5" /> Print receipt
                                                                     </button>
-                                                                    <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                    <button type="button" onClick={() => { handleShareReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                                         <Share2 className="w-3.5 h-3.5" /> Share WhatsApp
                                                                     </button>
-                                                                    <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 flex items-center gap-2">
+                                                                    <button type="button" onClick={() => { handleSharePdfWhatsApp(sale); setOpenMenuId(null); }} className="w-full px-3 py-2 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
                                                                         <FileText className="w-3.5 h-3.5" /> Send PDF
                                                                     </button>
                                                                     <div className="my-1 border-t border-neutral-100" />
@@ -1433,26 +1581,33 @@ const Sales = () => {
                         </div>
 
                         {totalPages > 1 && (
-                            <div className="flex justify-between items-center gap-2 px-3 sm:px-5 py-4 border-t border-neutral-100">
-                                <button
-                                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                                    disabled={currentPage === 1}
-                                    className="btn-secondary flex items-center gap-1 sm:gap-2 disabled:opacity-50 !py-2 !px-3 !text-sm min-h-[40px]"
-                                >
-                                    <ChevronLeft className="w-4 h-4" />
-                                    <span className="hidden xs:inline sm:inline">Previous</span>
-                                </button>
-                                <span className="text-xs sm:text-sm text-neutral-500 whitespace-nowrap">
-                                    {currentPage} / {totalPages}
-                                </span>
-                                <button
-                                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                                    disabled={currentPage === totalPages}
-                                    className="btn-secondary flex items-center gap-1 sm:gap-2 disabled:opacity-50 !py-2 !px-3 !text-sm min-h-[40px]"
-                                >
-                                    <span className="hidden xs:inline sm:inline">Next</span>
-                                    <ChevronRight className="w-4 h-4" />
-                                </button>
+                            <div className="flex justify-between items-center gap-3 px-4 sm:px-5 py-4 border-t border-neutral-100 bg-neutral-50/40">
+                                <p className="text-xs text-ink-muted tabular-nums hidden sm:block">
+                                    Page {currentPage} of {totalPages} · {filteredSales.length} sales
+                                </p>
+                                <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                        disabled={currentPage === 1}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink disabled:opacity-40 hover:bg-neutral-50 min-h-[40px]"
+                                    >
+                                        <ChevronLeft className="w-4 h-4" />
+                                        Previous
+                                    </button>
+                                    <span className="text-xs text-ink-muted tabular-nums sm:hidden">
+                                        {currentPage}/{totalPages}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink disabled:opacity-40 hover:bg-neutral-50 min-h-[40px]"
+                                    >
+                                        Next
+                                        <ChevronRight className="w-4 h-4" />
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </>
@@ -1460,727 +1615,696 @@ const Sales = () => {
             </div>
 
             {/* Sale Modal */}
-            {showSaleModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-4xl w-full max-h-[92dvh] overflow-y-auto">
-                        <div className="p-6 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                                <div>
-                                    <h3 className="text-xl font-bold text-gray-800">
-                                        {editingSale ? 'Edit Sale' : 'Create New Sale'}
+            {showSaleModal && (() => {
+                const saleItemsTotal = getSaleItemsTotal();
+                const paidNow = saleFormData.paidAmount === '' ? 0 : parseFloat(saleFormData.paidAmount) || 0;
+                const paidExceedsTotal = saleFormData.paidAmount !== '' && paidNow > saleItemsTotal + 0.001;
+                const dueNow = Math.max(0, saleItemsTotal - paidNow);
+                const linePreview =
+                    (parseFloat(currentItem.quantity) || 0) * (parseFloat(currentItem.unitPrice) || 0);
+
+                return (
+                    <div
+                        className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+                        onClick={() => {
+                            setShowSaleModal(false);
+                            resetSaleForm();
+                        }}
+                    >
+                        <div
+                            className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-3xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 sm:px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">
+                                        {editingSale ? 'Edit sale' : 'New sale'}
                                     </h3>
-                                    {editingSale && (
-                                        <p className="text-sm text-gray-600">
-                                            Invoice: {editingSale.invoiceNumber}
-                                        </p>
-                                    )}
+                                    <p className="text-sm text-ink-muted mt-0.5">
+                                        {editingSale
+                                            ? `Invoice ${editingSale.invoiceNumber}`
+                                            : 'Add products · set paid amount · save'}
+                                    </p>
                                 </div>
-                                <button
-                                    onClick={() => {
-                                        setShowSaleModal(false);
-                                        resetSaleForm();
-                                    }}
-                                    className="text-gray-400 hover:text-gray-600"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-
-                        <form onSubmit={handleSubmitSale} className="p-6">
-                            <div className="space-y-4">
-                                <div>
-                                    <div className="flex items-center justify-between mb-1">
-                                        <label className="block text-sm font-medium text-gray-700">Customer *</label>
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowCustomerModal(true)}
-                                            className="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-medium"
-                                        >
-                                            <UserPlus size={16} />
-                                            Add New Customer
-                                        </button>
-                                    </div>
-                                    <select
-                                        required
-                                        value={saleFormData.customer}
-                                        onChange={(e) => setSaleFormData({ ...saleFormData, customer: e.target.value })}
-                                        className="input-field"
-                                    >
-                                        <option value="">Select Customer</option>
-                                        {customers.map(customer => (
-                                            <option key={customer.id || customer._id} value={customer.id || customer._id}>
-                                                {customer.name} {customer.shopName ? `(${customer.shopName})` : ''} {customer.contact ? `- ${customer.contact}` : ''}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className="border-t border-gray-200 pt-4">
-                                    <h4 className="font-semibold text-gray-700 mb-3">Add Items</h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-3">
-                                        <select
-                                            value={currentItem.inventory}
-                                            onChange={(e) => handleCurrentItemChange('inventory', e.target.value)}
-                                            className="input-field"
-                                        >
-                                            <option value="">Select Product</option>
-                                            {inventory.map(item => {
-                                                const addedDate = item.createdAt ? formatDate(item.createdAt) : 'N/A';
-                                                return (
-                                                    <option key={item.id || item._id} value={item.id || item._id}>
-                                                        {item.productName} (Added: {addedDate})
-                                                    </option>
-                                                );
-                                            })}
-                                        </select>
-                                        <select
-                                            value={currentItem.size}
-                                            onChange={(e) => handleCurrentItemChange('size', e.target.value)}
-                                            className="input-field"
-                                            disabled={!currentItem.inventory}
-                                        >
-                                            <option value="">Select Size</option>
-                                            {getSelectedInventorySizes().map(size => (
-                                                <option key={size.size} value={size.size}>
-                                                    {size.size} (Qty: {size.quantity})
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <input
-                                            type="text"
-                                            value={currentItem.quantity}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                    handleCurrentItemChange('quantity', value);
-                                                }
-                                            }}
-                                            className="input-field"
-                                            placeholder="Qty"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={currentItem.unitPrice}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                    handleCurrentItemChange('unitPrice', value);
-                                                }
-                                            }}
-                                            className="input-field"
-                                            placeholder="Unit Price"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={handleAddItem}
-                                            className="btn-secondary"
-                                        >
-                                            Add Item
-                                        </button>
-                                    </div>
-
-                                    {saleFormData.items.length > 0 && (
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-sm">
-                                                <thead>
-                                                    <tr className="border-b border-gray-200">
-                                                        <th className="text-left py-2 px-3">Product</th>
-                                                        <th className="text-left py-2 px-3">Size</th>
-                                                        <th className="text-left py-2 px-3">Qty</th>
-                                                        <th className="text-left py-2 px-3">Unit Price</th>
-                                                        <th className="text-left py-2 px-3">Total</th>
-                                                        <th className="text-left py-2 px-3">Added on sale</th>
-                                                        <th className="text-left py-2 px-3">Actions</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {saleFormData.items.map((item, index) => (
-                                                        <tr key={index} className="border-b border-gray-100">
-                                                            <td className="py-2 px-3">
-                                                                <div>
-                                                                    <div className="font-medium">{item.productName}</div>
-                                                                </div>
-                                                            </td>
-                                                            <td className="py-2 px-3">{item.size}</td>
-                                                            <td className="py-2 px-3">
-                                                                <input
-                                                                    type="text"
-                                                                    value={item.quantity}
-                                                                    onChange={(e) => {
-                                                                        const value = e.target.value;
-                                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                                            handleItemChange(index, 'quantity', value);
-                                                                        }
-                                                                    }}
-                                                                    className="input-field w-20"
-                                                                />
-                                                            </td>
-                                                            <td className="py-2 px-3">
-                                                                <input
-                                                                    type="text"
-                                                                    value={item.unitPrice}
-                                                                    onChange={(e) => {
-                                                                        const value = e.target.value;
-                                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                                            handleItemChange(index, 'unitPrice', value);
-                                                                        }
-                                                                    }}
-                                                                    className="input-field w-24"
-                                                                />
-                                                            </td>
-                                                            <td className="py-2 px-3">Rs. {item.totalPrice?.toLocaleString() || 0}</td>
-                                                            <td className="py-2 px-3 text-xs text-gray-600">
-                                                                {formatLineAddedToSale(item, editingSale?.saleDate)}
-                                                            </td>
-                                                            <td className="py-2 px-3">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleRemoveItem(index)}
-                                                                    className="text-red-600 hover:text-red-800"
-                                                                >
-                                                                    <Trash2 className="w-4 h-4" />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                                <tfoot>
-                                                    <tr>
-                                                        <td colSpan="4" className="text-right py-2 px-3 font-semibold">Total:</td>
-                                                        <td className="py-2 px-3 font-semibold">
-                                                            Rs. {saleFormData.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0).toLocaleString()}
-                                                        </td>
-                                                        <td></td>
-                                                    </tr>
-                                                </tfoot>
-                                            </table>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Paid Amount</label>
-                                        <input
-                                            type="text"
-                                            value={saleFormData.paidAmount}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                    setSaleFormData({ ...saleFormData, paidAmount: value });
-                                                }
-                                            }}
-                                            className="input-field"
-                                            placeholder="0"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Sale Type</label>
-                                        <select
-                                            value={saleFormData.saleType}
-                                            onChange={(e) => setSaleFormData({ ...saleFormData, saleType: e.target.value })}
-                                            className="input-field"
-                                        >
-                                            <option value="Cash">Cash</option>
-                                            <option value="Credit">Credit</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                {!editingSale && (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Who is adding this sale? *</label>
-                                        <select
-                                            required
-                                            value={saleFormData.addedBy}
-                                            onChange={(e) => setSaleFormData({ ...saleFormData, addedBy: e.target.value })}
-                                            className="input-field"
-                                        >
-                                            <option value="">Select staff member</option>
-                                            {STAFF_MEMBERS.map(name => (
-                                                <option key={name} value={name}>{name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                                    <textarea
-                                        value={saleFormData.notes}
-                                        onChange={(e) => setSaleFormData({ ...saleFormData, notes: e.target.value })}
-                                        className="input-field"
-                                        rows="3"
-                                        placeholder="Additional notes..."
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-3 mt-6">
                                 <button
                                     type="button"
                                     onClick={() => {
                                         setShowSaleModal(false);
                                         resetSaleForm();
                                     }}
-                                    className="btn-secondary"
+                                    className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                                    aria-label="Close"
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="btn-primary"
-                                >
-                                    {saving ? (
-                                        <>
-                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                                            <span>{editingSale ? 'Updating Sale...' : 'Creating Sale...'}</span>
-                                        </>
-                                    ) : (
-                                        <span>{editingSale ? 'Update Sale' : 'Create Sale'}</span>
-                                    )}
+                                    <X size={18} />
                                 </button>
                             </div>
-                        </form>
-                    </div>
-                </div>
-            )}
 
-            {/* Details Modal */}
-            {showDetailsModal && selectedSale && (
-                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-2xl w-full max-h-[92dvh] overflow-y-auto">
-                        <div className="p-6 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                                <h3 className="text-xl font-bold text-gray-800">Sale Details</h3>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => handlePrintReceipt(selectedSale)}
-                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-colors"
-                                        title="Print Receipt"
+                            <form onSubmit={handleSubmitSale} className="p-4 sm:p-6 space-y-4">
+                                {/* Customer */}
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label className="text-sm font-semibold text-ink">Customer</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCustomerModal(true)}
+                                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink px-2.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50"
+                                        >
+                                            <UserPlus size={14} />
+                                            New customer
+                                        </button>
+                                    </div>
+                                    <select
+                                        required
+                                        value={saleFormData.customer}
+                                        onChange={(e) => setSaleFormData({ ...saleFormData, customer: e.target.value })}
+                                        className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400 outline-none"
                                     >
-                                        <Printer size={18} />
-                                        Print Receipt
-                                    </button>
-                                    <button
-                                        onClick={() => handleShareReceipt(selectedSale)}
-                                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 transition-colors"
-                                        title="Share text via WhatsApp"
-                                    >
-                                        <Share2 size={18} />
-                                        Share WhatsApp
-                                    </button>
-                                    <button
-                                        onClick={() => handleSharePdfWhatsApp(selectedSale)}
-                                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 transition-colors"
-                                        title="Send PDF to WhatsApp"
-                                    >
-                                        <FileText size={18} />
-                                        Send PDF to WhatsApp
-                                    </button>
-                                    <button
-                                        onClick={() => setShowDetailsModal(false)}
-                                        className="text-gray-400 hover:text-gray-600"
-                                    >
-                                        ✕
-                                    </button>
+                                        <option value="">Select customer</option>
+                                        {customers.map((customer) => (
+                                            <option key={customer.id || customer._id} value={customer.id || customer._id}>
+                                                {formatDisplayName(customer.name)}
+                                                {customer.shopName ? ` · ${customer.shopName}` : ''}
+                                                {customer.contact ? ` · ${customer.contact}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
-                            </div>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <p className="text-sm text-gray-600">Invoice Number</p>
-                                    <p className="font-semibold">{selectedSale.invoiceNumber}</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-600">Date</p>
-                                    <p className="font-semibold">{formatDate(selectedSale.saleDate)}</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-600">Customer</p>
-                                    <p className="font-semibold">{selectedSale.customer?.name || 'N/A'}</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-600">Status</p>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${selectedSale.paymentStatus === 'Paid' ? 'bg-green-100 text-green-800' :
-                                        selectedSale.paymentStatus === 'Partial' ? 'bg-yellow-100 text-yellow-800' :
-                                            'bg-red-100 text-red-800'
-                                        }`}>
-                                        {selectedSale.paymentStatus}
-                                    </span>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-600">Sale added by</p>
-                                    <p className="font-semibold">{selectedSale.addedBy || '—'}</p>
-                                </div>
-                            </div>
-                            <div className="border-t border-gray-200 pt-4">
-                                <h4 className="font-semibold mb-3">Items</h4>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                        <thead>
-                                            <tr className="border-b border-gray-200">
-                                                <th className="text-left py-2">Product</th>
-                                                <th className="text-left py-2">Size</th>
-                                                <th className="text-left py-2">Qty</th>
-                                                <th className="text-left py-2">Unit Price</th>
-                                                <th className="text-left py-2">Total</th>
-                                                <th className="text-left py-2">Added on sale</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {selectedSale.items?.map((item, index) => (
-                                                <tr key={index} className="border-b border-gray-100">
-                                                    <td className="py-2">{item.productName}</td>
-                                                    <td className="py-2">{item.size}</td>
-                                                    <td className="py-2">{item.quantity}</td>
-                                                    <td className="py-2">Rs. {item.unitPrice?.toLocaleString()}</td>
-                                                    <td className="py-2">Rs. {item.totalPrice?.toLocaleString()}</td>
-                                                    <td className="py-2 text-xs text-gray-600">
-                                                        {formatLineAddedToSale(item, selectedSale.saleDate)}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                        <tfoot>
-                                            <tr>
-                                                <td colSpan="4" className="text-right py-2 font-semibold">Total Amount:</td>
-                                                <td className="py-2 font-semibold" colSpan="2">Rs. {selectedSale.totalAmount?.toLocaleString()}</td>
-                                            </tr>
-                                            <tr>
-                                                <td colSpan="4" className="text-right py-2">Paid Amount:</td>
-                                                <td className="py-2" colSpan="2">Rs. {selectedSale.paidAmount?.toLocaleString()}</td>
-                                            </tr>
-                                            <tr>
-                                                <td colSpan="4" className="text-right py-2 font-semibold">Remaining:</td>
-                                                <td className="py-2 font-semibold" colSpan="2">Rs. {selectedSale.remainingAmount?.toLocaleString()}</td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                            </div>
 
-                            {/* Payment History Section */}
-                            <div className="border-t border-gray-200 pt-4 mt-4">
-                                <div className="flex justify-between items-center mb-4">
-                                    <div>
-                                        <h4 className="font-semibold text-lg">Payment History</h4>
-                                        <p className="text-sm text-gray-600 mt-1">
-                                            Kis Kis Din Kitne Paise Mile (All Payments for This Sale)
+                                {/* Items */}
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                                    <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100">
+                                        <h4 className="text-sm font-semibold text-ink">Products</h4>
+                                        <p className="text-xs text-ink-muted mt-0.5">
+                                            Product select pe size auto fill · phir qty &amp; add
                                         </p>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="p-4 sm:p-5 space-y-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
+                                            <div className="lg:col-span-4">
+                                                <label className="text-[11px] font-medium text-ink-muted mb-1 block">Product</label>
+                                                <select
+                                                    value={currentItem.inventory}
+                                                    onChange={(e) => handleCurrentItemChange('inventory', e.target.value)}
+                                                    className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                                >
+                                                    <option value="">Select product</option>
+                                                    {inventory.map((item) => (
+                                                        <option key={item.id || item._id} value={item.id || item._id}>
+                                                            {item.productName}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="lg:col-span-2">
+                                                <label className="text-[11px] font-medium text-ink-muted mb-1 block">Size</label>
+                                                <select
+                                                    value={currentItem.size}
+                                                    onChange={(e) => handleCurrentItemChange('size', e.target.value)}
+                                                    className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none disabled:opacity-50"
+                                                    disabled={!currentItem.inventory}
+                                                >
+                                                    <option value="">Size</option>
+                                                    {getSelectedInventorySizes().map((size) => (
+                                                        <option key={size.size} value={size.size}>
+                                                            {size.size} ({size.quantity})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="lg:col-span-2">
+                                                <label className="text-[11px] font-medium text-ink-muted mb-1 block">Qty</label>
+                                                <input
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    value={currentItem.quantity}
+                                                    onChange={(e) => {
+                                                        const value = e.target.value;
+                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                            handleCurrentItemChange('quantity', value);
+                                                        }
+                                                    }}
+                                                    className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink tabular-nums focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                                    placeholder="0"
+                                                />
+                                            </div>
+                                            <div className="lg:col-span-2">
+                                                <label className="text-[11px] font-medium text-ink-muted mb-1 block">Rate</label>
+                                                <input
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    value={currentItem.unitPrice}
+                                                    onChange={(e) => {
+                                                        const value = e.target.value;
+                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                            handleCurrentItemChange('unitPrice', value);
+                                                        }
+                                                    }}
+                                                    className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink tabular-nums focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                                    placeholder="0"
+                                                />
+                                            </div>
+                                            <div className="lg:col-span-2 flex items-end">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleAddItem}
+                                                    className="w-full min-h-[42px] rounded-xl bg-ink text-white text-sm font-semibold hover:bg-ink-soft transition-colors"
+                                                >
+                                                    Add
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {linePreview > 0 && (
+                                            <p className="text-xs text-ink-muted tabular-nums">
+                                                Line total: <span className="font-semibold text-ink">{formatMoney(linePreview)}</span>
+                                            </p>
+                                        )}
+
+                                        {saleFormData.items.length > 0 ? (
+                                            <div className="rounded-xl border border-neutral-200 overflow-hidden">
+                                                <div className="overflow-x-auto">
+                                                    <table className="w-full text-sm min-w-[560px]">
+                                                        <thead className="bg-neutral-50 border-b border-neutral-100">
+                                                            <tr>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Product</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Size</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Qty</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Rate</th>
+                                                                <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Total</th>
+                                                                <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted" />
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-neutral-50">
+                                                            {saleFormData.items.map((item, index) => (
+                                                                <tr key={index}>
+                                                                    <td className="py-2.5 px-3 font-medium text-ink">{item.productName}</td>
+                                                                    <td className="py-2.5 px-3 text-ink-muted">{item.size}</td>
+                                                                    <td className="py-2.5 px-3">
+                                                                        <input
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            value={item.quantity}
+                                                                            onChange={(e) => {
+                                                                                const value = e.target.value;
+                                                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                                                    handleItemChange(index, 'quantity', value);
+                                                                                }
+                                                                            }}
+                                                                            className="w-16 px-2 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm tabular-nums outline-none focus:ring-2 focus:ring-neutral-900/10"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="py-2.5 px-3">
+                                                                        <input
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            value={item.unitPrice}
+                                                                            onChange={(e) => {
+                                                                                const value = e.target.value;
+                                                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                                                    handleItemChange(index, 'unitPrice', value);
+                                                                                }
+                                                                            }}
+                                                                            className="w-24 px-2 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm tabular-nums outline-none focus:ring-2 focus:ring-neutral-900/10"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-ink">
+                                                                        {formatMoney(item.totalPrice || 0)}
+                                                                    </td>
+                                                                    <td className="py-2.5 px-3 text-right">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleRemoveItem(index)}
+                                                                            className="w-8 h-8 rounded-lg text-rose-600 hover:bg-rose-50 inline-flex items-center justify-center"
+                                                                            aria-label="Remove item"
+                                                                        >
+                                                                            <Trash2 className="w-4 h-4" />
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-3 px-3 py-3 bg-neutral-50 border-t border-neutral-100">
+                                                    <p className="text-xs text-ink-muted">{saleFormData.items.length} line{saleFormData.items.length !== 1 ? 's' : ''}</p>
+                                                    <p className="text-sm font-bold text-ink tabular-nums">
+                                                        Bill {formatMoney(saleItemsTotal)}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-ink-muted text-center py-6 border border-dashed border-neutral-200 rounded-xl">
+                                                No products yet — select product, size fills automatically
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Payment */}
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-4">
+                                    <div className="flex flex-wrap items-end justify-between gap-2">
+                                        <div>
+                                            <h4 className="text-sm font-semibold text-ink">Payment</h4>
+                                            <p className="text-xs text-ink-muted mt-0.5">
+                                                Max {formatMoney(saleItemsTotal)} · 0 to full bill
+                                            </p>
+                                        </div>
+                                        {saleItemsTotal > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSaleFormData({ ...saleFormData, paidAmount: String(saleItemsTotal) })}
+                                                className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-ink"
+                                            >
+                                                Pay full bill
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-[11px] font-medium text-ink-muted mb-1 block">Paid amount</label>
+                                            <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                value={saleFormData.paidAmount}
+                                                onChange={(e) => {
+                                                    const value = e.target.value;
+                                                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                        setSaleFormData({ ...saleFormData, paidAmount: value });
+                                                    }
+                                                }}
+                                                className={`w-full px-3.5 py-2.5 rounded-xl text-sm tabular-nums outline-none border ${paidExceedsTotal
+                                                    ? 'bg-rose-50 border-rose-300 text-rose-800 focus:ring-2 focus:ring-rose-200'
+                                                    : 'bg-neutral-50 border-neutral-200 text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10'
+                                                    }`}
+                                                placeholder="0"
+                                            />
+                                            {paidExceedsTotal ? (
+                                                <p className="text-xs text-rose-600 mt-1.5 font-medium">
+                                                    Paid bill se zyada nahi ho sakta (max {formatMoney(saleItemsTotal)})
+                                                </p>
+                                            ) : (
+                                                <p className="text-xs text-ink-muted mt-1.5 tabular-nums">
+                                                    Due after this: {formatMoney(dueNow)}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <label className="text-[11px] font-medium text-ink-muted mb-1 block">Sale type</label>
+                                            <select
+                                                value={saleFormData.saleType}
+                                                onChange={(e) => setSaleFormData({ ...saleFormData, saleType: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                            >
+                                                <option value="Cash">Cash</option>
+                                                <option value="Credit">Credit</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {!editingSale && (
+                                        <div>
+                                            <label className="text-[11px] font-medium text-ink-muted mb-1 block">Added by</label>
+                                            <select
+                                                required
+                                                value={saleFormData.addedBy}
+                                                onChange={(e) => setSaleFormData({ ...saleFormData, addedBy: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                            >
+                                                <option value="">Select staff</option>
+                                                {STAFF_MEMBERS.map((name) => (
+                                                    <option key={name} value={name}>{name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <label className="text-[11px] font-medium text-ink-muted mb-1 block">Notes</label>
+                                        <textarea
+                                            value={saleFormData.notes}
+                                            onChange={(e) => setSaleFormData({ ...saleFormData, notes: e.target.value })}
+                                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none resize-none"
+                                            rows="2"
+                                            placeholder="Optional notes…"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowSaleModal(false);
+                                            resetSaleForm();
+                                        }}
+                                        className="min-h-[44px] px-4 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink hover:bg-neutral-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={saving || paidExceedsTotal || saleFormData.items.length === 0}
+                                        className="min-h-[44px] px-5 rounded-xl bg-ink text-white text-sm font-semibold hover:bg-ink-soft disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                                    >
+                                        {saving ? (editingSale ? 'Updating…' : 'Creating…') : (editingSale ? 'Update sale' : 'Create sale')}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Details Modal */}
+            {showDetailsModal && selectedSale && (() => {
+                const customerName = formatDisplayName(selectedSale.customer?.name || 'Walk-in');
+                const totalAmount = parseFloat(selectedSale.totalAmount) || 0;
+                const paidAmount = parseFloat(selectedSale.paidAmount) || 0;
+                const remainingAmount = parseFloat(selectedSale.remainingAmount) || 0;
+                const paidPct = totalAmount > 0 ? Math.min(100, Math.round((paidAmount / totalAmount) * 100)) : 0;
+                const existingPayments = selectedSale.payments || [];
+                const totalFromPayments = existingPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+
+                let filteredPayments = [...existingPayments];
+                if (paymentHistoryFilter === 'Paid') {
+                    filteredPayments = remainingAmount === 0 && paidAmount > 0 ? existingPayments : [];
+                } else if (paymentHistoryFilter === 'Partial') {
+                    filteredPayments = remainingAmount > 0 && paidAmount > 0 ? existingPayments : [];
+                } else if (paymentHistoryFilter === 'Unpaid') {
+                    filteredPayments = [];
+                }
+
+                const paymentsToShow = (paymentHistoryFilter === 'All' ? existingPayments : filteredPayments)
+                    .map((p, i) => {
+                        const origIdx = existingPayments.indexOf(p);
+                        return {
+                            ...p,
+                            _paymentKey: p.paymentId || p.collectionId || `idx-${origIdx >= 0 ? origIdx : i}`
+                        };
+                    })
+                    .sort((a, b) => {
+                        const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
+                        const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
+                        return dateB - dateA;
+                    });
+
+                return (
+                    <div
+                        className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+                        onClick={() => setShowDetailsModal(false)}
+                    >
+                        <div
+                            className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-3xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 sm:px-6 py-4 border-b border-neutral-100">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Sale details</h3>
+                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${statusBadgeClass(selectedSale.paymentStatus)}`}>
+                                                {selectedSale.paymentStatus || 'N/A'}
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-ink-muted mt-0.5 truncate">
+                                            {selectedSale.invoiceNumber} · {customerName}
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowDetailsModal(false)}
+                                        className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                                        aria-label="Close"
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handlePrintReceipt(selectedSale)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 bg-white text-xs font-semibold text-ink hover:bg-neutral-50"
+                                    >
+                                        <Printer size={14} /> Print
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleShareReceipt(selectedSale)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 bg-white text-xs font-semibold text-ink hover:bg-neutral-50"
+                                    >
+                                        <Share2 size={14} /> WhatsApp
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSharePdfWhatsApp(selectedSale)}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-ink text-white text-xs font-semibold hover:bg-ink-soft"
+                                    >
+                                        <FileText size={14} /> Send PDF
+                                    </button>
+                                    {remainingAmount > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowDetailsModal(false);
+                                                openAddPayment(selectedSale);
+                                            }}
+                                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700"
+                                        >
+                                            <DollarSign size={14} /> Collect
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="p-4 sm:p-6 space-y-4">
+                                <div className="grid grid-cols-3 gap-2.5">
+                                    <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft px-3.5 py-3">
+                                        <p className="text-[11px] font-medium text-ink-muted">Billed</p>
+                                        <p className="text-base sm:text-lg font-bold text-ink tabular-nums mt-1 break-words">{formatMoney(totalAmount)}</p>
+                                    </div>
+                                    <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft px-3.5 py-3">
+                                        <p className="text-[11px] font-medium text-ink-muted">Paid</p>
+                                        <p className="text-base sm:text-lg font-bold text-emerald-700 tabular-nums mt-1 break-words">{formatMoney(paidAmount)}</p>
+                                    </div>
+                                    <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft px-3.5 py-3">
+                                        <p className="text-[11px] font-medium text-ink-muted">Due</p>
+                                        <p className={`text-base sm:text-lg font-bold tabular-nums mt-1 break-words ${remainingAmount > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                                            {formatMoney(remainingAmount)}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 space-y-3">
+                                    <div className="flex items-center justify-between gap-2 text-xs">
+                                        <span className="text-ink-muted">{paidPct}% collected</span>
+                                        <span className="text-ink-muted tabular-nums">{existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full ${paidPct >= 100 ? 'bg-emerald-500' : paidPct > 0 ? 'bg-amber-500' : 'bg-neutral-300'}`}
+                                            style={{ width: `${paidPct}%` }}
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                                        <div>
+                                            <p className="text-[11px] text-ink-muted">Customer</p>
+                                            <p className="font-semibold text-ink mt-0.5">{customerName}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] text-ink-muted">Date</p>
+                                            <p className="font-medium text-ink mt-0.5">{formatDate(selectedSale.saleDate)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] text-ink-muted">Staff</p>
+                                            <p className="font-medium text-ink mt-0.5">{selectedSale.addedBy || '—'}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] text-ink-muted">Type</p>
+                                            <p className="font-medium text-ink mt-0.5">{selectedSale.saleType || 'Cash'}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                                    <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100">
+                                        <h4 className="text-sm font-semibold text-ink">Items</h4>
+                                        <p className="text-xs text-ink-muted mt-0.5">{selectedSale.items?.length || 0} line{(selectedSale.items?.length || 0) !== 1 ? 's' : ''}</p>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm min-w-[520px]">
+                                            <thead className="bg-neutral-50 border-b border-neutral-100">
+                                                <tr>
+                                                    <th className="text-left py-2.5 px-4 text-xs font-medium text-ink-muted">Product</th>
+                                                    <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Size</th>
+                                                    <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Qty</th>
+                                                    <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Rate</th>
+                                                    <th className="text-right py-2.5 px-4 text-xs font-medium text-ink-muted">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-neutral-50">
+                                                {selectedSale.items?.map((item, index) => (
+                                                    <tr key={index}>
+                                                        <td className="py-3 px-4">
+                                                            <p className="font-medium text-ink">{item.productName}</p>
+                                                            <p className="text-[11px] text-ink-muted mt-0.5">
+                                                                {formatLineAddedToSale(item, selectedSale.saleDate)}
+                                                            </p>
+                                                        </td>
+                                                        <td className="py-3 px-3 text-ink-muted">{item.size}</td>
+                                                        <td className="py-3 px-3 text-right tabular-nums text-ink">{item.quantity}</td>
+                                                        <td className="py-3 px-3 text-right tabular-nums text-ink-muted">{formatMoney(item.unitPrice)}</td>
+                                                        <td className="py-3 px-4 text-right font-semibold tabular-nums text-ink">{formatMoney(item.totalPrice)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                                    <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                        <div>
+                                            <h4 className="text-sm font-semibold text-ink">Payment history</h4>
+                                            <p className="text-xs text-ink-muted mt-0.5">When money was received on this invoice</p>
+                                        </div>
                                         <select
                                             value={paymentHistoryFilter}
                                             onChange={(e) => setPaymentHistoryFilter(e.target.value)}
-                                            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            className="px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-medium text-ink outline-none focus:ring-2 focus:ring-neutral-900/10"
                                         >
-                                            <option value="All">All Payments</option>
-                                            <option value="Paid">Paid</option>
-                                            <option value="Partial">Partial</option>
-                                            <option value="Unpaid">Unpaid</option>
+                                            <option value="All">All payments</option>
+                                            <option value="Paid">Paid sales</option>
+                                            <option value="Partial">Partial sales</option>
+                                            <option value="Unpaid">Unpaid sales</option>
                                         </select>
                                     </div>
-                                </div>
 
-                                {(() => {
-                                    const existingPayments = selectedSale.payments || [];
-                                    const totalAmount = parseFloat(selectedSale.totalAmount) || 0;
-                                    const paidAmount = parseFloat(selectedSale.paidAmount) || 0;
-                                    const remainingAmount = parseFloat(selectedSale.remainingAmount) || 0;
-
-                                    // Filter payments based on selected filter
-                                    let filteredPayments = [...existingPayments];
-
-                                    if (paymentHistoryFilter === 'Paid') {
-                                        // Show only if sale is fully paid
-                                        if (remainingAmount === 0 && paidAmount > 0) {
-                                            filteredPayments = existingPayments;
-                                        } else {
-                                            filteredPayments = [];
-                                        }
-                                    } else if (paymentHistoryFilter === 'Partial') {
-                                        // Show only if sale is partially paid
-                                        if (remainingAmount > 0 && paidAmount > 0) {
-                                            filteredPayments = existingPayments;
-                                        } else {
-                                            filteredPayments = [];
-                                        }
-                                    } else if (paymentHistoryFilter === 'Unpaid') {
-                                        // Show only if sale is unpaid
-                                        if (paidAmount === 0) {
-                                            filteredPayments = [];
-                                        } else {
-                                            filteredPayments = [];
-                                        }
-                                    }
-
-                                    // Sort payments by date (latest first)
-                                    filteredPayments.sort((a, b) => {
-                                        const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
-                                        const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
-                                        return dateB - dateA;
-                                    });
-
-                                    const totalFromPayments = existingPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-
-                                    if (paymentHistoryFilter === 'Unpaid' && paidAmount === 0) {
-                                        return (
-                                            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-red-600 font-semibold">⚠️ Unpaid Sale</span>
-                                                </div>
-                                                <p className="text-sm text-red-700 mt-2">
-                                                    No payments received yet. Total amount: Rs. {totalAmount.toLocaleString()}
-                                                </p>
+                                    <div className="p-4 sm:p-5">
+                                        {paymentHistoryFilter === 'Unpaid' && paidAmount === 0 ? (
+                                            <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3">
+                                                <p className="text-sm font-semibold text-rose-800">Unpaid sale</p>
+                                                <p className="text-xs text-rose-700 mt-1">No payments yet · bill {formatMoney(totalAmount)}</p>
                                             </div>
-                                        );
-                                    }
-
-                                    if (filteredPayments.length === 0 && paymentHistoryFilter !== 'All') {
-                                        return (
-                                            <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
-                                                <p>No payments found for this status.</p>
-                                            </div>
-                                        );
-                                    }
-
-                                    if (existingPayments.length === 0) {
-                                        return (
-                                            <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
-                                                <p>No payment history found. Payments will be recorded when you add them.</p>
-                                            </div>
-                                        );
-                                    }
-
-                                    return (
-                                        <div className="space-y-4">
-                                            {/* Payment Summary Info */}
-                                            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                                                <div className="flex items-center justify-between flex-wrap gap-2">
-                                                    <div>
-                                                        <p className="text-sm font-semibold text-indigo-900 mb-1">
-                                                            📋 Payment Summary
-                                                        </p>
-                                                        <p className="text-xs text-indigo-700">
-                                                            Total <span className="font-bold">{existingPayments.length}</span> payment{existingPayments.length !== 1 ? 's' : ''} received
-                                                            {existingPayments.length > 0 && (
-                                                                <>
-                                                                    {' • '}
-                                                                    <span className="font-semibold">Rs. {totalFromPayments.toLocaleString()}</span> total received
-                                                                </>
-                                                            )}
-                                                        </p>
-                                                    </div>
-                                                    {existingPayments.length > 0 && (
-                                                        <div className="text-xs text-indigo-700">
-                                                            <span className="font-semibold">Status:</span>{' '}
-                                                            {remainingAmount === 0 && paidAmount > 0 ? (
-                                                                <span className="text-green-700 font-bold">✅ Fully Paid</span>
-                                                            ) : remainingAmount > 0 && paidAmount > 0 ? (
-                                                                <span className="text-yellow-700 font-bold">⚠️ Partial (Rs. {remainingAmount.toLocaleString()} remaining)</span>
-                                                            ) : (
-                                                                <span className="text-red-700 font-bold">❌ Unpaid</span>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Payment Status Summary */}
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                                <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 rounded-lg border border-green-200">
-                                                    <p className="text-xs text-gray-600 mb-1">Total Amount</p>
-                                                    <p className="text-lg font-bold text-green-700">
-                                                        Rs. {totalAmount.toLocaleString()}
-                                                    </p>
-                                                </div>
-                                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-lg border border-blue-200">
-                                                    <p className="text-xs text-gray-600 mb-1">Paid Amount</p>
-                                                    <p className="text-lg font-bold text-blue-700">
-                                                        Rs. {paidAmount.toLocaleString()}
-                                                    </p>
-                                                </div>
-                                                <div className={`p-3 rounded-lg border ${remainingAmount > 0
-                                                    ? 'bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-200'
-                                                    : 'bg-gradient-to-r from-gray-50 to-gray-100 border-gray-200'
-                                                    }`}>
-                                                    <p className="text-xs text-gray-600 mb-1">Remaining</p>
-                                                    <p className={`text-lg font-bold ${remainingAmount > 0 ? 'text-yellow-700' : 'text-gray-700'
-                                                        }`}>
-                                                        Rs. {remainingAmount.toLocaleString()}
-                                                    </p>
-                                                </div>
-                                            </div>
-
-                                            {/* Payment Status Badge and Count */}
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-sm text-gray-600">Payment Status:</span>
-                                                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${remainingAmount === 0 && paidAmount > 0
-                                                        ? 'bg-green-100 text-green-800'
-                                                        : remainingAmount > 0 && paidAmount > 0
-                                                            ? 'bg-yellow-100 text-yellow-800'
-                                                            : 'bg-red-100 text-red-800'
-                                                        }`}>
-                                                        {remainingAmount === 0 && paidAmount > 0 ? '✅ Paid' :
-                                                            remainingAmount > 0 && paidAmount > 0 ? '⚠️ Partial' :
-                                                                '❌ Unpaid'}
-                                                    </span>
-                                                </div>
-                                                <div className="text-sm text-gray-600">
-                                                    <span className="font-semibold text-gray-800">Total Payments:</span> {existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''}
-                                                </div>
-                                            </div>
-
-                                            {/* Payments Table */}
-                                            <div className="bg-gray-50 rounded-lg p-4">
-                                                <div className="overflow-x-auto">
-                                                    <table className="w-full text-sm">
-                                                        <thead>
-                                                            <tr className="border-b border-gray-300">
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">#</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Date & Time</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Amount</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Method</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Type</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">By</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Notes</th>
-                                                                <th className="text-left py-2 px-2 font-semibold text-gray-700">Actions</th>
+                                        ) : paymentsToShow.length === 0 && paymentHistoryFilter !== 'All' ? (
+                                            <p className="text-sm text-ink-muted text-center py-8">No payments for this filter</p>
+                                        ) : existingPayments.length === 0 ? (
+                                            <p className="text-sm text-ink-muted text-center py-8">No payment history yet</p>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="overflow-x-auto rounded-xl border border-neutral-200">
+                                                    <table className="w-full text-sm min-w-[640px]">
+                                                        <thead className="bg-neutral-50 border-b border-neutral-100">
+                                                            <tr>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">#</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Date</th>
+                                                                <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Amount</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Method</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Type</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">By</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Notes</th>
+                                                                <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Actions</th>
                                                             </tr>
                                                         </thead>
-                                                        <tbody>
-                                                            {(() => {
-                                                                const baseList = paymentHistoryFilter === 'All' ? existingPayments : filteredPayments;
-                                                                const paymentsWithKeys = baseList.map((p, i) => {
-                                                                    const origIdx = existingPayments.indexOf(p);
-                                                                    return {
-                                                                        ...p,
-                                                                        _paymentKey: p.paymentId || p.collectionId || `idx-${origIdx >= 0 ? origIdx : i}`
-                                                                    };
+                                                        <tbody className="divide-y divide-neutral-50">
+                                                            {paymentsToShow.map((payment, index) => {
+                                                                let paymentDate;
+                                                                if (payment.date?.toDate) paymentDate = payment.date.toDate();
+                                                                else if (payment.date?.seconds) paymentDate = new Date(payment.date.seconds * 1000);
+                                                                else if (payment.date instanceof Date) paymentDate = payment.date;
+                                                                else if (payment.date) paymentDate = new Date(payment.date);
+                                                                else paymentDate = new Date();
+
+                                                                const formattedTime = paymentDate.toLocaleTimeString('en-US', {
+                                                                    hour: '2-digit',
+                                                                    minute: '2-digit',
+                                                                    hour12: true
                                                                 });
-                                                                return paymentsWithKeys
-                                                                    .sort((a, b) => {
-                                                                        const dateA = a.date?.toDate ? a.date.toDate() : (a.date ? new Date(a.date) : new Date(0));
-                                                                        const dateB = b.date?.toDate ? b.date.toDate() : (b.date ? new Date(b.date) : new Date(0));
-                                                                        return dateB - dateA;
-                                                                    })
-                                                                    .map((payment, index) => {
-                                                                        // Handle Firestore Timestamp format
-                                                                        let paymentDate;
-                                                                        if (payment.date?.toDate) {
-                                                                            // Firestore Timestamp object
-                                                                            paymentDate = payment.date.toDate();
-                                                                        } else if (payment.date?.seconds) {
-                                                                            // Firestore Timestamp with seconds
-                                                                            paymentDate = new Date(payment.date.seconds * 1000);
-                                                                        } else if (payment.date instanceof Date) {
-                                                                            paymentDate = payment.date;
-                                                                        } else if (payment.date) {
-                                                                            paymentDate = new Date(payment.date);
-                                                                        } else {
-                                                                            paymentDate = new Date();
-                                                                        }
 
-                                                                        const formattedDate = formatDate(paymentDate);
-                                                                        const formattedTime = paymentDate.toLocaleTimeString('en-US', {
-                                                                            hour: '2-digit',
-                                                                            minute: '2-digit',
-                                                                            hour12: true
-                                                                        });
-                                                                        const paymentAmount = parseFloat(payment.amount) || 0;
-
-                                                                        return (
-                                                                            <tr key={payment._paymentKey} className="border-b border-gray-200 hover:bg-white transition-colors">
-                                                                                <td className="py-3 px-3 text-gray-600 font-medium">{index + 1}</td>
-                                                                                <td className="py-3 px-3">
-                                                                                    <div className="font-semibold text-gray-900">{formattedDate}</div>
-                                                                                    <div className="text-xs text-gray-500 mt-1">{formattedTime}</div>
-                                                                                </td>
-                                                                                <td className="py-3 px-3">
-                                                                                    <span className="font-bold text-green-600 text-base">
-                                                                                        Rs. {paymentAmount.toLocaleString()}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className="py-3 px-3">
-                                                                                    <span className="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium">
-                                                                                        {payment.paymentMethod || 'Cash'}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className="py-3 px-3">
-                                                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${payment.paymentType === 'Initial Sale' ? 'bg-indigo-100 text-indigo-800' : payment.paymentType === 'Recovery' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-700'}`}>
-                                                                                        {payment.paymentType || 'Payment'}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className="py-3 px-3 text-xs text-gray-700">
-                                                                                    {payment.editedBy ? (
-                                                                                        <span>Edited: <strong>{payment.editedBy}</strong></span>
-                                                                                    ) : payment.addedBy ? (
-                                                                                        <span>Added: <strong>{payment.addedBy}</strong></span>
-                                                                                    ) : (
-                                                                                        <span className="text-gray-400">—</span>
-                                                                                    )}
-                                                                                </td>
-                                                                                <td className="py-3 px-3 text-gray-600 text-xs">
-                                                                                    {payment.notes || <span className="text-gray-400">-</span>}
-                                                                                </td>
-                                                                                <td className="py-3 px-3">
-                                                                                    <div className="flex items-center gap-1">
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => openEditPayment(payment)}
-                                                                                            className="p-1.5 text-green-600 hover:bg-green-50 rounded"
-                                                                                            title="Edit payment"
-                                                                                        >
-                                                                                            <Edit2 className="w-4 h-4" />
-                                                                                        </button>
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => openDeletePaymentConfirm(payment)}
-                                                                                            disabled={deletingPaymentKey === payment._paymentKey}
-                                                                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                                                                                            title="Delete payment"
-                                                                                        >
-                                                                                            <Trash2 className="w-4 h-4" />
-                                                                                        </button>
-                                                                                    </div>
-                                                                                </td>
-                                                                            </tr>
-                                                                        );
-                                                                    });
-                                                            })()}
+                                                                return (
+                                                                    <tr key={payment._paymentKey} className="hover:bg-neutral-50/80">
+                                                                        <td className="py-3 px-3 text-ink-muted tabular-nums">{index + 1}</td>
+                                                                        <td className="py-3 px-3">
+                                                                            <p className="font-medium text-ink">{formatDate(paymentDate)}</p>
+                                                                            <p className="text-[11px] text-ink-muted mt-0.5">{formattedTime}</p>
+                                                                        </td>
+                                                                        <td className="py-3 px-3 text-right font-semibold text-emerald-700 tabular-nums">
+                                                                            {formatMoney(payment.amount)}
+                                                                        </td>
+                                                                        <td className="py-3 px-3">
+                                                                            <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-medium bg-neutral-100 text-ink border border-neutral-200">
+                                                                                {payment.paymentMethod || 'Cash'}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="py-3 px-3">
+                                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${payment.paymentType === 'Initial Sale'
+                                                                                ? 'bg-sky-50 text-sky-800 border-sky-100'
+                                                                                : payment.paymentType === 'Recovery'
+                                                                                    ? 'bg-amber-50 text-amber-900 border-amber-100'
+                                                                                    : 'bg-neutral-50 text-ink-muted border-neutral-200'
+                                                                                }`}>
+                                                                                {payment.paymentType || 'Payment'}
+                                                                            </span>
+                                                                        </td>
+                                                                        <td className="py-3 px-3 text-xs text-ink-muted">
+                                                                            {payment.editedBy ? (
+                                                                                <span>Edited · <strong className="text-ink">{payment.editedBy}</strong></span>
+                                                                            ) : payment.addedBy ? (
+                                                                                <span>Added · <strong className="text-ink">{payment.addedBy}</strong></span>
+                                                                            ) : '—'}
+                                                                        </td>
+                                                                        <td className="py-3 px-3 text-xs text-ink-muted max-w-[140px] truncate">
+                                                                            {payment.notes || '—'}
+                                                                        </td>
+                                                                        <td className="py-3 px-3">
+                                                                            <div className="flex items-center justify-end gap-0.5">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => openEditPayment(payment)}
+                                                                                    className="w-8 h-8 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center"
+                                                                                    aria-label="Edit payment"
+                                                                                >
+                                                                                    <Edit2 className="w-3.5 h-3.5" />
+                                                                                </button>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => openDeletePaymentConfirm(payment)}
+                                                                                    disabled={deletingPaymentKey === payment._paymentKey}
+                                                                                    className="w-8 h-8 rounded-lg text-rose-600 hover:bg-rose-50 flex items-center justify-center disabled:opacity-50"
+                                                                                    aria-label="Delete payment"
+                                                                                >
+                                                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                                                </button>
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
                                                         </tbody>
-                                                        <tfoot className="bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-300">
+                                                        <tfoot className="bg-neutral-50 border-t border-neutral-100">
                                                             <tr>
-                                                                <td colSpan="2" className="py-3 px-3 font-bold text-gray-900 text-base">
-                                                                    Total Payments ({existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''}):
+                                                                <td colSpan="2" className="py-3 px-3 text-xs font-medium text-ink-muted">
+                                                                    {existingPayments.length} payment{existingPayments.length !== 1 ? 's' : ''} total
                                                                 </td>
-                                                                <td className="py-3 px-3 font-bold text-green-600 text-lg">
-                                                                    Rs. {totalFromPayments.toLocaleString()}
+                                                                <td className="py-3 px-3 text-right font-bold text-emerald-700 tabular-nums">
+                                                                    {formatMoney(totalFromPayments)}
                                                                 </td>
-                                                                <td colSpan="5" className="py-3 px-3"></td>
+                                                                <td colSpan="5" />
                                                             </tr>
                                                         </tfoot>
                                                     </table>
                                                 </div>
-                                            </div>
 
-                                            {/* Payment Mismatch Warning */}
-                                            {Math.abs(totalFromPayments - paidAmount) > 0.01 && (
-                                                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                                                    <div className="flex items-center justify-between">
+                                                {Math.abs(totalFromPayments - paidAmount) > 0.01 && (
+                                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                                         <div>
-                                                            <p className="text-sm font-medium text-yellow-800">
-                                                                ⚠️ Payment History Mismatch
-                                                            </p>
-                                                            <p className="text-xs text-yellow-700 mt-1">
-                                                                Recorded paid amount (Rs. {paidAmount.toLocaleString()}) doesn't match payment history total (Rs. {totalFromPayments.toLocaleString()})
+                                                            <p className="text-sm font-semibold text-amber-900">Payment mismatch</p>
+                                                            <p className="text-xs text-amber-800 mt-0.5">
+                                                                Recorded paid {formatMoney(paidAmount)} ≠ history {formatMoney(totalFromPayments)}
                                                             </p>
                                                         </div>
                                                         <button
+                                                            type="button"
+                                                            disabled={saving}
                                                             onClick={async () => {
                                                                 if (window.confirm(`Fix payment history by adding missing amount of Rs. ${(paidAmount - totalFromPayments).toLocaleString()}?`)) {
                                                                     try {
@@ -2194,9 +2318,7 @@ const Sales = () => {
                                                                         fetchData();
                                                                         const updatedSales = await getSales();
                                                                         const updatedSale = updatedSales.data.find(s => (s.id || s._id) === (selectedSale.id || selectedSale._id));
-                                                                        if (updatedSale) {
-                                                                            setSelectedSale(updatedSale);
-                                                                        }
+                                                                        if (updatedSale) setSelectedSale(updatedSale);
                                                                     } catch (error) {
                                                                         showError(error.message || 'Error fixing payment history');
                                                                     } finally {
@@ -2204,236 +2326,326 @@ const Sales = () => {
                                                                     }
                                                                 }
                                                             }}
-                                                            className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm font-medium"
-                                                            disabled={saving}
+                                                            className="px-3.5 py-2 rounded-xl bg-amber-800 text-white text-xs font-semibold hover:bg-amber-900 disabled:opacity-50 shrink-0"
                                                         >
-                                                            Fix History
+                                                            Fix history
                                                         </button>
                                                     </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })()}
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Payment Modal */}
-            {showPaymentModal && selectedSale && (
-                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
-                        <div className="p-6 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                                <h3 className="text-xl font-bold text-gray-800">Add Payment</h3>
-                                <button
-                                    onClick={() => setShowPaymentModal(false)}
-                                    className="text-gray-400 hover:text-gray-600"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                        <form onSubmit={handleAddPayment} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Who is adding this payment? *</label>
-                                <select
-                                    required
-                                    value={paymentData.addedBy}
-                                    onChange={(e) => setPaymentData({ ...paymentData, addedBy: e.target.value })}
-                                    className="input-field"
-                                >
-                                    <option value="">Select staff member</option>
-                                    {STAFF_MEMBERS.map(name => (
-                                        <option key={name} value={name}>{name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
-                                <input
-                                    type="date"
-                                    required
-                                    value={paymentData.paymentDate}
-                                    onChange={(e) => setPaymentData({ ...paymentData, paymentDate: e.target.value })}
-                                    max={new Date().toISOString().split('T')[0]}
-                                    className="input-field"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Select the date customer actually paid (e.g. backdate if entered late).
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
-                                <input
-                                    type="text"
-                                    required
-                                    value={paymentData.amount}
-                                    onChange={(e) => {
-                                        const value = e.target.value;
-                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                            setPaymentData({ ...paymentData, amount: value });
-                                        }
-                                    }}
-                                    className="input-field"
-                                    placeholder="0"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Remaining: Rs. {selectedSale.remainingAmount?.toLocaleString() || 0}
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                                <select
-                                    value={paymentData.method}
-                                    onChange={(e) => setPaymentData({ ...paymentData, method: e.target.value })}
-                                    className="input-field"
-                                >
-                                    <option value="Cash">Cash</option>
-                                    <option value="Bank Transfer">Bank Transfer</option>
-                                    <option value="Card">Card</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                                <textarea
-                                    value={paymentData.notes}
-                                    onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
-                                    className="input-field"
-                                    rows="3"
-                                    placeholder="Payment notes..."
-                                />
-                            </div>
-                            <div className="flex justify-end gap-3">
+            {showPaymentModal && selectedSale && (() => {
+                const remainingDue = parseFloat(selectedSale.remainingAmount) || 0;
+                const enteredAmount = parseFloat(paymentData.amount);
+                const hasAmount = paymentData.amount !== '' && !Number.isNaN(enteredAmount);
+                const amountTooHigh = hasAmount && enteredAmount > remainingDue + 0.001;
+                const amountInvalid = hasAmount && enteredAmount <= 0;
+                const amountError = amountTooHigh
+                    ? `Amount cannot exceed remaining due (Rs. ${remainingDue.toLocaleString()})`
+                    : amountInvalid
+                        ? 'Amount must be greater than 0'
+                        : '';
+                const canSubmit = hasAmount && !amountError && !!paymentData.addedBy && !!paymentData.paymentDate && !saving;
+
+                return (
+                    <div
+                        className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+                        onClick={() => setShowPaymentModal(false)}
+                    >
+                        <div
+                            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-md w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-5 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <h3 className="text-lg font-bold text-ink tracking-tight">Add payment</h3>
+                                    <p className="text-xs text-ink-muted mt-0.5 truncate">
+                                        {selectedSale.invoiceNumber} · {formatDisplayName(selectedSale.customer?.name || 'Walk-in')}
+                                    </p>
+                                </div>
                                 <button
                                     type="button"
                                     onClick={() => setShowPaymentModal(false)}
-                                    className="btn-secondary"
+                                    className="w-9 h-9 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted"
+                                    aria-label="Close"
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="btn-primary"
-                                >
-                                    {saving ? 'Adding...' : 'Add Payment'}
+                                    <X size={16} />
                                 </button>
                             </div>
-                        </form>
+                            <form onSubmit={handleAddPayment} className="p-5 space-y-4">
+                                <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-[11px] font-medium text-amber-800/80">Remaining due</p>
+                                        <p className="text-lg font-bold text-amber-900 tabular-nums mt-0.5">
+                                            {formatMoney(remainingDue)}
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentData({ ...paymentData, amount: String(remainingDue) })}
+                                        className="text-xs font-semibold text-amber-900 bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg hover:bg-amber-50"
+                                    >
+                                        Pay full
+                                    </button>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Staff *</label>
+                                    <select
+                                        required
+                                        value={paymentData.addedBy}
+                                        onChange={(e) => setPaymentData({ ...paymentData, addedBy: e.target.value })}
+                                        className="input-field"
+                                    >
+                                        <option value="">Select staff member</option>
+                                        {STAFF_MEMBERS.map((name) => (
+                                            <option key={name} value={name}>{name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Payment date *</label>
+                                    <input
+                                        type="date"
+                                        required
+                                        value={paymentData.paymentDate}
+                                        onChange={(e) => setPaymentData({ ...paymentData, paymentDate: e.target.value })}
+                                        max={new Date().toISOString().split('T')[0]}
+                                        className="input-field"
+                                    />
+                                    <p className="text-xs text-ink-muted mt-1">
+                                        Actual date customer paid (backdate if entered late)
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Amount *</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        required
+                                        value={paymentData.amount}
+                                        onChange={(e) => {
+                                            const value = e.target.value;
+                                            if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                setPaymentData({ ...paymentData, amount: value });
+                                            }
+                                        }}
+                                        className={`input-field tabular-nums ${amountError ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20' : ''}`}
+                                        placeholder="0"
+                                        aria-invalid={!!amountError}
+                                    />
+                                    {amountError ? (
+                                        <p className="text-xs text-rose-600 font-medium mt-1.5 flex items-start gap-1">
+                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                            {amountError}
+                                        </p>
+                                    ) : (
+                                        <p className="text-xs text-ink-muted mt-1.5">
+                                            Max allowed: {formatMoney(remainingDue)}
+                                        </p>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Payment method</label>
+                                    <select
+                                        value={paymentData.method}
+                                        onChange={(e) => setPaymentData({ ...paymentData, method: e.target.value })}
+                                        className="input-field"
+                                    >
+                                        <option value="Cash">Cash</option>
+                                        <option value="Bank Transfer">Bank transfer</option>
+                                        <option value="Card">Card</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Notes</label>
+                                    <textarea
+                                        value={paymentData.notes}
+                                        onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
+                                        className="input-field"
+                                        rows="2"
+                                        placeholder="Optional notes..."
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2.5 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPaymentModal(false)}
+                                        className="btn-secondary"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={!canSubmit}
+                                        className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        {saving ? 'Adding...' : 'Add payment'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Edit Payment Modal */}
-            {showEditPaymentModal && selectedSale && (
-                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl max-w-md w-full max-h-[92dvh] overflow-y-auto">
-                        <div className="p-6 border-b border-gray-200">
-                            <div className="flex justify-between items-center">
-                                <h3 className="text-xl font-bold text-gray-800">Edit Payment</h3>
-                                <button
-                                    onClick={() => {
-                                        setShowEditPaymentModal(false);
-                                        setEditingPaymentKey(null);
-                                    }}
-                                    className="text-gray-400 hover:text-gray-600"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                        <form onSubmit={handleUpdatePayment} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Who is editing this payment? *</label>
-                                <select
-                                    required
-                                    value={editPaymentData.editedBy}
-                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, editedBy: e.target.value })}
-                                    className="input-field"
-                                >
-                                    <option value="">Select staff member</option>
-                                    {STAFF_MEMBERS.map(name => (
-                                        <option key={name} value={name}>{name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
-                                <input
-                                    type="date"
-                                    required
-                                    value={editPaymentData.paymentDate}
-                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, paymentDate: e.target.value })}
-                                    max={new Date().toISOString().split('T')[0]}
-                                    className="input-field"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
-                                <input
-                                    type="text"
-                                    required
-                                    value={editPaymentData.amount}
-                                    onChange={(e) => {
-                                        const value = e.target.value;
-                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                            setEditPaymentData({ ...editPaymentData, amount: value });
-                                        }
-                                    }}
-                                    className="input-field"
-                                    placeholder="0"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                                <select
-                                    value={editPaymentData.method}
-                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
-                                    className="input-field"
-                                >
-                                    <option value="Cash">Cash</option>
-                                    <option value="Bank Transfer">Bank Transfer</option>
-                                    <option value="Card">Card</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                                <textarea
-                                    value={editPaymentData.notes}
-                                    onChange={(e) => setEditPaymentData({ ...editPaymentData, notes: e.target.value })}
-                                    className="input-field"
-                                    rows="3"
-                                    placeholder="Payment notes..."
-                                />
-                            </div>
-                            <div className="flex justify-end gap-3">
+            {showEditPaymentModal && selectedSale && (() => {
+                const remainingDue = parseFloat(selectedSale.remainingAmount) || 0;
+                const maxAllowed = remainingDue + (originalEditPaymentAmount || 0);
+                const enteredAmount = parseFloat(editPaymentData.amount);
+                const hasAmount = editPaymentData.amount !== '' && !Number.isNaN(enteredAmount);
+                const amountTooHigh = hasAmount && enteredAmount > maxAllowed + 0.001;
+                const amountInvalid = hasAmount && enteredAmount <= 0;
+                const amountError = amountTooHigh
+                    ? `Amount cannot exceed Rs. ${maxAllowed.toLocaleString()}`
+                    : amountInvalid
+                        ? 'Amount must be greater than 0'
+                        : '';
+                const canSubmit = hasAmount && !amountError && !!editPaymentData.editedBy && !!editPaymentData.paymentDate && !saving;
+
+                return (
+                    <div
+                        className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+                        onClick={() => {
+                            setShowEditPaymentModal(false);
+                            setEditingPaymentKey(null);
+                        }}
+                    >
+                        <div
+                            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-md w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-5 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+                                <div>
+                                    <h3 className="text-lg font-bold text-ink tracking-tight">Edit payment</h3>
+                                    <p className="text-xs text-ink-muted mt-0.5">
+                                        Max {formatMoney(maxAllowed)} (due + this payment)
+                                    </p>
+                                </div>
                                 <button
                                     type="button"
                                     onClick={() => {
                                         setShowEditPaymentModal(false);
                                         setEditingPaymentKey(null);
                                     }}
-                                    className="btn-secondary"
+                                    className="w-9 h-9 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted"
+                                    aria-label="Close"
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={saving}
-                                    className="btn-primary"
-                                >
-                                    {saving ? 'Saving...' : 'Save Changes'}
+                                    <X size={16} />
                                 </button>
                             </div>
-                        </form>
+                            <form onSubmit={handleUpdatePayment} className="p-5 space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Staff *</label>
+                                    <select
+                                        required
+                                        value={editPaymentData.editedBy}
+                                        onChange={(e) => setEditPaymentData({ ...editPaymentData, editedBy: e.target.value })}
+                                        className="input-field"
+                                    >
+                                        <option value="">Select staff member</option>
+                                        {STAFF_MEMBERS.map(name => (
+                                            <option key={name} value={name}>{name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Payment date *</label>
+                                    <input
+                                        type="date"
+                                        required
+                                        value={editPaymentData.paymentDate}
+                                        onChange={(e) => setEditPaymentData({ ...editPaymentData, paymentDate: e.target.value })}
+                                        max={new Date().toISOString().split('T')[0]}
+                                        className="input-field"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Amount *</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        required
+                                        value={editPaymentData.amount}
+                                        onChange={(e) => {
+                                            const value = e.target.value;
+                                            if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                setEditPaymentData({ ...editPaymentData, amount: value });
+                                            }
+                                        }}
+                                        className={`input-field tabular-nums ${amountError ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20' : ''}`}
+                                        placeholder="0"
+                                        aria-invalid={!!amountError}
+                                    />
+                                    {amountError ? (
+                                        <p className="text-xs text-rose-600 font-medium mt-1.5 flex items-start gap-1">
+                                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                            {amountError}
+                                        </p>
+                                    ) : (
+                                        <p className="text-xs text-ink-muted mt-1.5">
+                                            Remaining due {formatMoney(remainingDue)} · max {formatMoney(maxAllowed)}
+                                        </p>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Payment method</label>
+                                    <select
+                                        value={editPaymentData.method}
+                                        onChange={(e) => setEditPaymentData({ ...editPaymentData, method: e.target.value })}
+                                        className="input-field"
+                                    >
+                                        <option value="Cash">Cash</option>
+                                        <option value="Bank Transfer">Bank transfer</option>
+                                        <option value="Card">Card</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Notes</label>
+                                    <textarea
+                                        value={editPaymentData.notes}
+                                        onChange={(e) => setEditPaymentData({ ...editPaymentData, notes: e.target.value })}
+                                        className="input-field"
+                                        rows="2"
+                                        placeholder="Optional notes..."
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowEditPaymentModal(false);
+                                            setEditingPaymentKey(null);
+                                        }}
+                                        className="btn-secondary"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={!canSubmit}
+                                        className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        {saving ? 'Saving...' : 'Save changes'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Delete Payment Confirmation */}
             {showDeletePaymentModal && paymentToDelete && (
