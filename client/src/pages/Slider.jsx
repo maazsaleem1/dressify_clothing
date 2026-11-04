@@ -3,6 +3,7 @@ import { Plus, Edit2, Trash2, Image as ImageIcon, Eye, EyeOff, ArrowUp, ArrowDow
 import { getSliders, createSlider, updateSlider, deleteSlider, reorderSliders, getInventory, getBrands, getCategories } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import ImageUpload from '../components/ImageUpload';
+import { CardShimmer } from '../components/Shimmer';
 
 const Slider = () => {
   const [sliders, setSliders] = useState([]);
@@ -217,8 +218,11 @@ const Slider = () => {
       {/* Sliders List */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {loading ? (
-          <div className="col-span-full flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+          <div className="col-span-full grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
+            <CardShimmer />
+            <CardShimmer />
+            <CardShimmer />
+            <CardShimmer />
           </div>
         ) : sortedSliders.length === 0 ? (
           <div className="col-span-full text-center py-12">

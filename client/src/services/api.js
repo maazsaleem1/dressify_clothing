@@ -2616,12 +2616,29 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     }))
     .sort((a, b) => b.bill - a.bill);
 
-  const tradingProfit = monthSalesPaid - soldCost;
+  // Cash-matched COGS: sirf us maal ki cost minus jo is month ke payments ne cover ki.
+  // Unpaid sold pieces abhi loss nahi — baad mein recovery pe aayengi.
+  const matchedSoldCost = monthSalesPaidDetail.reduce(
+    (sum, row) => sum + (parseFloat(row.costAmount) || 0),
+    0
+  );
+  const ownMatchedSoldCost = ownMonthPaidDetail.reduce(
+    (sum, row) => sum + (parseFloat(row.costAmount) || 0),
+    0
+  );
+  const investorMatchedSoldCost = investorMonthPaidDetail.reduce(
+    (sum, row) => sum + (parseFloat(row.costAmount) || 0),
+    0
+  );
+  const unpaidSoldCost = Math.max(0, soldCost - matchedSoldCost);
+
+  const tradingProfit = monthSalesPaid - matchedSoldCost;
   // Pichla recovery: sirf cost ke upar wala hissa net profit mein (cost wapas ≠ profit)
   const netProfit = tradingProfit + priorRecoveryProfit - generalExpenses;
-  const cashAfterExpenses = totalPaid - soldCost - generalExpenses;
-  // Aapka net — own trading + own recovery-profit − expenses (cost recovery alag)
-  const ownTrading = ownMonthSalesPaid - ownSoldCost;
+  const cashAfterExpenses =
+    totalPaid - matchedSoldCost - priorRecoveryCost - generalExpenses;
+  // Aapka net — own cash-matched trading + own recovery-profit − expenses
+  const ownTrading = ownMonthSalesPaid - ownMatchedSoldCost;
   const ownNetWithRecovery = ownTrading + ownPriorRecoveryProfit - generalExpenses;
 
   const sortByPayDate = (list) => {
@@ -2667,8 +2684,12 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     investorPriorRecoveryProfit: Math.round(investorPriorRecoveryProfit),
     soldQty: Math.round(soldQty),
     soldCost: Math.round(soldCost),
+    matchedSoldCost: Math.round(matchedSoldCost),
+    unpaidSoldCost: Math.round(unpaidSoldCost),
     ownSoldCost: Math.round(ownSoldCost),
     investorSoldCost: Math.round(investorSoldCost),
+    ownMatchedSoldCost: Math.round(ownMatchedSoldCost),
+    investorMatchedSoldCost: Math.round(investorMatchedSoldCost),
     ownSoldQty: Math.round(ownSoldQty),
     investorSoldQty: Math.round(investorSoldQty),
     monthDue: Math.round(monthDue),

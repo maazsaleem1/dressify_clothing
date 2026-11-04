@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Factory, ArrowRight } from 'lucide-react';
 import { getProductions, getCategories, getBrands, createProduction, updateProduction, moveToInventory, deleteProduction } from '../services/api';
+import { CardShimmer } from '../components/Shimmer';
 
 const Production = () => {
   const [productions, setProductions] = useState([]);
@@ -213,8 +214,11 @@ const Production = () => {
       {/* Production Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {loading ? (
-          <div className="col-span-full flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+          <div className="col-span-full grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
+            <CardShimmer />
+            <CardShimmer />
+            <CardShimmer />
+            <CardShimmer />
           </div>
         ) : productions.length === 0 ? (
           <div className="col-span-full text-center py-12">

@@ -362,8 +362,8 @@ const Investors = () => {
               </p>
             </div>
           ) : loadingPortfolio ? (
-            <div className="rounded-2xl border border-neutral-200 bg-white flex justify-center py-24">
-              <div className="animate-spin rounded-full h-10 w-10 border-2 border-neutral-200 border-t-ink" />
+            <div className="rounded-2xl border border-neutral-200 bg-white p-4 animate-fade-in" aria-busy="true">
+              <ListItemShimmer count={4} />
             </div>
           ) : (
             <>

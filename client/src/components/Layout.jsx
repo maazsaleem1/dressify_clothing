@@ -280,7 +280,7 @@ const Layout = ({ children }) => {
         </header>
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 sm:px-3 sm:py-4 md:px-4 md:py-5 bg-[#f4f4f5]">
-          <div className="w-full min-w-0 max-w-none animate-fade-in">
+          <div className="w-full min-w-0 max-w-none animate-page-enter">
             {children}
           </div>
         </main>

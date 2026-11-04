@@ -3,6 +3,7 @@ import { Plus, Edit2, Trash2, Tag, Package } from 'lucide-react';
 import { getBrands, getCategories, createBrand, createCategory, updateBrand, updateCategory, deleteBrand, deleteCategory } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import ImageUpload from '../components/ImageUpload';
+import { CardShimmer } from '../components/Shimmer';
 
 const BrandsCategories = () => {
   const [brands, setBrands] = useState([]);
@@ -224,8 +225,10 @@ const BrandsCategories = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {loading ? (
-              <div className="col-span-full flex justify-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+              <div className="col-span-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-in">
+                <CardShimmer />
+                <CardShimmer />
+                <CardShimmer />
               </div>
             ) : brands.length === 0 ? (
               <div className="col-span-full text-center py-12">
@@ -320,8 +323,10 @@ const BrandsCategories = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {loading ? (
-              <div className="col-span-full flex justify-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+              <div className="col-span-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-in">
+                <CardShimmer />
+                <CardShimmer />
+                <CardShimmer />
               </div>
             ) : categories.length === 0 ? (
               <div className="col-span-full text-center py-12">

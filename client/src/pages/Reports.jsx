@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Calendar, TrendingUp, DollarSign, Package, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle, Receipt, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Download, Calendar, TrendingUp, DollarSign, Package, TrendingDown, ArrowUp, ArrowDown, CreditCard, AlertCircle, Receipt, X, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { getSalesStats, getInventoryStats, getDashboardStats, getMonthlyProfitLoss, getSales, getInventory, getOnlineSalesStats, getCustomers, getPayments, getExpenses } from '../services/api';
 import { showInfo, showSuccess, showError } from '../utils/toast';
 import { downloadAccountantReport, findEarliestActivityDate } from '../utils/accountantReport';
+import { ReportsPageShimmer, Shimmer, ListItemShimmer } from '../components/Shimmer';
 
+// Reports page — month closing, payments, charts
 const formatDisplayName = (name) => {
   if (!name || typeof name !== 'string') return name || '';
   return name
@@ -660,14 +663,10 @@ const Reports = () => {
     }
   };
 
-  const COLORS = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+  const COLORS = ['#171717', '#059669', '#d97706', '#e11d48', '#0ea5e9'];
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-      </div>
-    );
+    return <ReportsPageShimmer />;
   }
 
   const salesData = stats?.salesByDate?.map(item => ({
@@ -721,61 +720,253 @@ const Reports = () => {
   const netAfterExpenses = paymentsInRange - expenseTotals.general;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Reports & Analytics</h2>
-          <p className="text-gray-600 mt-1">Comprehensive business insights and reports</p>
+          <h2 className="page-title">Reports</h2>
+          <p className="page-subtitle">Month closing, payments & insights</p>
         </div>
-        <button
-          onClick={handleExport}
-          disabled={exportingAccountant}
-          className="btn-primary flex items-center gap-2 disabled:opacity-60"
-        >
-          <Download size={20} />
-          {exportingAccountant ? 'Preparing PDF…' : 'Export Accountant PDF'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleSetFullHistoryRange}
+            className="btn-secondary text-sm min-h-[40px]"
+          >
+            Full history dates
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={exportingAccountant}
+            className="btn-primary flex items-center gap-2 disabled:opacity-60 text-sm min-h-[40px]"
+          >
+            <Download size={18} />
+            {exportingAccountant ? 'Preparing PDF…' : 'Export PDF'}
+          </button>
+        </div>
       </div>
 
-      {/* Accountant pack helper */}
-      <div className="card border border-neutral-200 bg-white">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-base font-semibold text-ink">Accountant report pack</h3>
-            <p className="text-sm text-neutral-500 mt-1 max-w-2xl">
-              Simple PDF: kitna paisa aaya, maal ki cost, kharcha, aur <strong>andaza net profit</strong>.
-              Tax amount is mein nahi — woh accountant batayega. From/To dates use hoti hain.
+      {/* Monthly Closing Section */}
+      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden animate-rise-in">
+        <div className="px-4 sm:px-6 py-5 border-b border-neutral-100 flex flex-col md:flex-row md:items-end md:justify-between gap-4 bg-gradient-to-br from-neutral-50/80 to-white">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint mb-1">Cash-matched P&amp;L</p>
+            <h3 className="text-xl sm:text-2xl font-bold text-ink tracking-tight">Month closing</h3>
+            <p className="text-sm text-ink-muted mt-1">
+              Sales · paid · recovery · stock · expenses — card pe tap = detail
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleSetFullHistoryRange}
-              className="btn-secondary text-sm min-h-[40px]"
+          <div className="flex gap-2">
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+              className="px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm font-medium text-ink outline-none focus:ring-2 focus:ring-neutral-900/10"
             >
-              Set From = business start
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={exportingAccountant}
-              className="btn-primary text-sm min-h-[40px] flex items-center gap-2 disabled:opacity-60"
+              <option value="1">January</option>
+              <option value="2">February</option>
+              <option value="3">March</option>
+              <option value="4">April</option>
+              <option value="5">May</option>
+              <option value="6">June</option>
+              <option value="7">July</option>
+              <option value="8">August</option>
+              <option value="9">September</option>
+              <option value="10">October</option>
+              <option value="11">November</option>
+              <option value="12">December</option>
+            </select>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm font-medium text-ink outline-none focus:ring-2 focus:ring-neutral-900/10"
             >
-              <Download size={16} />
-              {exportingAccountant ? 'Generating…' : 'Download PDF'}
-            </button>
+              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
           </div>
+        </div>
+
+        <div className="p-4 sm:p-6">
+          {loadingMonthly ? (
+            <div className="space-y-4" aria-busy="true" aria-label="Loading month data">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 stagger-children">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="rounded-2xl border border-neutral-100 bg-neutral-50/80 p-5 space-y-3">
+                    <Shimmer className="h-3 w-24 rounded-md" />
+                    <Shimmer className="h-8 w-32 rounded-md" />
+                    <Shimmer className="h-3 w-full rounded-md" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : monthlyData ? (() => {
+            const trading = parseFloat(monthlyData.tradingProfit) || 0;
+            const net = parseFloat(monthlyData.netProfit) || 0;
+            const partnerPct = Math.min(100, Math.max(0, parseFloat(partnerSharePct) || 0));
+            const partnerShare = net > 0 ? Math.round((net * partnerPct) / 100) : 0;
+            const yourFinal = net - partnerShare;
+            const fmt = (n) => `Rs. ${(Math.abs(parseFloat(n) || 0)).toLocaleString()}`;
+            const openDetail = (type) => setMonthDetailType(type);
+            const cardCls = 'report-metric-card text-left rounded-2xl border border-neutral-200/90 bg-neutral-50/50 hover:bg-white hover:border-neutral-300 p-4 sm:p-5';
+
+            return (
+              <div className="space-y-5 animate-fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 stagger-children">
+                  <button type="button" onClick={() => openDetail('sold')} className={cardCls}>
+                    <p className="text-xs font-medium text-ink-muted mb-1">1. Is month bika</p>
+                    <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.soldQty || 0).toLocaleString()} pcs</p>
+                    <p className="text-xs text-ink-muted mt-1.5">Bill {fmt(monthlyData.totalSales)} · Cost {fmt(monthlyData.soldCost)}</p>
+                  </button>
+
+                  <button type="button" onClick={() => openDetail('paid')} className={cardCls}>
+                    <p className="text-xs font-medium text-ink-muted mb-1">2. Sales se paid</p>
+                    <p className="text-2xl font-bold text-emerald-700 tabular-nums">{fmt(monthlyData.monthSalesPaid ?? monthlyData.totalPaid)}</p>
+                    <p className="text-xs text-ink-muted mt-1.5">Due {fmt(monthlyData.monthDue)} · {monthlyData.salesCount || 0} sales</p>
+                  </button>
+
+                  <button type="button" onClick={() => openDetail('recovery')} className={cardCls}>
+                    <p className="text-xs font-medium text-ink-muted mb-1">3. Pichla recovery</p>
+                    <p className="text-2xl font-bold text-amber-800 tabular-nums">{fmt(monthlyData.priorRecovery || 0)}</p>
+                    <p className="text-xs text-ink-muted mt-1.5">
+                      Cost {fmt(monthlyData.priorRecoveryCost || 0)} · Profit {fmt(monthlyData.priorRecoveryProfit || 0)}
+                    </p>
+                  </button>
+
+                  <button type="button" onClick={() => openDetail('stock')} className={cardCls}>
+                    <p className="text-xs font-medium text-ink-muted mb-1">4. Stock → next month</p>
+                    <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.closingStockQty || 0).toLocaleString()} pcs</p>
+                    <p className="text-xs text-ink-muted mt-1.5">
+                      Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
+                    </p>
+                  </button>
+
+                  <button type="button" onClick={() => openDetail('expenses')} className={cardCls}>
+                    <p className="text-xs font-medium text-ink-muted mb-1">5. Expenses</p>
+                    <p className="text-2xl font-bold text-rose-700 tabular-nums">{fmt(monthlyData.generalExpenses)}</p>
+                    <p className="text-xs text-ink-muted mt-1.5">{monthlyData.expensesCount || 0} entries</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openDetail('profit')}
+                    className={`report-metric-card text-left rounded-2xl border-2 p-4 sm:p-5 group ${net >= 0 ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs font-medium text-ink-muted mb-1">6. Net {net >= 0 ? 'profit' : 'loss'}</p>
+                      <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-transform group-hover:translate-x-0.5 ${net >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                        <ChevronRight size={16} />
+                      </span>
+                    </div>
+                    <p className={`text-2xl font-bold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {net >= 0 ? '+' : '−'}{fmt(net)}
+                    </p>
+                    <p className={`text-xs font-semibold mt-1.5 ${net >= 0 ? 'text-emerald-800/80' : 'text-rose-800/80'}`}>
+                      Detail dekho — 4-step hisab →
+                    </p>
+                  </button>
+                </div>
+
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-ink">Own vs Investor</p>
+                    <p className="text-xs text-ink-muted mt-0.5">Inventory tag se split</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    <button type="button" onClick={() => openDetail('ownPaid')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
+                      <p className="text-[11px] font-medium text-emerald-800">A. Meri — paid</p>
+                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.ownMonthSalesPaid)}</p>
+                      <p className="text-[11px] text-ink-muted mt-1">Matched {fmt(monthlyData.ownMatchedSoldCost ?? monthlyData.ownSoldCost)}</p>
+                    </button>
+                    <button type="button" onClick={() => openDetail('investorPaid')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
+                      <p className="text-[11px] font-medium text-sky-800">B. Investor — paid</p>
+                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.investorMonthSalesPaid)}</p>
+                      <p className="text-[11px] text-ink-muted mt-1">Matched {fmt(monthlyData.investorMatchedSoldCost ?? monthlyData.investorSoldCost)}</p>
+                    </button>
+                    <button type="button" onClick={() => openDetail('ownRecovery')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
+                      <p className="text-[11px] font-medium text-amber-800">C. Recovery — mera</p>
+                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.ownPriorRecovery)}</p>
+                      <p className="text-[11px] text-ink-muted mt-1">
+                        Profit {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
+                      </p>
+                    </button>
+                    <button type="button" onClick={() => openDetail('investorRecovery')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
+                      <p className="text-[11px] font-medium text-violet-800">D. Recovery — investor</p>
+                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.investorPriorRecovery)}</p>
+                      <p className="text-[11px] text-ink-muted mt-1">
+                        Profit {fmt(monthlyData.investorPriorRecoveryProfit || 0)}
+                      </p>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-ink-muted text-pretty">
+                    Stock next: Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
+                    {' — '}Investor pay-out Investors page se.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => openDetail('profit')}
+                  className={`w-full text-left rounded-2xl border-2 p-4 sm:p-5 report-metric-card ${net >= 0 ? 'border-emerald-200 bg-gradient-to-br from-emerald-50/90 to-white' : 'border-rose-200 bg-gradient-to-br from-rose-50/90 to-white'}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Net profit detail</p>
+                      <p className={`text-2xl sm:text-3xl font-bold tabular-nums tracking-tight mt-1 ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
+                      </p>
+                      <p className="text-xs text-ink-muted mt-2 text-pretty">
+                        Trading {trading >= 0 ? '+' : '−'}{fmt(Math.abs(trading))}
+                        {' · '}Recovery profit +{fmt(monthlyData.priorRecoveryProfit || 0)}
+                        {' · '}Expenses −{fmt(monthlyData.generalExpenses)}
+                      </p>
+                      {(monthlyData.unpaidSoldCost || 0) > 0 && (
+                        <p className="text-xs text-amber-800 mt-1.5">
+                          Unpaid sold cost {fmt(monthlyData.unpaidSoldCost)} — abhi loss nahi
+                        </p>
+                      )}
+                    </div>
+                    <span className={`shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold ${net >= 0 ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                      Kaise bana?
+                      <ChevronRight size={14} />
+                    </span>
+                  </div>
+                </button>
+                <div className="flex flex-wrap items-center gap-3 px-1">
+                  {partnerPct > 0 && (
+                    <p className="text-xs text-ink-muted">
+                      Partner {partnerPct}% {fmt(partnerShare)} · Aapka {yourFinal >= 0 ? '+' : '−'}{fmt(Math.abs(yourFinal))}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowProfitDetailModal(true)}
+                    className="text-xs font-semibold text-ink underline underline-offset-2 hover:text-ink-muted"
+                  >
+                    All-time product profit
+                  </button>
+                </div>
+              </div>
+            );
+          })() : (
+            <div className="text-center py-10">
+              <p className="text-ink-muted text-sm">Is month ka data load nahi hua. Dobara try karein.</p>
+            </div>
+          )}
         </div>
       </div>
 
+
+
       {/* Date Range Filter */}
-      <div className="card">
+      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 animate-fade-in-delay">
         <div className="flex flex-col sm:flex-row sm:items-end gap-4">
-          <Calendar className="text-gray-400 hidden sm:block mb-2" size={20} />
-          <div className="flex flex-wrap items-end gap-3">
+          <span className="hidden sm:flex w-10 h-10 mb-1 rounded-xl bg-neutral-50 border border-neutral-200 items-center justify-center text-ink-muted">
+            <Calendar size={18} />
+          </span>
+          <div className="flex flex-wrap items-end gap-3 flex-1">
             <div>
-              <label className="block text-xs text-gray-600 mb-1">From</label>
+              <label className="block text-xs font-medium text-ink-muted mb-1">From</label>
               <input
                 type="date"
                 value={dateRange.startDate}
@@ -784,7 +975,7 @@ const Reports = () => {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-600 mb-1">To</label>
+              <label className="block text-xs font-medium text-ink-muted mb-1">To</label>
               <input
                 type="date"
                 value={dateRange.endDate}
@@ -800,162 +991,172 @@ const Reports = () => {
             </button>
           </div>
         </div>
-        <p className="text-xs text-neutral-400 mt-3">
-          Tip: click <em>Set From = business start</em>, then <em>Apply</em>, then download PDF to see everything from first sale/expense until today.
+        <p className="text-xs text-ink-muted mt-3">
+          Date range Payment Received / charts ke liye. PDF export bhi inhi dates use karta hai.
         </p>
       </div>
 
       {/* Payment Received (Initial + Recovery) */}
-      <div className="card border-2 border-emerald-100 bg-gradient-to-br from-emerald-50/50 to-white">
-        <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <DollarSign size={22} className="text-emerald-600" />
-          Payment Received
-        </h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Money received vs <strong>general expenses</strong> in the selected date range.
-          Product expenses are not counted here — they are treated as recovered through customer payments.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Today</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsToday.toLocaleString()}</p>
-          </div>
-          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">This Month</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">Rs. {paymentsThisMonth.toLocaleString()}</p>
-          </div>
-          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Payment In Range</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">
-              Rs. {paymentsInRange.toLocaleString()}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg p-4 border border-emerald-100 shadow-sm">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Transactions</p>
-            <p className="text-2xl font-bold text-emerald-700 mt-1">{paymentsList.length}</p>
-          </div>
-        </div>
-
-        {/* Only general expense vs received (product expense excluded — recovered via payments) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="bg-white rounded-lg p-4 border border-amber-200 shadow-sm">
-            <p className="text-xs font-medium text-amber-700/80 uppercase tracking-wide flex items-center gap-1.5">
-              <Receipt size={14} />
-              General Expense
-            </p>
-            <p className="text-2xl font-bold text-amber-800 mt-1">
-              Rs. {expenseTotals.general.toLocaleString()}
-            </p>
-            <p className="text-[11px] text-gray-500 mt-1">Main shop / daily expenses only</p>
-          </div>
-          <div className={`rounded-lg p-4 border shadow-sm ${netAfterExpenses >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
-            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Net (Received − General Expense)</p>
-            <p className={`text-2xl font-bold mt-1 ${netAfterExpenses >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-              Rs. {netAfterExpenses.toLocaleString()}
-            </p>
-            <p className="text-[11px] text-gray-500 mt-1">
-              Received Rs. {paymentsInRange.toLocaleString()} − General Rs. {expenseTotals.general.toLocaleString()}
-            </p>
-          </div>
-        </div>
-        {paymentsByDateData.length > 0 && (
-          <div className="mb-6">
-            <h4 className="font-medium text-gray-700 mb-3">Daily payment totals</h4>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={paymentsByDateData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '11px' }} />
-                <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
-                <Tooltip formatter={(value) => [`Rs. ${Number(value).toLocaleString()}`, 'Received']} />
-                <Bar dataKey="total" fill="#10b981" name="Received (Rs.)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-        <div className="rounded-xl border border-neutral-200/90 bg-white overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setShowPaymentBreakdown((v) => !v)}
-            className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-neutral-50/80 transition-colors"
-            aria-expanded={showPaymentBreakdown}
-          >
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink">Payment breakdown by invoice</p>
-              <p className="text-xs text-ink-muted mt-0.5">
-                {paymentsList.length} transaction{paymentsList.length !== 1 ? 's' : ''}
-                {showPaymentBreakdown ? ' · tap row for products' : ' · open to view list'}
+      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden animate-fade-in-delay-2">
+        <div className="px-4 sm:px-6 py-5 border-b border-neutral-100 bg-gradient-to-br from-emerald-50/40 to-white">
+          <div className="flex items-start gap-3">
+            <span className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <DollarSign size={20} />
+            </span>
+            <div>
+              <h3 className="text-lg font-bold text-ink tracking-tight">Payment Received</h3>
+              <p className="text-sm text-ink-muted mt-0.5">
+                Received vs general expenses — product expense yahan nahi (payments se recover).
               </p>
             </div>
-            <span className="w-8 h-8 rounded-full bg-neutral-50 border border-neutral-200 flex items-center justify-center text-ink-muted shrink-0">
-              {showPaymentBreakdown ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </span>
-          </button>
+          </div>
+        </div>
+        <div className="p-4 sm:p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4 stagger-children">
+            <div className="report-metric-card rounded-2xl border border-neutral-200/90 bg-neutral-50/50 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Today</p>
+              <p className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">Rs. {paymentsToday.toLocaleString()}</p>
+            </div>
+            <div className="report-metric-card rounded-2xl border border-neutral-200/90 bg-neutral-50/50 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">This Month</p>
+              <p className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">Rs. {paymentsThisMonth.toLocaleString()}</p>
+            </div>
+            <div className="report-metric-card rounded-2xl border border-neutral-200/90 bg-neutral-50/50 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">In Range</p>
+              <p className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">
+                Rs. {paymentsInRange.toLocaleString()}
+              </p>
+            </div>
+            <div className="report-metric-card rounded-2xl border border-neutral-200/90 bg-neutral-50/50 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Transactions</p>
+              <p className="text-2xl font-bold text-ink mt-1 tabular-nums">{paymentsList.length}</p>
+            </div>
+          </div>
 
-          {showPaymentBreakdown && (
-            <div className="border-t border-neutral-100">
-              <div className="overflow-x-auto">
-                {paymentsList.length === 0 ? (
-                  <p className="p-6 text-ink-muted text-center text-sm">No payments in the selected date range.</p>
-                ) : (
-                  <table className="w-full text-sm min-w-[720px]">
-                    <thead className="bg-neutral-50 border-b border-neutral-100">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Invoice</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Customer</th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-ink-muted">Amount</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Type</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Method</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">By</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-50">
-                      {paymentsList.map((p) => {
-                        const d = p.paymentDate;
-                        const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
-                        const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
-                        return (
-                          <tr
-                            key={p.id || p._id}
-                            onClick={() => openPaymentDetail(p)}
-                            className="cursor-pointer hover:bg-neutral-50/80 transition-colors"
-                            title="View payment details"
-                          >
-                            <td className="px-4 py-3 text-ink-muted whitespace-nowrap tabular-nums">{dateStr}</td>
-                            <td className="px-4 py-3 font-medium text-ink">{p.invoiceNumber || '–'}</td>
-                            <td className="px-4 py-3 font-medium text-ink">{formatDisplayName(p.customerName) || '–'}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums">
-                              Rs. {(parseFloat(p.amount) || 0).toLocaleString()}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${p.paymentType === 'Initial Sale'
-                                ? 'bg-sky-50 text-sky-800 border-sky-100'
-                                : 'bg-amber-50 text-amber-900 border-amber-100'
-                                }`}>
-                                {p.paymentType || '–'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-ink-muted">{p.paymentMethod || 'Cash'}</td>
-                            <td className="px-4 py-3 text-ink-muted text-xs">
-                              {p.editedBy ? (
-                                <span>Edited: <strong className="text-ink">{p.editedBy}</strong></span>
-                              ) : p.addedBy ? (
-                                <span>Added: <strong className="text-ink">{p.addedBy}</strong></span>
-                              ) : p.saleAddedBy ? (
-                                <span>Sale: <strong className="text-ink">{p.saleAddedBy}</strong></span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+          {/* Only general expense vs received (product expense excluded — recovered via payments) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+            <div className="rounded-2xl border border-amber-200/80 bg-amber-50/40 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-800/80 flex items-center gap-1.5">
+                <Receipt size={14} />
+                General Expense
+              </p>
+              <p className="text-2xl font-bold text-amber-900 mt-1 tabular-nums">
+                Rs. {expenseTotals.general.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-ink-muted mt-1">Main shop / daily expenses only</p>
+            </div>
+            <div className={`rounded-2xl border p-4 ${netAfterExpenses >= 0 ? 'bg-emerald-50/70 border-emerald-200' : 'bg-rose-50/70 border-rose-200'}`}>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Net (Received − Expense)</p>
+              <p className={`text-2xl font-bold mt-1 tabular-nums ${netAfterExpenses >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                Rs. {netAfterExpenses.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-ink-muted mt-1">
+                Received Rs. {paymentsInRange.toLocaleString()} − General Rs. {expenseTotals.general.toLocaleString()}
+              </p>
+            </div>
+          </div>
+          {paymentsByDateData.length > 0 && (
+            <div className="mb-6 rounded-2xl border border-neutral-100 bg-neutral-50/40 p-4">
+              <h4 className="text-sm font-semibold text-ink mb-3">Daily payment totals</h4>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={paymentsByDateData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '11px' }} />
+                  <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
+                  <Tooltip
+                    formatter={(value) => [`Rs. ${Number(value).toLocaleString()}`, 'Received']}
+                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e5e5', borderRadius: '12px' }}
+                  />
+                  <Bar dataKey="total" fill="#059669" name="Received (Rs.)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           )}
+          <div className="rounded-xl border border-neutral-200/90 bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowPaymentBreakdown((v) => !v)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-neutral-50/80 transition-colors"
+              aria-expanded={showPaymentBreakdown}
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink">Payment breakdown by invoice</p>
+                <p className="text-xs text-ink-muted mt-0.5">
+                  {paymentsList.length} transaction{paymentsList.length !== 1 ? 's' : ''}
+                  {showPaymentBreakdown ? ' · tap row for products' : ' · open to view list'}
+                </p>
+              </div>
+              <span className="w-8 h-8 rounded-full bg-neutral-50 border border-neutral-200 flex items-center justify-center text-ink-muted shrink-0">
+                {showPaymentBreakdown ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </span>
+            </button>
+
+            {showPaymentBreakdown && (
+              <div className="border-t border-neutral-100">
+                <div className="overflow-x-auto">
+                  {paymentsList.length === 0 ? (
+                    <p className="p-6 text-ink-muted text-center text-sm">No payments in the selected date range.</p>
+                  ) : (
+                    <table className="w-full text-sm min-w-[720px]">
+                      <thead className="bg-neutral-50 border-b border-neutral-100">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Date</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Invoice</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Customer</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-ink-muted">Amount</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Type</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Method</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">By</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-50">
+                        {paymentsList.map((p) => {
+                          const d = p.paymentDate;
+                          const dateObj = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
+                          const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
+                          return (
+                            <tr
+                              key={p.id || p._id}
+                              onClick={() => openPaymentDetail(p)}
+                              className="cursor-pointer hover:bg-neutral-50/80 transition-colors"
+                              title="View payment details"
+                            >
+                              <td className="px-4 py-3 text-ink-muted whitespace-nowrap tabular-nums">{dateStr}</td>
+                              <td className="px-4 py-3 font-medium text-ink">{p.invoiceNumber || '–'}</td>
+                              <td className="px-4 py-3 font-medium text-ink">{formatDisplayName(p.customerName) || '–'}</td>
+                              <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums">
+                                Rs. {(parseFloat(p.amount) || 0).toLocaleString()}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${p.paymentType === 'Initial Sale'
+                                  ? 'bg-sky-50 text-sky-800 border-sky-100'
+                                  : 'bg-amber-50 text-amber-900 border-amber-100'
+                                  }`}>
+                                  {p.paymentType || '–'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-ink-muted">{p.paymentMethod || 'Cash'}</td>
+                              <td className="px-4 py-3 text-ink-muted text-xs">
+                                {p.editedBy ? (
+                                  <span>Edited: <strong className="text-ink">{p.editedBy}</strong></span>
+                                ) : p.addedBy ? (
+                                  <span>Added: <strong className="text-ink">{p.addedBy}</strong></span>
+                                ) : p.saleAddedBy ? (
+                                  <span>Sale: <strong className="text-ink">{p.saleAddedBy}</strong></span>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -973,10 +1174,18 @@ const Reports = () => {
         const salePaid = parseFloat(sale?.paidAmount) || 0;
         const saleRemaining = parseFloat(sale?.remainingAmount) || Math.max(0, saleTotal - salePaid);
 
-        return (
-          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-            <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl max-w-2xl w-full max-h-[92dvh] overflow-y-auto">
-              <div className="p-4 sm:p-5 border-b border-gray-200 sticky top-0 bg-white z-10 flex items-start justify-between gap-3">
+        return createPortal(
+          <div
+            className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
+            onClick={() => setSelectedPaymentDetail(null)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="bg-white rounded-2xl shadow-elevated max-w-2xl w-full max-h-[min(90dvh,880px)] flex flex-col overflow-hidden border border-neutral-200/80"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 sm:p-5 border-b border-neutral-100 bg-white shrink-0 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="text-lg sm:text-xl font-bold text-ink">Payment Details</h3>
                   <p className="text-sm text-neutral-500 mt-0.5 truncate">
@@ -986,13 +1195,14 @@ const Reports = () => {
                 <button
                   type="button"
                   onClick={() => setSelectedPaymentDetail(null)}
-                  className="text-gray-400 hover:text-gray-700 text-2xl font-bold min-h-[44px] min-w-[44px] shrink-0"
+                  className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                  aria-label="Close"
                 >
-                  ×
+                  <X size={18} />
                 </button>
               </div>
 
-              <div className="p-4 sm:p-5 space-y-5">
+              <div className="p-4 sm:p-5 space-y-5 overflow-y-auto overscroll-contain min-h-0 flex-1">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 col-span-2 sm:col-span-1">
                     <p className="text-[11px] uppercase tracking-wide text-emerald-700/80 font-semibold">This Payment</p>
@@ -1126,271 +1336,15 @@ const Reports = () => {
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
-      {/* Monthly Closing Section */}
-      <div className="card bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-          <div>
-            <h3 className="text-2xl font-bold mb-2">Month Closing</h3>
-            <p className="text-indigo-100">
-              Bika · Recovery · Own vs Investor buckets · Stock · Expenses — har card pe click = detail
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-              className="bg-white border border-white/40 rounded-lg px-4 py-2 text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-white/60"
-            >
-              <option value="1">January</option>
-              <option value="2">February</option>
-              <option value="3">March</option>
-              <option value="4">April</option>
-              <option value="5">May</option>
-              <option value="6">June</option>
-              <option value="7">July</option>
-              <option value="8">August</option>
-              <option value="9">September</option>
-              <option value="10">October</option>
-              <option value="11">November</option>
-              <option value="12">December</option>
-            </select>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-              className="bg-white border border-white/40 rounded-lg px-4 py-2 text-gray-900 font-medium focus:outline-none focus:ring-2 focus:ring-white/60"
-            >
-              {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {loadingMonthly ? (
-          <div className="space-y-4" aria-busy="true" aria-label="Loading month data">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="bg-white/10 rounded-lg p-5 backdrop-blur-sm">
-                  <div className="h-4 w-28 rounded bg-white/25 animate-pulse mb-3" />
-                  <div className="h-9 w-36 rounded mb-3 bg-white/30 animate-pulse" />
-                  <div className="h-3 w-full rounded bg-white/20 animate-pulse" />
-                </div>
-              ))}
-            </div>
-            <p className="text-indigo-100 text-xs text-center">Month data load ho rahi hai…</p>
-          </div>
-        ) : monthlyData ? (() => {
-          const trading = parseFloat(monthlyData.tradingProfit) || 0;
-          const net = parseFloat(monthlyData.netProfit) || 0;
-          const partnerPct = Math.min(100, Math.max(0, parseFloat(partnerSharePct) || 0));
-          const partnerShare = net > 0 ? Math.round((net * partnerPct) / 100) : 0;
-          const yourFinal = net - partnerShare;
-          const fmt = (n) => `Rs. ${(Math.abs(parseFloat(n) || 0)).toLocaleString()}`;
-          const openDetail = (type) => setMonthDetailType(type);
-
-          return (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => openDetail('sold')}
-                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
-                >
-                  <p className="text-indigo-100 text-sm mb-1">1. Is month bika</p>
-                  <p className="text-2xl font-bold">{(monthlyData.soldQty || 0).toLocaleString()} pcs</p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    Bill {fmt(monthlyData.totalSales)} · Cost {fmt(monthlyData.soldCost)}
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1 underline/50">Click — kaunsa maal bika</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openDetail('paid')}
-                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
-                >
-                  <p className="text-indigo-100 text-sm mb-1">2. Is month sales se paid</p>
-                  <p className="text-2xl font-bold text-emerald-200">{fmt(monthlyData.monthSalesPaid ?? monthlyData.totalPaid)}</p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    Due abhi {fmt(monthlyData.monthDue)} · {monthlyData.salesCount || 0} sales
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">Click — customer / invoice</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openDetail('recovery')}
-                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
-                >
-                  <p className="text-indigo-100 text-sm mb-1">3. Pichla recovery</p>
-                  <p className="text-2xl font-bold text-amber-200">{fmt(monthlyData.priorRecovery || 0)}</p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    Cost wapas {fmt(monthlyData.priorRecoveryCost || 0)} · Profit{' '}
-                    {fmt(monthlyData.priorRecoveryProfit || 0)}
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">Click — kis customer se / cost vs profit</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openDetail('stock')}
-                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
-                >
-                  <p className="text-indigo-100 text-sm mb-1">4. Stock reh gaya → next month</p>
-                  <p className="text-2xl font-bold">{(monthlyData.closingStockQty || 0).toLocaleString()} pcs</p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">Click — kaunsa maal / funding</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openDetail('expenses')}
-                  className="text-left bg-white/10 rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border border-transparent hover:border-white/30"
-                >
-                  <p className="text-indigo-100 text-sm mb-1">5. General expenses</p>
-                  <p className="text-2xl font-bold text-rose-200">{fmt(monthlyData.generalExpenses)}</p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    {monthlyData.expensesCount || 0} entries · product cost alag
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">Click — expense list</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => openDetail('profit')}
-                  className={`text-left rounded-lg p-5 backdrop-blur-sm hover:bg-white/20 transition-all border-2 ${net >= 0 ? 'border-green-300 bg-white/10' : 'border-red-300 bg-white/10'
-                    }`}
-                >
-                  <p className="text-indigo-100 text-sm mb-1">6. Net month {net >= 0 ? 'profit' : 'loss'}</p>
-                  <p className={`text-2xl font-bold ${net >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                    {net >= 0 ? '+' : '-'}{fmt(net)}
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">
-                    Trading + recovery profit − expenses
-                  </p>
-                  <p className="text-indigo-200 text-xs mt-1">Click — hisab + partner share</p>
-                </button>
-              </div>
-
-              {/* Own vs Investor — 4 buckets */}
-              <div className="rounded-xl border border-white/20 bg-black/10 p-4 space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-white">Own vs Investor cash (categorized)</p>
-                  <p className="text-xs text-indigo-200 mt-0.5">
-                    Inventory pe investor tag se split — adha bika / next month recovery yahan clear
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => openDetail('ownPaid')}
-                    className="text-left rounded-lg bg-emerald-500/20 border border-emerald-300/30 p-4 hover:bg-emerald-500/30 transition-all"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-100">A. Meri inventory — is month paid</p>
-                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.ownMonthSalesPaid)}</p>
-                    <p className="text-[11px] text-indigo-100/80 mt-1">Cost {fmt(monthlyData.ownSoldCost)} · click detail</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openDetail('investorPaid')}
-                    className="text-left rounded-lg bg-sky-500/20 border border-sky-300/30 p-4 hover:bg-sky-500/30 transition-all"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-100">B. Investor inventory — is month paid</p>
-                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.investorMonthSalesPaid)}</p>
-                    <p className="text-[11px] text-indigo-100/80 mt-1">Cost {fmt(monthlyData.investorSoldCost)} · click detail</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openDetail('ownRecovery')}
-                    className="text-left rounded-lg bg-amber-500/20 border border-amber-300/30 p-4 hover:bg-amber-500/30 transition-all"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-100">C. Pichla recovery — mera</p>
-                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.ownPriorRecovery)}</p>
-                    <p className="text-[11px] text-indigo-100/80 mt-1">
-                      Cost {fmt(monthlyData.ownPriorRecoveryCost || 0)} · Profit{' '}
-                      {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openDetail('investorRecovery')}
-                    className="text-left rounded-lg bg-violet-500/20 border border-violet-300/30 p-4 hover:bg-violet-500/30 transition-all"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-100">D. Pichla recovery — investor</p>
-                    <p className="text-xl font-bold mt-1">{fmt(monthlyData.investorPriorRecovery)}</p>
-                    <p className="text-[11px] text-indigo-100/80 mt-1">
-                      Cost {fmt(monthlyData.investorPriorRecoveryCost || 0)} · Profit{' '}
-                      {fmt(monthlyData.investorPriorRecoveryProfit || 0)}
-                    </p>
-                  </button>
-                </div>
-                <p className="text-[11px] text-indigo-100/90 break-words">
-                  Stock next month: Own {fmt(monthlyData.ownClosingStockValue)} ({(monthlyData.ownClosingStockQty || 0).toLocaleString()} pcs)
-                  {' · '}
-                  Investor {fmt(monthlyData.investorClosingStockValue)} ({(monthlyData.investorClosingStockQty || 0).toLocaleString()} pcs)
-                  {' — '}
-                  Investor ko dena Investors page → Pay out se.
-                </p>
-              </div>
-
-              <div className="bg-white/10 rounded-lg px-4 py-3 text-sm text-indigo-50 space-y-2">
-                <p className="font-medium break-words">
-                  Trading: Is-month paid {fmt(monthlyData.monthSalesPaid)} − Cost {fmt(monthlyData.soldCost)} ={' '}
-                  <span className={trading >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
-                    {trading >= 0 ? '+' : '-'}{fmt(trading)}
-                  </span>
-                </p>
-                <p className="font-medium break-words">
-                  Net = Trading + Recovery profit {fmt(monthlyData.priorRecoveryProfit || 0)}
-                  {' '}(cash {fmt(monthlyData.priorRecovery || 0)}, cost wapas {fmt(monthlyData.priorRecoveryCost || 0)})
-                  {' − '}Expenses {fmt(monthlyData.generalExpenses)} ={' '}
-                  <span className={net >= 0 ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
-                    {net >= 0 ? '+' : '-'}{fmt(net)}
-                  </span>
-                  {partnerPct > 0 && (
-                    <> · Partner {partnerPct}% = {fmt(partnerShare)} · Aapka{' '}
-                      <span className="font-bold">{yourFinal >= 0 ? '+' : '-'}{fmt(yourFinal)}</span>
-                    </>
-                  )}
-                </p>
-                <p className="text-xs text-indigo-200 break-words">
-                  Sirf aapka slice: Own paid {fmt(monthlyData.ownMonthSalesPaid)} + Own recovery profit{' '}
-                  {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
-                  {' − '}Own cost {fmt(monthlyData.ownSoldCost)} − Expenses {fmt(monthlyData.generalExpenses)}
-                  {' = '}
-                  <span className="font-semibold">
-                    {(monthlyData.ownNetWithRecovery || 0) >= 0 ? '+' : '-'}
-                    {fmt(monthlyData.ownNetWithRecovery)}
-                  </span>
-                  {' · '}Investor cash is month {fmt((monthlyData.investorMonthSalesPaid || 0) + (monthlyData.investorPriorRecovery || 0))} (alag — Pay out)
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setShowProfitDetailModal(true)}
-                  className="text-xs text-indigo-200 underline hover:text-white"
-                >
-                  All-time product profit detail (alag hisab)
-                </button>
-              </div>
-            </div>
-          );
-        })() : (
-          <div className="text-center py-8">
-            <p className="text-indigo-100">Is month ka data load nahi hua. Dobara try karein.</p>
-          </div>
-        )}
-      </div>
-
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 stagger-children">
         <div
-          className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300 transition-colors"
+          className="report-metric-card bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300"
           onClick={() => setShowStockDetailModal(true)}
           title="Click to view product-wise stock details"
         >
@@ -1406,7 +1360,7 @@ const Reports = () => {
           <p className="text-xs text-ink-muted mt-1.5">{stockDetails.length} products · tap for details</p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+        <div className="report-metric-card bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
               <DollarSign size={20} />
@@ -1418,7 +1372,7 @@ const Reports = () => {
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+        <div className="report-metric-card bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
               <CreditCard size={20} />
@@ -1432,7 +1386,7 @@ const Reports = () => {
         </div>
 
         <div
-          className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300 transition-colors"
+          className="report-metric-card bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300"
           onClick={() => setShowProfitDetailModal(true)}
           title="Paid − sold cost · same as Inventory"
         >
@@ -1450,11 +1404,10 @@ const Reports = () => {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sales Trend */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Sales Trend</h3>
-          <ResponsiveContainer width="100%" height={300}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5 animate-fade-in-delay-3">
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <h3 className="text-base font-bold text-ink tracking-tight mb-4">Sales Trend</h3>
+          <ResponsiveContainer width="100%" height={280}>
             <LineChart data={salesData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" stroke="#6b7280" style={{ fontSize: '12px' }} />
@@ -1463,25 +1416,26 @@ const Reports = () => {
                 contentStyle={{
                   backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
+                  borderRadius: '12px'
                 }}
               />
               <Legend />
               <Line
                 type="monotone"
                 dataKey="sales"
-                stroke="#0ea5e9"
-                strokeWidth={2}
+                stroke="#171717"
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4 }}
                 name="Sales (Rs.)"
               />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Payment Distribution */}
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Payment Distribution</h3>
-          <ResponsiveContainer width="100%" height={300}>
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <h3 className="text-base font-bold text-ink tracking-tight mb-4">Payment Distribution</h3>
+          <ResponsiveContainer width="100%" height={280}>
             <PieChart>
               <Pie
                 data={paymentDistribution}
@@ -1489,9 +1443,11 @@ const Reports = () => {
                 cy="50%"
                 labelLine={false}
                 label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                outerRadius={100}
+                outerRadius={96}
+                innerRadius={48}
                 fill="#8884d8"
                 dataKey="value"
+                paddingAngle={2}
               >
                 {paymentDistribution.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -1502,10 +1458,9 @@ const Reports = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Top Products by Revenue */}
-        <div className="card lg:col-span-2">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Top Products by Revenue</h3>
-          <ResponsiveContainer width="100%" height={300}>
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 lg:col-span-2">
+          <h3 className="text-base font-bold text-ink tracking-tight mb-4">Top Products by Revenue</h3>
+          <ResponsiveContainer width="100%" height={280}>
             <BarChart data={topProductsData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" stroke="#6b7280" style={{ fontSize: '12px' }} />
@@ -1515,205 +1470,208 @@ const Reports = () => {
                 contentStyle={{
                   backgroundColor: '#fff',
                   border: '1px solid #e5e7eb',
-                  borderRadius: '8px'
+                  borderRadius: '12px'
                 }}
               />
               <Legend />
-              <Bar dataKey="revenue" fill="#0ea5e9" name="Revenue (Rs.)" radius={[8, 8, 0, 0]} />
+              <Bar dataKey="revenue" fill="#171717" name="Revenue (Rs.)" radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
       {/* Detailed Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="card">
-          <h4 className="font-semibold text-gray-700 mb-4">Sales Summary</h4>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 stagger-children">
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <h4 className="text-sm font-bold text-ink mb-4">Sales Summary</h4>
           <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Total Transactions</span>
-              <span className="font-semibold">{salesStats?.totalTransactions || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Total Transactions</span>
+              <span className="font-semibold text-ink tabular-nums">{salesStats?.totalTransactions || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Cash Sales</span>
-              <span className="font-semibold">{salesStats?.cashSales || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Cash Sales</span>
+              <span className="font-semibold text-ink tabular-nums">{salesStats?.cashSales || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Credit Sales</span>
-              <span className="font-semibold">{salesStats?.creditSales || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Credit Sales</span>
+              <span className="font-semibold text-ink tabular-nums">{salesStats?.creditSales || 0}</span>
             </div>
-            <div className="flex justify-between pt-3 border-t">
-              <span className="text-gray-600">Average Sale</span>
-              <span className="font-semibold">Rs. {(salesStats?.averageSale || 0).toLocaleString()}</span>
+            <div className="flex justify-between text-sm pt-3 border-t border-neutral-100">
+              <span className="text-ink-muted">Average Sale</span>
+              <span className="font-semibold text-ink tabular-nums">Rs. {(salesStats?.averageSale || 0).toLocaleString()}</span>
             </div>
           </div>
         </div>
 
-        <div className="card">
-          <h4 className="font-semibold text-gray-700 mb-4">Inventory Summary</h4>
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <h4 className="text-sm font-bold text-ink mb-4">Inventory Summary</h4>
           <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Total Products</span>
-              <span className="font-semibold">{inventoryStats?.totalItems || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Total Products</span>
+              <span className="font-semibold text-ink tabular-nums">{inventoryStats?.totalItems || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Total Quantity</span>
-              <span className="font-semibold">{inventoryStats?.totalQuantity || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Total Quantity</span>
+              <span className="font-semibold text-ink tabular-nums">{inventoryStats?.totalQuantity || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Low Stock Items</span>
-              <span className="font-semibold text-orange-600">{inventoryStats?.lowStockCount || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Low Stock Items</span>
+              <span className="font-semibold text-amber-700 tabular-nums">{inventoryStats?.lowStockCount || 0}</span>
             </div>
-            <div className="flex justify-between pt-3 border-t">
-              <span className="text-gray-600">Total Value</span>
-              <span className="font-semibold">Rs. {(inventoryStats?.totalValue || 0).toLocaleString()}</span>
+            <div className="flex justify-between text-sm pt-3 border-t border-neutral-100">
+              <span className="text-ink-muted">Total Value</span>
+              <span className="font-semibold text-ink tabular-nums">Rs. {(inventoryStats?.totalValue || 0).toLocaleString()}</span>
             </div>
           </div>
         </div>
 
-        <div className="card">
-          <h4 className="font-semibold text-gray-700 mb-4">Production Summary</h4>
+        <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5">
+          <h4 className="text-sm font-bold text-ink mb-4">Production Summary</h4>
           <div className="space-y-3">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Total Batches</span>
-              <span className="font-semibold">{stats?.production?.total || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Total Batches</span>
+              <span className="font-semibold text-ink tabular-nums">{stats?.production?.total || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">In Process</span>
-              <span className="font-semibold text-yellow-600">{stats?.production?.inProcess || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">In Process</span>
+              <span className="font-semibold text-amber-700 tabular-nums">{stats?.production?.inProcess || 0}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Completed</span>
-              <span className="font-semibold text-green-600">{stats?.production?.completed || 0}</span>
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-muted">Completed</span>
+              <span className="font-semibold text-emerald-700 tabular-nums">{stats?.production?.completed || 0}</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Outstanding Credit Details */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-6">
+      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden animate-fade-in-delay">
+        <div className="px-4 sm:px-6 py-5 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-br from-amber-50/50 to-white">
           <div className="flex items-center gap-3">
-            <div className="bg-orange-100 p-2 rounded-lg">
-              <CreditCard className="text-orange-600" size={24} />
-            </div>
+            <span className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <CreditCard size={20} />
+            </span>
             <div>
-              <h3 className="text-xl font-bold text-gray-800">Outstanding Credit (Paise Lene Hain)</h3>
-              <p className="text-sm text-gray-600">Kis kis se paise lene hain - Details of all unpaid and partially paid sales</p>
+              <h3 className="text-lg font-bold text-ink tracking-tight">Outstanding Credit</h3>
+              <p className="text-sm text-ink-muted">Paise lene hain — unpaid / partial sales</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold text-orange-600">
+          <div className="sm:text-right">
+            <p className="text-2xl font-bold text-amber-800 tabular-nums">
               Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
             </p>
-            <p className="text-xs text-gray-500 mt-1">{outstandingCredits.length} pending transactions</p>
-            <p className="text-xs text-gray-500 mt-1">From {new Set(outstandingCredits.map(s => s.customerId || s.customer?.id || s.customer?._id).filter(Boolean)).size} customers</p>
+            <p className="text-xs text-ink-muted mt-1">
+              {outstandingCredits.length} pending · {new Set(outstandingCredits.map(s => s.customerId || s.customer?.id || s.customer?._id).filter(Boolean)).size} customers
+            </p>
           </div>
         </div>
 
-        {outstandingCredits.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-            <CreditCard className="mx-auto text-gray-400 mb-3" size={48} />
-            <p className="text-gray-600 font-medium">No Outstanding Credit</p>
-            <p className="text-sm text-gray-500 mt-1">All sales have been fully paid</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gradient-to-r from-orange-50 to-amber-50 border-b-2 border-orange-200">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Invoice</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Total Amount</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Paid Amount</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Remaining</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Added By</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-100">
-                {outstandingCredits.map((sale) => {
-                  const remaining = parseFloat(sale.remainingAmount) || 0;
-                  const total = parseFloat(sale.totalAmount) || 0;
-                  const paid = parseFloat(sale.paidAmount) || 0;
-                  const paymentPercentage = total > 0 ? ((paid / total) * 100).toFixed(0) : 0;
-                  const customer = sale.customerDetails || sale.customer;
-                  const customerName = customer?.name || 'Walk-in Customer';
-                  const customerContact = customer?.contact || customer?.phone || customer?.mobile || 'N/A';
+        <div className="p-4 sm:p-6">
+          {outstandingCredits.length === 0 ? (
+            <div className="text-center py-12 rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/50">
+              <CreditCard className="mx-auto text-ink-faint mb-3" size={40} />
+              <p className="text-ink font-medium">No outstanding credit</p>
+              <p className="text-sm text-ink-muted mt-1">All sales fully paid</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-neutral-100">
+              <table className="w-full">
+                <thead className="bg-neutral-50 border-b border-neutral-100">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Invoice</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Customer</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Total</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Paid</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Remaining</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Added By</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {outstandingCredits.map((sale) => {
+                    const remaining = parseFloat(sale.remainingAmount) || 0;
+                    const total = parseFloat(sale.totalAmount) || 0;
+                    const paid = parseFloat(sale.paidAmount) || 0;
+                    const paymentPercentage = total > 0 ? ((paid / total) * 100).toFixed(0) : 0;
+                    const customer = sale.customerDetails || sale.customer;
+                    const customerName = customer?.name || 'Walk-in Customer';
+                    const customerContact = customer?.contact || customer?.phone || customer?.mobile || 'N/A';
 
-                  return (
-                    <tr key={sale.id || sale._id} className="hover:bg-orange-50/30 transition-colors">
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="font-semibold text-gray-900">{sale.invoiceNumber || sale.id?.slice(-8) || 'N/A'}</span>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div>
-                          <span className="text-gray-800 font-medium block">{customerName}</span>
-                          <p className="text-xs text-gray-500 mt-0.5">{customerContact}</p>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-gray-700">{formatDate(sale.saleDate)}</span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="font-medium text-gray-900">Rs. {total.toLocaleString()}</span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="font-medium text-green-600">Rs. {paid.toLocaleString()}</span>
-                        <p className="text-xs text-gray-500 mt-0.5">{paymentPercentage}% paid</p>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="font-bold text-orange-600 text-lg">Rs. {remaining.toLocaleString()}</span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${sale.paymentStatus === 'Partial'
-                          ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                          : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                          {sale.paymentStatus === 'Partial' ? (
-                            <span className="flex items-center gap-1">
-                              <AlertCircle size={12} />
-                              Partial
+                    return (
+                      <tr key={sale.id || sale._id} className="hover:bg-orange-50/30 transition-colors">
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="font-semibold text-gray-900">{sale.invoiceNumber || sale.id?.slice(-8) || 'N/A'}</span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div>
+                            <span className="text-gray-800 font-medium block">{customerName}</span>
+                            <p className="text-xs text-gray-500 mt-0.5">{customerContact}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="text-gray-700">{formatDate(sale.saleDate)}</span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="font-medium text-gray-900">Rs. {total.toLocaleString()}</span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="font-medium text-green-600">Rs. {paid.toLocaleString()}</span>
+                          <p className="text-xs text-gray-500 mt-0.5">{paymentPercentage}% paid</p>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="font-bold text-orange-600 text-lg">Rs. {remaining.toLocaleString()}</span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${sale.paymentStatus === 'Partial'
+                            ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                            : 'bg-red-100 text-red-800 border border-red-300'
+                            }`}>
+                            {sale.paymentStatus === 'Partial' ? (
+                              <span className="flex items-center gap-1">
+                                <AlertCircle size={12} />
+                                Partial
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <AlertCircle size={12} />
+                                Unpaid
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          {sale.addedBy ? (
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {sale.addedBy}
                             </span>
                           ) : (
-                            <span className="flex items-center gap-1">
-                              <AlertCircle size={12} />
-                              Unpaid
-                            </span>
+                            <span className="text-gray-400 text-sm">—</span>
                           )}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        {sale.addedBy ? (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                            {sale.addedBy}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400 text-sm">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
-                <tr>
-                  <td colSpan="6" className="px-4 py-4 text-right font-bold text-gray-700">
-                    Total Outstanding (Paise Lene Hain):
-                  </td>
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <span className="font-bold text-orange-700 text-xl">
-                      Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4"></td>
-                  <td className="px-4 py-4"></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
+                  <tr>
+                    <td colSpan="6" className="px-4 py-4 text-right font-bold text-gray-700">
+                      Total Outstanding (Paise Lene Hain):
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span className="font-bold text-orange-700 text-xl">
+                        Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4"></td>
+                    <td className="px-4 py-4"></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Month Closing Detail Modal */}
@@ -1739,7 +1697,7 @@ const Reports = () => {
           recovery: 'Pichla recovery — kis se aaya',
           stock: 'Stock reh gaya → next month',
           expenses: 'General expenses',
-          profit: 'Month profit',
+          profit: 'Net profit — kaise bana?',
           ownPaid: 'A. Meri inventory — is month paid',
           investorPaid: 'B. Investor inventory — is month paid',
           ownRecovery: 'C. Pichla recovery — mera',
@@ -1798,18 +1756,20 @@ const Reports = () => {
           );
         };
 
-        return (
+        return createPortal(
           <div
-            className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+            className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
             onClick={() => setMonthDetailType(null)}
+            role="dialog"
+            aria-modal="true"
           >
             <div
-              className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-2xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+              className={`bg-neutral-100 rounded-2xl shadow-elevated w-full flex flex-col overflow-hidden border border-neutral-200/80 max-h-[min(90dvh,880px)] ${monthDetailType === 'profit' ? 'max-w-lg' : 'max-w-2xl'}`}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 sticky top-0 bg-white/95 backdrop-blur z-10 flex justify-between items-start gap-3">
+              <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100 bg-white shrink-0 flex justify-between items-start gap-3">
                 <div className="min-w-0">
-                  <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">{titles[monthDetailType]}</h3>
+                  <h3 className="text-lg font-bold text-ink tracking-tight">{titles[monthDetailType]}</h3>
                   <p className="text-sm text-ink-muted mt-0.5">{monthLabel}</p>
                 </div>
                 <button
@@ -1822,7 +1782,7 @@ const Reports = () => {
                 </button>
               </div>
 
-              <div className="p-4 sm:p-5 space-y-4">
+              <div className="p-4 sm:p-5 space-y-4 overflow-y-auto overscroll-contain min-h-0 flex-1">
                 {monthDetailType === 'sold' && (
                   <>
                     <div className="grid grid-cols-3 gap-2 text-sm">
@@ -1835,10 +1795,16 @@ const Reports = () => {
                         <p className="font-bold">{fmt(monthlyData.totalSales)}</p>
                       </div>
                       <div className="rounded-lg bg-amber-50 p-3">
-                        <p className="text-xs text-gray-500">Cost</p>
+                        <p className="text-xs text-gray-500">Full cost</p>
                         <p className="font-bold">{fmt(monthlyData.soldCost)}</p>
                       </div>
                     </div>
+                    <p className="text-xs text-ink-muted">
+                      Matched to cash {fmt(monthlyData.matchedSoldCost ?? 0)}
+                      {(monthlyData.unpaidSoldCost || 0) > 0 && (
+                        <> · unpaid cost {fmt(monthlyData.unpaidSoldCost)} (net mein nahi)</>
+                      )}
+                    </p>
                     {(monthlyData.soldProducts || []).length === 0 ? (
                       <p className="text-center text-gray-500 py-8">Is month koi sale nahi</p>
                     ) : (
@@ -2102,7 +2068,8 @@ const Reports = () => {
                     <p className="text-sm text-gray-600">
                       Is month <strong>aapki inventory</strong> ki sales se paid:{' '}
                       <strong className="text-emerald-700">{fmt(monthlyData.ownMonthSalesPaid)}</strong>
-                      {' · '}Cost {fmt(monthlyData.ownSoldCost)}
+                      {' · '}Matched cost {fmt(monthlyData.ownMatchedSoldCost ?? monthlyData.ownSoldCost)}
+                      {' '}(full sold cost {fmt(monthlyData.ownSoldCost)})
                     </p>
                     {renderFundingPaymentTable(
                       monthlyData.ownMonthPaidDetail,
@@ -2116,7 +2083,8 @@ const Reports = () => {
                     <p className="text-sm text-gray-600">
                       Is month <strong>investor-tagged</strong> maal ki sales se paid:{' '}
                       <strong className="text-sky-800">{fmt(monthlyData.investorMonthSalesPaid)}</strong>
-                      {' · '}Cost {fmt(monthlyData.investorSoldCost)}. Yeh capital/profit Investors → Pay out se clear karo.
+                      {' · '}Matched cost {fmt(monthlyData.investorMatchedSoldCost ?? monthlyData.investorSoldCost)}
+                      {' '}(full {fmt(monthlyData.investorSoldCost)}). Yeh capital/profit Investors → Pay out se clear karo.
                     </p>
                     {renderFundingPaymentTable(
                       monthlyData.investorMonthPaidDetail,
@@ -2194,183 +2162,254 @@ const Reports = () => {
                   </>
                 )}
 
-                {monthDetailType === 'profit' && (
-                  <div className="space-y-4">
-                    {/* Result hero */}
-                    <div className={`rounded-2xl border p-5 ${net >= 0 ? 'bg-emerald-50/80 border-emerald-100' : 'bg-rose-50/80 border-rose-100'}`}>
-                      <p className="text-[11px] font-medium text-ink-muted">
-                        {net >= 0 ? 'Net profit this month' : 'Net loss this month'}
-                      </p>
-                      <p className={`text-3xl sm:text-4xl font-bold tabular-nums tracking-tight mt-1 ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
-                      </p>
-                      <p className="text-xs text-ink-muted mt-2 text-pretty">
-                        Paid − sold cost + recovery profit − expenses
-                      </p>
-                    </div>
+                {monthDetailType === 'profit' && (() => {
+                  const matchedCost = parseFloat(monthlyData.matchedSoldCost ?? monthlyData.soldCost) || 0;
+                  const paidCash = parseFloat(monthlyData.monthSalesPaid) || 0;
+                  const recoveryProfit = parseFloat(monthlyData.priorRecoveryProfit) || 0;
+                  const recoveryCash = parseFloat(monthlyData.priorRecovery) || 0;
+                  const recoveryCost = parseFloat(monthlyData.priorRecoveryCost) || 0;
+                  const expenses = parseFloat(monthlyData.generalExpenses) || 0;
+                  const unpaidCost = parseFloat(monthlyData.unpaidSoldCost) || 0;
+                  const positiveParts = [
+                    { key: 'trading', label: 'Sales faida', value: Math.max(0, trading), color: 'bg-emerald-500' },
+                    { key: 'recovery', label: 'Recovery faida', value: Math.max(0, recoveryProfit), color: 'bg-amber-500' },
+                  ].filter((p) => p.value > 0);
+                  const barTotal = positiveParts.reduce((s, p) => s + p.value, 0) + Math.max(0, expenses);
 
-                    {/* Clean P&L rows */}
-                    <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
-                      <div className="px-4 sm:px-5 py-3 border-b border-neutral-100">
-                        <h4 className="text-sm font-semibold text-ink">How it adds up</h4>
-                      </div>
-                      <ul className="divide-y divide-neutral-100 text-sm">
-                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
-                          <div className="min-w-0">
-                            <p className="font-medium text-ink">Cash from this month’s sales</p>
-                            <p className="text-xs text-ink-muted mt-0.5">Only money received · dues not included</p>
-                          </div>
-                          <p className="font-semibold text-emerald-700 tabular-nums shrink-0">{fmt(monthlyData.monthSalesPaid)}</p>
-                        </li>
-                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
-                          <div className="min-w-0">
-                            <p className="font-medium text-ink">− Sold cost</p>
-                            <p className="text-xs text-ink-muted mt-0.5">Qty sold × your purchase cost</p>
-                          </div>
-                          <p className="font-semibold text-ink tabular-nums shrink-0">{fmt(monthlyData.soldCost)}</p>
-                        </li>
-                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5 bg-neutral-50/70">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-ink">Trading</p>
-                            <p className="text-xs text-ink-muted mt-0.5">Cash − sold cost</p>
-                          </div>
-                          <p className={`font-bold tabular-nums shrink-0 ${trading >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {trading >= 0 ? '+' : '−'}{fmt(Math.abs(trading))}
-                          </p>
-                        </li>
-                        <li className="px-4 sm:px-5 py-3.5 space-y-2.5">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="font-medium text-ink">Prior recovery (cash)</p>
-                              <p className="text-xs text-ink-muted mt-0.5">Old dues collected this month</p>
+                  return (
+                    <div className="space-y-4">
+                      <div className={`rounded-2xl border p-5 ${net >= 0 ? 'bg-emerald-50/90 border-emerald-100' : 'bg-rose-50/90 border-rose-100'}`}>
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+                          {net >= 0 ? 'Is month ka faida' : 'Is month ka nuqsan'}
+                        </p>
+                        <p className={`text-4xl font-bold tabular-nums tracking-tight mt-1 ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
+                        </p>
+                        <p className="text-xs text-ink-muted mt-2 text-pretty">
+                          Sirf jo paisa aaya uska faida · due abhi count nahi · expenses minus
+                        </p>
+                        {barTotal > 0 && (
+                          <div className="mt-4 space-y-2">
+                            <div className="h-2.5 rounded-full bg-white/80 overflow-hidden flex">
+                              {positiveParts.map((p) => (
+                                <div
+                                  key={p.key}
+                                  className={`${p.color} h-full transition-all duration-500`}
+                                  style={{ width: `${(p.value / barTotal) * 100}%` }}
+                                  title={`${p.label}: ${fmt(p.value)}`}
+                                />
+                              ))}
+                              {expenses > 0 && (
+                                <div
+                                  className="bg-rose-400 h-full"
+                                  style={{ width: `${(expenses / barTotal) * 100}%` }}
+                                  title={`Expenses: ${fmt(expenses)}`}
+                                />
+                              )}
                             </div>
-                            <p className="font-semibold text-amber-800 tabular-nums shrink-0">
-                              {fmt(monthlyData.priorRecovery || 0)}
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-medium text-ink-muted">
+                              {positiveParts.map((p) => (
+                                <span key={p.key} className="inline-flex items-center gap-1">
+                                  <span className={`w-2 h-2 rounded-sm ${p.color}`} />
+                                  {p.label}
+                                </span>
+                              ))}
+                              {expenses > 0 && (
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-sm bg-rose-400" />
+                                  Expenses
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                        <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100">
+                          <h4 className="text-sm font-semibold text-ink">Kaise calculate hua?</h4>
+                          <p className="text-xs text-ink-muted mt-0.5">Green = add · Red = minus</p>
+                        </div>
+
+                        <div className="divide-y divide-neutral-100 text-sm">
+                          <div className="px-4 sm:px-5 py-4 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 mb-1">+ Add</p>
+                              <p className="font-semibold text-ink">Customers se paisa aaya</p>
+                              <p className="text-xs text-ink-muted mt-0.5">Is month sales pe cash (due nahi)</p>
+                            </div>
+                            <p className="font-bold text-emerald-700 tabular-nums shrink-0">+{fmt(paidCash)}</p>
+                          </div>
+
+                          <div className="px-4 sm:px-5 py-4 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-rose-700 mb-1">− Minus</p>
+                              <p className="font-semibold text-ink">Us paid maal ki cost</p>
+                              <p className="text-xs text-ink-muted mt-0.5">Sirf jis ka paisa aa chuka</p>
+                            </div>
+                            <p className="font-bold text-rose-700 tabular-nums shrink-0">−{fmt(matchedCost)}</p>
+                          </div>
+
+                          <div className="px-4 sm:px-5 py-3.5 bg-neutral-50/90 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-ink-muted">Beech ka faida (trading)</p>
+                              <p className="text-[11px] text-ink-muted mt-0.5 tabular-nums">{fmt(paidCash)} − {fmt(matchedCost)}</p>
+                            </div>
+                            <p className={`font-bold tabular-nums shrink-0 ${trading >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {trading >= 0 ? '+' : '−'}{fmt(Math.abs(trading))}
                             </p>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="rounded-xl bg-neutral-50 border border-neutral-200/80 px-3 py-2.5">
-                              <p className="text-[11px] text-ink-muted">Cost returned</p>
-                              <p className="text-sm font-semibold text-ink tabular-nums mt-0.5">
-                                {fmt(monthlyData.priorRecoveryCost || 0)}
-                              </p>
-                              <p className="text-[10px] text-ink-muted mt-0.5">Not in net</p>
-                            </div>
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2.5">
-                              <p className="text-[11px] text-emerald-800">+ Profit part</p>
-                              <p className="text-sm font-semibold text-emerald-800 tabular-nums mt-0.5">
-                                {fmt(monthlyData.priorRecoveryProfit || 0)}
-                              </p>
-                              <p className="text-[10px] text-emerald-700/80 mt-0.5">Added to net</p>
-                            </div>
-                          </div>
-                        </li>
-                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5">
-                          <div className="min-w-0">
-                            <p className="font-medium text-ink">− Expenses</p>
-                            <p className="text-xs text-ink-muted mt-0.5">Rent, utilities, shop costs</p>
-                          </div>
-                          <p className="font-semibold text-rose-700 tabular-nums shrink-0">{fmt(monthlyData.generalExpenses)}</p>
-                        </li>
-                        <li className="flex items-start justify-between gap-3 px-4 sm:px-5 py-4 bg-ink text-white">
-                          <div className="min-w-0">
-                            <p className="font-semibold">Net month</p>
-                            <p className="text-xs text-white/70 mt-0.5">Trading + recovery profit − expenses</p>
-                          </div>
-                          <p className="text-lg font-bold tabular-nums shrink-0">
-                            {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
-                          </p>
-                        </li>
-                      </ul>
-                      <div className="px-4 sm:px-5 py-3 border-t border-neutral-100 bg-neutral-50/50">
-                        <p className="text-xs text-ink-muted text-pretty">
-                          Closing stock {fmt(monthlyData.closingStockValue)} carries to next month — capital, not a loss.
-                        </p>
-                      </div>
-                    </div>
 
-                    {/* Partner share */}
-                    <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-4">
-                      <div>
-                        <h4 className="text-sm font-semibold text-ink">Partner share</h4>
-                        <p className="text-xs text-ink-muted mt-0.5">
-                          % of net profit · 0 if month is in loss
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={partnerSharePct}
-                            onChange={(e) => setPartnerSharePct(e.target.value)}
-                            className="w-14 bg-transparent text-sm font-semibold text-ink outline-none tabular-nums"
-                            aria-label="Partner percent"
-                          />
-                          <span className="text-sm text-ink-muted">%</span>
+                          <div className="px-4 sm:px-5 py-4 space-y-2">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 mb-1">+ Add</p>
+                                <p className="font-semibold text-ink">Purane due se faida</p>
+                                <p className="text-xs text-ink-muted mt-0.5">Recovery cash me se sirf profit</p>
+                              </div>
+                              <p className="font-bold text-emerald-700 tabular-nums shrink-0">+{fmt(recoveryProfit)}</p>
+                            </div>
+                            {recoveryCash > 0 && (
+                              <p className="text-[11px] text-ink-muted text-pretty rounded-xl bg-amber-50/80 border border-amber-100 px-3 py-2">
+                                Recovery cash {fmt(recoveryCash)} = cost wapas {fmt(recoveryCost)} + profit {fmt(recoveryProfit)}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="px-4 sm:px-5 py-4 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-rose-700 mb-1">− Minus</p>
+                              <p className="font-semibold text-ink">Shop / daily expenses</p>
+                              <p className="text-xs text-ink-muted mt-0.5">Rent, light, kharcha</p>
+                            </div>
+                            <p className="font-bold text-rose-700 tabular-nums shrink-0">−{fmt(expenses)}</p>
+                          </div>
+
+                          <div className="px-4 sm:px-5 py-4 bg-ink text-white">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-semibold">Final net</p>
+                                <p className="text-xs text-white/65 mt-1 tabular-nums text-pretty">
+                                  {trading >= 0 ? '+' : '−'}{fmt(Math.abs(trading))} + {fmt(recoveryProfit)} − {fmt(expenses)}
+                                </p>
+                              </div>
+                              <p className="text-xl font-bold tabular-nums shrink-0">
+                                {net >= 0 ? '+' : '−'}{fmt(Math.abs(net))}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        {[0, 10, 20, 25, 50].map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() => setPartnerSharePct(String(n))}
-                            className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-colors min-h-[40px] ${partnerPct === n
-                              ? 'bg-ink text-white border-ink'
-                              : 'bg-white border-neutral-200 text-ink-muted hover:bg-neutral-50'
-                              }`}
-                          >
-                            {n}%
-                          </button>
-                        ))}
                       </div>
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div className="rounded-xl border border-neutral-200/90 bg-neutral-50 px-3.5 py-3">
-                          <p className="text-[11px] font-medium text-ink-muted">Partner gets</p>
-                          <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(partnerShare)}</p>
-                        </div>
-                        <div className={`rounded-xl border px-3.5 py-3 ${yourFinal >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
-                          <p className="text-[11px] font-medium text-ink-muted">Your final</p>
-                          <p className={`text-lg font-bold tabular-nums mt-1 ${yourFinal >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                            {yourFinal >= 0 ? '+' : '−'}{fmt(Math.abs(yourFinal))}
+
+                      {unpaidCost > 0 && (
+                        <div className="rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3.5">
+                          <p className="text-sm font-semibold text-amber-950">Due wala maal — abhi minus nahi</p>
+                          <p className="text-xs text-amber-900/90 mt-1 text-pretty">
+                            Bika lekin paisa nahi aaya: cost {fmt(unpaidCost)}. Yeh loss nahi — jab milega tab count.
                           </p>
                         </div>
+                      )}
+
+                      <p className="text-xs text-ink-muted px-1 text-pretty">
+                        Stock {fmt(monthlyData.closingStockValue)} next month — loss nahi, aapka maal.
+                      </p>
+
+                      <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-4">
+                        <div>
+                          <h4 className="text-sm font-semibold text-ink">Partner share</h4>
+                          <p className="text-xs text-ink-muted mt-0.5">Net faide ka % · loss pe 0</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={partnerSharePct}
+                              onChange={(e) => setPartnerSharePct(e.target.value)}
+                              className="w-14 bg-transparent text-sm font-semibold text-ink outline-none tabular-nums"
+                              aria-label="Partner percent"
+                            />
+                            <span className="text-sm text-ink-muted">%</span>
+                          </div>
+                          {[0, 10, 20, 25, 50].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setPartnerSharePct(String(n))}
+                              className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-colors min-h-[40px] ${partnerPct === n
+                                ? 'bg-ink text-white border-ink'
+                                : 'bg-white border-neutral-200 text-ink-muted hover:bg-neutral-50'
+                                }`}
+                            >
+                              {n}%
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div className="rounded-xl border border-neutral-200/90 bg-neutral-50 px-3.5 py-3">
+                            <p className="text-[11px] font-medium text-ink-muted">Partner gets</p>
+                            <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(partnerShare)}</p>
+                          </div>
+                          <div className={`rounded-xl border px-3.5 py-3 ${yourFinal >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                            <p className="text-[11px] font-medium text-ink-muted">Your final</p>
+                            <p className={`text-lg font-bold tabular-nums mt-1 ${yourFinal >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {yourFinal >= 0 ? '+' : '−'}{fmt(Math.abs(yourFinal))}
+                            </p>
+                          </div>
+                        </div>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setMonthDetailType(null)}
+                        className="w-full min-h-[44px] rounded-xl bg-neutral-200/80 hover:bg-neutral-300/80 text-ink font-semibold text-sm transition-colors"
+                      >
+                        Done
+                      </button>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
       {/* Monthly Sales Detail Modal */}
-      {showSalesDetailModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-2xl font-bold text-gray-800">Monthly Sales Detail Report</h3>
-                  <p className="text-sm text-gray-600 mt-1">
-                    {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowSalesDetailModal(false)}
-                  className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
-                >
-                  ×
-                </button>
+      {showSalesDetailModal && createPortal(
+        <div
+          className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
+          onClick={() => setShowSalesDetailModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-2xl shadow-elevated max-w-6xl w-full max-h-[min(90dvh,880px)] flex flex-col overflow-hidden border border-neutral-200/80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 bg-white shrink-0 flex justify-between items-center gap-3">
+              <div className="min-w-0">
+                <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Monthly Sales Detail</h3>
+                <p className="text-sm text-ink-muted mt-0.5">
+                  {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowSalesDetailModal(false)}
+                className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="p-6">
+            <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain min-h-0 flex-1">
               {loadingSalesDetail ? (
-                <div className="text-center py-12">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-                  <p className="text-gray-600 mt-4">Loading sales details...</p>
+                <div className="py-4 space-y-3" aria-busy="true">
+                  <ListItemShimmer count={4} />
                 </div>
               ) : monthlySalesDetail.length === 0 ? (
                 <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
@@ -2512,23 +2551,26 @@ const Reports = () => {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Realized profit detail — same rule as Inventory: Paid − sold cost */}
-      {showProfitDetailModal && profitBreakdown && (
+      {showProfitDetailModal && profitBreakdown && createPortal(
         <div
-          className="fixed inset-0 bg-ink/40 backdrop-blur-[2px] flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
+          className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
           onClick={() => {
             setShowProfitDetailModal(false);
             setExpandedProfitProduct(null);
           }}
+          role="dialog"
+          aria-modal="true"
         >
           <div
-            className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-4xl w-full max-h-[92dvh] overflow-y-auto border border-neutral-200/80"
+            className="bg-neutral-100 rounded-2xl shadow-elevated max-w-4xl w-full max-h-[min(90dvh,880px)] flex flex-col overflow-hidden border border-neutral-200/80"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 sm:px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+            <div className="shrink-0 bg-white px-4 sm:px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Realized profit</h3>
                 <p className="text-sm text-ink-muted mt-0.5">
@@ -2548,7 +2590,7 @@ const Reports = () => {
               </button>
             </div>
 
-            <div className="p-4 sm:p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain min-h-0 flex-1">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
                 {[
                   { label: 'Billed', value: `Rs. ${(profitBreakdown.totalRevenue || 0).toLocaleString()}`, tone: 'text-ink' },
@@ -2713,45 +2755,54 @@ const Reports = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Stock Value Detail Modal */}
-      {showStockDetailModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-2xl font-bold text-gray-800">Total Stock Value - Product Details</h3>
-                  <p className="text-sm text-gray-600 mt-1">Kun kun se products available hain total stock mein</p>
-                </div>
-                <button
-                  onClick={() => setShowStockDetailModal(false)}
-                  className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
-                >
-                  ×
-                </button>
+      {showStockDetailModal && createPortal(
+        <div
+          className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
+          onClick={() => setShowStockDetailModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-2xl shadow-elevated max-w-6xl w-full max-h-[min(90dvh,880px)] flex flex-col overflow-hidden border border-neutral-200/80"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 bg-white shrink-0 flex justify-between items-center gap-3">
+              <div className="min-w-0">
+                <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Total Stock Value</h3>
+                <p className="text-sm text-ink-muted mt-0.5">Product-wise stock details</p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowStockDetailModal(false)}
+                className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="p-6">
+            <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain min-h-0 flex-1">
               <div className="space-y-6">
                 {/* Summary */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-2xl border border-sky-100">
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">Total Products</p>
-                    <p className="text-2xl font-bold text-blue-600">{stockDetails.length}</p>
+                    <p className="text-sm text-ink-muted mb-1">Total Products</p>
+                    <p className="text-2xl font-bold text-sky-700 tabular-nums">{stockDetails.length}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">Total Quantity</p>
-                    <p className="text-2xl font-bold text-indigo-600">
+                    <p className="text-sm text-ink-muted mb-1">Total Quantity</p>
+                    <p className="text-2xl font-bold text-ink tabular-nums">
                       {stockDetails.reduce((sum, item) => sum + item.totalQty, 0)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">Total Stock Value</p>
-                    <p className="text-2xl font-bold text-blue-700">
+                    <p className="text-sm text-ink-muted mb-1">Total Stock Value</p>
+                    <p className="text-2xl font-bold text-ink tabular-nums">
                       Rs. {stockDetails.reduce((sum, item) => sum + item.stockValue, 0).toLocaleString()}
                     </p>
                   </div>
@@ -2845,11 +2896,14 @@ const Reports = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
 };
 
 export default Reports;
+
+
 
