@@ -230,12 +230,13 @@ const Reports = () => {
   const fetchStats = async () => {
     try {
       setLoading(true);
-      const [dashRes, salesRes, invRes, salesDataRes, inventoryDataRes] = await Promise.all([
+      const [dashRes, salesRes, invRes, salesDataRes, inventoryDataRes, allExpensesRes] = await Promise.all([
         getDashboardStats(),
         getSalesStats(dateRange),
         getInventoryStats(),
         getSales(),
-        getInventory()
+        getInventory(),
+        getExpenses() // all-time — matches lifetime realized profit
       ]);
       setStats(dashRes.data);
       setSalesStats(salesRes.data);
@@ -244,6 +245,12 @@ const Reports = () => {
       // Realized profit (same as Inventory): Paid − (sold qty × cost). Unsold stock is capital.
       const sales = salesDataRes.data || [];
       const inventory = inventoryDataRes.data || [];
+      let allTimeGeneralExpenses = 0;
+      (allExpensesRes.data || []).forEach((expense) => {
+        if (isProductExpense(expense)) return;
+        allTimeGeneralExpenses += parseFloat(expense.amount) || 0;
+      });
+      allTimeGeneralExpenses = Math.round(allTimeGeneralExpenses);
 
       // Prepare stock details for modal
       const stockDetailsData = inventory.map(item => {
@@ -293,7 +300,9 @@ const Reports = () => {
         totalPaid: 0,
         totalRemaining: 0,
         totalCost: 0,
-        totalProfit: 0, // paid − sold cost (realized)
+        totalProfit: 0, // paid − sold cost (gross realized)
+        generalExpenses: 0, // all-time general (non-product) expenses
+        netProfit: 0, // gross − general expenses
         productDetails: []
       };
 
@@ -304,42 +313,46 @@ const Reports = () => {
       const findInventoryItem = (item) => {
         const inventoryItemId = item.inventoryId || item.inventory;
         return inventory.find(inv => {
-          if (inventoryItemId && (inv.id === inventoryItemId || inv._id === inventoryItemId)) {
-            return true;
-          }
-          return inv.productName === item.productName &&
-            inv.sizes?.some(s => s.size === item.size);
-        });
+            if (inventoryItemId && (inv.id === inventoryItemId || inv._id === inventoryItemId)) {
+              return true;
+            }
+            return inv.productName === item.productName &&
+              inv.sizes?.some(s => s.size === item.size);
+          });
       };
 
       const productProfitMap = {};
 
       const ensureProductEntry = (inventoryItem) => {
-        const itemId = inventoryItem.id || inventoryItem._id;
+            const itemId = inventoryItem.id || inventoryItem._id;
         if (productProfitMap[itemId]) return productProfitMap[itemId];
 
-        const sizes = inventoryItem.sizes || [];
-        const currentQty = sizes.reduce((sum, size) => sum + (parseFloat(size.quantity) || 0), 0);
-        let soldQty = 0;
-        sales.forEach(s => {
-          s.items?.forEach(i => {
+              const sizes = inventoryItem.sizes || [];
+              const currentQty = sizes.reduce((sum, size) => sum + (parseFloat(size.quantity) || 0), 0);
+        const writtenOffQty = parseFloat(inventoryItem.writtenOffQty) || 0;
+              let soldQty = 0;
+              sales.forEach(s => {
+                s.items?.forEach(i => {
             const invId = i.inventoryId || i.inventory;
             if (invId === itemId) soldQty += parseFloat(i.quantity || 0);
-          });
-        });
-        const initialQty = inventoryItem.initialQuantity || (currentQty + soldQty);
+                });
+              });
+        const initialQty =
+          inventoryItem.initialQuantity || (currentQty + soldQty + writtenOffQty);
         const costPerUnit = parseFloat(inventoryItem.costPerUnit || 0);
 
-        productProfitMap[itemId] = {
-          productName: inventoryItem.productName,
-          size: inventoryItem.sizes?.[0]?.size || 'N/A',
+              productProfitMap[itemId] = {
+                productName: inventoryItem.productName,
+                size: inventoryItem.sizes?.[0]?.size || 'N/A',
           initialQty,
+          currentQty,
+          writtenOffQty,
           soldQty: 0,
           costPerUnit,
-          stockValue: initialQty * costPerUnit,
-          offlineRevenue: 0,
-          onlineRevenue: 0,
-          totalRevenue: 0,
+          stockValue: currentQty * costPerUnit, // on-hand value only
+                offlineRevenue: 0,
+                onlineRevenue: 0,
+                totalRevenue: 0,
           paidAmount: 0,
           remainingAmount: 0,
           totalProfit: 0,
@@ -422,8 +435,14 @@ const Reports = () => {
         }
       });
 
+      // Include write-off products even if never sold (so missing loss is counted)
+      inventory.forEach((item) => {
+        if ((parseFloat(item.writtenOffQty) || 0) > 0) ensureProductEntry(item);
+      });
+
       let totalSoldCost = 0;
       let totalProductProfit = 0;
+      let totalMissingLoss = 0;
       Object.values(productProfitMap).forEach(product => {
         product.totalRevenue = product.offlineRevenue + product.onlineRevenue;
         product.paidAmount = Math.round(product.paidAmount);
@@ -431,9 +450,11 @@ const Reports = () => {
         product.offlineRevenue = Math.round(product.offlineRevenue);
         product.onlineRevenue = Math.round(product.onlineRevenue);
         product.totalRevenue = Math.round(product.totalRevenue);
-        // Same as Inventory: realized = Paid − (sold qty × cost). Unsold stock is capital, not loss.
+        // Gross realized = Paid − sold cost. Write-offs are separate missing loss.
         product.soldCost = Math.round(product.soldQty * product.costPerUnit);
-        product.unsoldQty = Math.max(0, (product.initialQty || 0) - (product.soldQty || 0));
+        product.writtenOffQty = Math.round(product.writtenOffQty || 0);
+        product.missingLoss = Math.round(product.writtenOffQty * product.costPerUnit);
+        product.unsoldQty = Math.max(0, Math.round(product.currentQty || 0));
         product.unsoldStockValue = Math.round(product.unsoldQty * product.costPerUnit);
         product.totalProfit = Math.round(product.paidAmount - product.soldCost);
         product.customersRemainingList = Object.values(product.customersRemaining)
@@ -448,14 +469,18 @@ const Reports = () => {
         totalStockValue += product.stockValue;
         totalSoldCost += product.soldCost;
         totalProductProfit += product.totalProfit;
+        totalMissingLoss += product.missingLoss;
       });
 
       const roundedPaid = Math.round(totalPaidReceived);
       const roundedRemaining = Math.round(totalRemainingDue);
       const roundedBilled = Math.round(totalBilled);
-      // Sum of product profits (= paid − sold cost) — matches Inventory + modal rows
+      // Gross = paid − sold cost; net = gross − general expenses − missing write-offs
       const calculatedTotalProfit = totalProductProfit;
-      setTotalProfit(calculatedTotalProfit);
+      const netAfterGeneral = Math.round(
+        calculatedTotalProfit - allTimeGeneralExpenses - totalMissingLoss
+      );
+      setTotalProfit(netAfterGeneral);
 
       profitBreakdownData.totalRevenue = roundedBilled;
       profitBreakdownData.totalPaid = roundedPaid;
@@ -463,8 +488,11 @@ const Reports = () => {
       profitBreakdownData.totalCost = totalSoldCost;
       profitBreakdownData.totalStockCapital = Math.round(totalStockValue);
       profitBreakdownData.totalProfit = calculatedTotalProfit;
+      profitBreakdownData.generalExpenses = allTimeGeneralExpenses;
+      profitBreakdownData.missingLoss = Math.round(totalMissingLoss);
+      profitBreakdownData.netProfit = netAfterGeneral;
       profitBreakdownData.productDetails = Object.values(productProfitMap)
-        .filter(p => p.totalRevenue > 0 || p.paidAmount > 0 || p.remainingAmount > 0 || p.soldQty > 0)
+        .filter(p => p.totalRevenue > 0 || p.paidAmount > 0 || p.remainingAmount > 0 || p.soldQty > 0 || p.writtenOffQty > 0)
         .sort((a, b) => b.remainingAmount - a.remainingAmount || b.totalProfit - a.totalProfit);
 
       setProfitBreakdown(profitBreakdownData);
@@ -728,21 +756,21 @@ const Reports = () => {
           <p className="page-subtitle">Month closing, payments & insights</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
+        <button
             type="button"
             onClick={handleSetFullHistoryRange}
             className="btn-secondary text-sm min-h-[40px]"
-          >
+        >
             Full history dates
-          </button>
-          <button
+        </button>
+            <button
             onClick={handleExport}
             disabled={exportingAccountant}
             className="btn-primary flex items-center gap-2 disabled:opacity-60 text-sm min-h-[40px]"
-          >
+            >
             <Download size={18} />
             {exportingAccountant ? 'Preparing PDF…' : 'Export PDF'}
-          </button>
+            </button>
         </div>
       </div>
 
@@ -796,9 +824,9 @@ const Reports = () => {
                     <Shimmer className="h-3 w-24 rounded-md" />
                     <Shimmer className="h-8 w-32 rounded-md" />
                     <Shimmer className="h-3 w-full rounded-md" />
-                  </div>
-                ))}
               </div>
+                ))}
+            </div>
             </div>
           ) : monthlyData ? (() => {
             const trading = parseFloat(monthlyData.tradingProfit) || 0;
@@ -813,33 +841,31 @@ const Reports = () => {
             return (
               <div className="space-y-5 animate-fade-in">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 stagger-children">
-                  <button type="button" onClick={() => openDetail('sold')} className={cardCls}>
-                    <p className="text-xs font-medium text-ink-muted mb-1">1. Is month bika</p>
-                    <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.soldQty || 0).toLocaleString()} pcs</p>
-                    <p className="text-xs text-ink-muted mt-1.5">Bill {fmt(monthlyData.totalSales)} · Cost {fmt(monthlyData.soldCost)}</p>
-                  </button>
+                <button type="button" onClick={() => openDetail('sold')} className={cardCls}>
+                  <p className="text-xs font-medium text-ink-muted mb-1">1. Is month bika</p>
+                  <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.soldQty || 0).toLocaleString()} pcs</p>
+                  <p className="text-xs text-ink-muted mt-1.5">Bill {fmt(monthlyData.totalSales)} · Cost {fmt(monthlyData.soldCost)}</p>
+                </button>
 
-                  <button type="button" onClick={() => openDetail('paid')} className={cardCls}>
-                    <p className="text-xs font-medium text-ink-muted mb-1">2. Sales se paid</p>
-                    <p className="text-2xl font-bold text-emerald-700 tabular-nums">{fmt(monthlyData.monthSalesPaid ?? monthlyData.totalPaid)}</p>
-                    <p className="text-xs text-ink-muted mt-1.5">Due {fmt(monthlyData.monthDue)} · {monthlyData.salesCount || 0} sales</p>
-                  </button>
+                <button type="button" onClick={() => openDetail('paid')} className={cardCls}>
+                  <p className="text-xs font-medium text-ink-muted mb-1">2. Sales se paid</p>
+                  <p className="text-2xl font-bold text-emerald-700 tabular-nums">{fmt(monthlyData.monthSalesPaid ?? monthlyData.totalPaid)}</p>
+                  <p className="text-xs text-ink-muted mt-1.5">Due {fmt(monthlyData.monthDue)} · {monthlyData.salesCount || 0} sales</p>
+                </button>
 
-                  <button type="button" onClick={() => openDetail('recovery')} className={cardCls}>
-                    <p className="text-xs font-medium text-ink-muted mb-1">3. Pichla recovery</p>
-                    <p className="text-2xl font-bold text-amber-800 tabular-nums">{fmt(monthlyData.priorRecovery || 0)}</p>
-                    <p className="text-xs text-ink-muted mt-1.5">
-                      Cost {fmt(monthlyData.priorRecoveryCost || 0)} · Profit {fmt(monthlyData.priorRecoveryProfit || 0)}
-                    </p>
-                  </button>
+                <button type="button" onClick={() => openDetail('recovery')} className={cardCls}>
+                  <p className="text-xs font-medium text-ink-muted mb-1">3. Pichla recovery</p>
+                  <p className="text-2xl font-bold text-amber-800 tabular-nums">{fmt(monthlyData.priorRecovery || 0)}</p>
+                  <p className="text-xs text-ink-muted mt-1.5">
+                    Cost {fmt(monthlyData.priorRecoveryCost || 0)} · Profit {fmt(monthlyData.priorRecoveryProfit || 0)}
+                  </p>
+                </button>
 
-                  <button type="button" onClick={() => openDetail('stock')} className={cardCls}>
-                    <p className="text-xs font-medium text-ink-muted mb-1">4. Stock → next month</p>
-                    <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.closingStockQty || 0).toLocaleString()} pcs</p>
-                    <p className="text-xs text-ink-muted mt-1.5">
-                      Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
-                    </p>
-                  </button>
+                <button type="button" onClick={() => openDetail('stock')} className={cardCls}>
+                  <p className="text-xs font-medium text-ink-muted mb-1">4. Stock → next month</p>
+                  <p className="text-2xl font-bold text-ink tabular-nums">{(monthlyData.closingStockQty || 0).toLocaleString()} pcs</p>
+                  <p className="text-xs text-ink-muted mt-1.5">Value {fmt(monthlyData.closingStockValue)}</p>
+                </button>
 
                   <button type="button" onClick={() => openDetail('expenses')} className={cardCls}>
                     <p className="text-xs font-medium text-ink-muted mb-1">5. Expenses</p>
@@ -857,7 +883,7 @@ const Reports = () => {
                       <span className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-transform group-hover:translate-x-0.5 ${net >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
                         <ChevronRight size={16} />
                       </span>
-                    </div>
+              </div>
                     <p className={`text-2xl font-bold tabular-nums ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                       {net >= 0 ? '+' : '−'}{fmt(net)}
                     </p>
@@ -865,44 +891,7 @@ const Reports = () => {
                       Detail dekho — 4-step hisab →
                     </p>
                   </button>
-                </div>
-
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4 space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">Own vs Investor</p>
-                    <p className="text-xs text-ink-muted mt-0.5">Inventory tag se split</p>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                    <button type="button" onClick={() => openDetail('ownPaid')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
-                      <p className="text-[11px] font-medium text-emerald-800">A. Meri — paid</p>
-                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.ownMonthSalesPaid)}</p>
-                      <p className="text-[11px] text-ink-muted mt-1">Matched {fmt(monthlyData.ownMatchedSoldCost ?? monthlyData.ownSoldCost)}</p>
-                    </button>
-                    <button type="button" onClick={() => openDetail('investorPaid')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
-                      <p className="text-[11px] font-medium text-sky-800">B. Investor — paid</p>
-                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.investorMonthSalesPaid)}</p>
-                      <p className="text-[11px] text-ink-muted mt-1">Matched {fmt(monthlyData.investorMatchedSoldCost ?? monthlyData.investorSoldCost)}</p>
-                    </button>
-                    <button type="button" onClick={() => openDetail('ownRecovery')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
-                      <p className="text-[11px] font-medium text-amber-800">C. Recovery — mera</p>
-                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.ownPriorRecovery)}</p>
-                      <p className="text-[11px] text-ink-muted mt-1">
-                        Profit {fmt(monthlyData.ownPriorRecoveryProfit || 0)}
-                      </p>
-                    </button>
-                    <button type="button" onClick={() => openDetail('investorRecovery')} className="text-left rounded-xl bg-white border border-neutral-200 p-3.5 hover:border-neutral-300 transition-colors">
-                      <p className="text-[11px] font-medium text-violet-800">D. Recovery — investor</p>
-                      <p className="text-lg font-bold text-ink tabular-nums mt-1">{fmt(monthlyData.investorPriorRecovery)}</p>
-                      <p className="text-[11px] text-ink-muted mt-1">
-                        Profit {fmt(monthlyData.investorPriorRecoveryProfit || 0)}
-                      </p>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-ink-muted text-pretty">
-                    Stock next: Own {fmt(monthlyData.ownClosingStockValue)} · Investor {fmt(monthlyData.investorClosingStockValue)}
-                    {' — '}Investor pay-out Investors page se.
-                  </p>
-                </div>
+            </div>
 
                 <button
                   type="button"
@@ -940,7 +929,7 @@ const Reports = () => {
                   )}
                   <button
                     type="button"
-                    onClick={() => setShowProfitDetailModal(true)}
+              onClick={() => setShowProfitDetailModal(true)}
                     className="text-xs font-semibold text-ink underline underline-offset-2 hover:text-ink-muted"
                   >
                     All-time product profit
@@ -952,8 +941,8 @@ const Reports = () => {
             <div className="text-center py-10">
               <p className="text-ink-muted text-sm">Is month ka data load nahi hua. Dobara try karein.</p>
             </div>
-          )}
-        </div>
+                )}
+              </div>
       </div>
 
 
@@ -1031,7 +1020,7 @@ const Reports = () => {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">Transactions</p>
               <p className="text-2xl font-bold text-ink mt-1 tabular-nums">{paymentsList.length}</p>
             </div>
-          </div>
+            </div>
 
           {/* Only general expense vs received (product expense excluded — recovered via payments) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
@@ -1152,8 +1141,8 @@ const Reports = () => {
                         })}
                       </tbody>
                     </table>
-                  )}
-                </div>
+                )}
+              </div>
               </div>
             )}
           </div>
@@ -1237,9 +1226,9 @@ const Reports = () => {
                           : payment.saleAddedBy
                             ? `Sale: ${payment.saleAddedBy}`
                             : '—'}
-                    </p>
-                  </div>
-                </div>
+              </p>
+            </div>
+          </div>
 
                 {sale && (
                   <div className="rounded-xl border border-neutral-200 overflow-hidden">
@@ -1313,12 +1302,12 @@ const Reports = () => {
                           </tr>
                         </tfoot>
                       </table>
-                    </div>
-                  )}
+          </div>
+        )}
                   <p className="text-[11px] text-neutral-400 mt-2">
                     If invoice has multiple products, this payment is split by each product’s bill share.
                   </p>
-                </div>
+      </div>
 
                 {payment.notes && (
                   <div className="rounded-lg bg-neutral-50 border border-neutral-200 p-3">
@@ -1388,7 +1377,7 @@ const Reports = () => {
         <div
           className="report-metric-card bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-5 cursor-pointer hover:border-neutral-300"
           onClick={() => setShowProfitDetailModal(true)}
-          title="Paid − sold cost · same as Inventory"
+          title="Paid − sold cost − general expenses"
         >
           <div className="flex items-center justify-between mb-3">
             <span className={`w-10 h-10 rounded-xl flex items-center justify-center ${totalProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
@@ -1399,7 +1388,7 @@ const Reports = () => {
           <p className={`text-2xl font-bold tabular-nums tracking-tight mt-1 ${totalProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
             {formatSignedMoney(totalProfit)}
           </p>
-          <p className="text-xs text-ink-muted mt-1.5">Paid − sold cost · tap for products</p>
+          <p className="text-xs text-ink-muted mt-1.5">After expenses &amp; missing · tap for details</p>
         </div>
       </div>
 
@@ -1568,15 +1557,15 @@ const Reports = () => {
         </div>
 
         <div className="p-4 sm:p-6">
-          {outstandingCredits.length === 0 ? (
+        {outstandingCredits.length === 0 ? (
             <div className="text-center py-12 rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/50">
               <CreditCard className="mx-auto text-ink-faint mb-3" size={40} />
               <p className="text-ink font-medium">No outstanding credit</p>
               <p className="text-sm text-ink-muted mt-1">All sales fully paid</p>
-            </div>
-          ) : (
+          </div>
+        ) : (
             <div className="overflow-x-auto rounded-xl border border-neutral-100">
-              <table className="w-full">
+            <table className="w-full">
                 <thead className="bg-neutral-50 border-b border-neutral-100">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Invoice</th>
@@ -1587,60 +1576,60 @@ const Reports = () => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Remaining</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Status</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-ink-muted">Added By</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-100">
-                  {outstandingCredits.map((sale) => {
-                    const remaining = parseFloat(sale.remainingAmount) || 0;
-                    const total = parseFloat(sale.totalAmount) || 0;
-                    const paid = parseFloat(sale.paidAmount) || 0;
-                    const paymentPercentage = total > 0 ? ((paid / total) * 100).toFixed(0) : 0;
-                    const customer = sale.customerDetails || sale.customer;
-                    const customerName = customer?.name || 'Walk-in Customer';
-                    const customerContact = customer?.contact || customer?.phone || customer?.mobile || 'N/A';
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {outstandingCredits.map((sale) => {
+                  const remaining = parseFloat(sale.remainingAmount) || 0;
+                  const total = parseFloat(sale.totalAmount) || 0;
+                  const paid = parseFloat(sale.paidAmount) || 0;
+                  const paymentPercentage = total > 0 ? ((paid / total) * 100).toFixed(0) : 0;
+                  const customer = sale.customerDetails || sale.customer;
+                  const customerName = customer?.name || 'Walk-in Customer';
+                  const customerContact = customer?.contact || customer?.phone || customer?.mobile || 'N/A';
 
-                    return (
-                      <tr key={sale.id || sale._id} className="hover:bg-orange-50/30 transition-colors">
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="font-semibold text-gray-900">{sale.invoiceNumber || sale.id?.slice(-8) || 'N/A'}</span>
-                        </td>
-                        <td className="px-4 py-4">
-                          <div>
-                            <span className="text-gray-800 font-medium block">{customerName}</span>
-                            <p className="text-xs text-gray-500 mt-0.5">{customerContact}</p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="text-gray-700">{formatDate(sale.saleDate)}</span>
-                        </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="font-medium text-gray-900">Rs. {total.toLocaleString()}</span>
-                        </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="font-medium text-green-600">Rs. {paid.toLocaleString()}</span>
-                          <p className="text-xs text-gray-500 mt-0.5">{paymentPercentage}% paid</p>
-                        </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="font-bold text-orange-600 text-lg">Rs. {remaining.toLocaleString()}</span>
-                        </td>
-                        <td className="px-4 py-4 whitespace-nowrap">
-                          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${sale.paymentStatus === 'Partial'
-                            ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                            : 'bg-red-100 text-red-800 border border-red-300'
-                            }`}>
-                            {sale.paymentStatus === 'Partial' ? (
-                              <span className="flex items-center gap-1">
-                                <AlertCircle size={12} />
-                                Partial
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-1">
-                                <AlertCircle size={12} />
-                                Unpaid
-                              </span>
-                            )}
-                          </span>
-                        </td>
+                  return (
+                    <tr key={sale.id || sale._id} className="hover:bg-orange-50/30 transition-colors">
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-semibold text-gray-900">{sale.invoiceNumber || sale.id?.slice(-8) || 'N/A'}</span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div>
+                          <span className="text-gray-800 font-medium block">{customerName}</span>
+                          <p className="text-xs text-gray-500 mt-0.5">{customerContact}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="text-gray-700">{formatDate(sale.saleDate)}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-medium text-gray-900">Rs. {total.toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-medium text-green-600">Rs. {paid.toLocaleString()}</span>
+                        <p className="text-xs text-gray-500 mt-0.5">{paymentPercentage}% paid</p>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className="font-bold text-orange-600 text-lg">Rs. {remaining.toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${sale.paymentStatus === 'Partial'
+                          ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                          : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                          {sale.paymentStatus === 'Partial' ? (
+                            <span className="flex items-center gap-1">
+                              <AlertCircle size={12} />
+                              Partial
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <AlertCircle size={12} />
+                              Unpaid
+                            </span>
+                          )}
+                        </span>
+                      </td>
                         <td className="px-4 py-4 whitespace-nowrap">
                           {sale.addedBy ? (
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
@@ -1650,27 +1639,27 @@ const Reports = () => {
                             <span className="text-gray-400 text-sm">—</span>
                           )}
                         </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
-                  <tr>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-gradient-to-r from-orange-50 to-amber-50 border-t-2 border-orange-200">
+                <tr>
                     <td colSpan="6" className="px-4 py-4 text-right font-bold text-gray-700">
-                      Total Outstanding (Paise Lene Hain):
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <span className="font-bold text-orange-700 text-xl">
-                        Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
-                      </span>
-                    </td>
+                    Total Outstanding (Paise Lene Hain):
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    <span className="font-bold text-orange-700 text-xl">
+                      Rs. {(outstandingCredits.reduce((sum, sale) => sum + (parseFloat(sale.remainingAmount) || 0), 0)).toLocaleString()}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4"></td>
                     <td className="px-4 py-4"></td>
-                    <td className="px-4 py-4"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
         </div>
       </div>
 
@@ -1847,7 +1836,7 @@ const Reports = () => {
                       </div>
                     )}
                     {(monthlyData.monthSalesDetail || []).length > 0 && (
-                      <div>
+                <div>
                         <h4 className="font-semibold text-gray-800 mb-2 text-sm">Sales / customers</h4>
                         <div className="space-y-2">
                           {monthlyData.monthSalesDetail.map((s) => (
@@ -2393,17 +2382,17 @@ const Reports = () => {
               <div className="min-w-0">
                 <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Monthly Sales Detail</h3>
                 <p className="text-sm text-ink-muted mt-0.5">
-                  {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                </p>
-              </div>
-              <button
+                    {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </p>
+                </div>
+                <button
                 type="button"
-                onClick={() => setShowSalesDetailModal(false)}
+                  onClick={() => setShowSalesDetailModal(false)}
                 className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
                 aria-label="Close"
-              >
+                >
                 <X size={18} />
-              </button>
+                </button>
             </div>
 
             <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain min-h-0 flex-1">
@@ -2555,7 +2544,7 @@ const Reports = () => {
         document.body
       )}
 
-      {/* Realized profit detail — same rule as Inventory: Paid − sold cost */}
+      {/* Realized profit detail: Paid − sold cost − all-time general expenses */}
       {showProfitDetailModal && profitBreakdown && createPortal(
         <div
           className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-hidden"
@@ -2574,10 +2563,10 @@ const Reports = () => {
               <div className="min-w-0">
                 <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Realized profit</h3>
                 <p className="text-sm text-ink-muted mt-0.5">
-                  Paid − sold cost · due clear hone pe profit badhega
+                  Paid − sold cost − general expenses
                 </p>
-              </div>
-              <button
+                </div>
+                <button
                 type="button"
                 onClick={() => {
                   setShowProfitDetailModal(false);
@@ -2587,16 +2576,19 @@ const Reports = () => {
                 aria-label="Close"
               >
                 <X size={18} />
-              </button>
-            </div>
+                </button>
+              </div>
 
             <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain min-h-0 flex-1">
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {[
                   { label: 'Billed', value: `Rs. ${(profitBreakdown.totalRevenue || 0).toLocaleString()}`, tone: 'text-ink' },
                   { label: 'Paid', value: `Rs. ${(profitBreakdown.totalPaid || 0).toLocaleString()}`, tone: 'text-emerald-700' },
                   { label: 'Due', value: `Rs. ${(profitBreakdown.totalRemaining || 0).toLocaleString()}`, tone: (profitBreakdown.totalRemaining || 0) > 0 ? 'text-amber-800' : 'text-emerald-700' },
-                  { label: 'Realized profit', value: formatSignedMoney(profitBreakdown.totalProfit), tone: (profitBreakdown.totalProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' }
+                  { label: 'Gross (Paid − sold cost)', value: formatSignedMoney(profitBreakdown.totalProfit), tone: (profitBreakdown.totalProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' },
+                  { label: 'General expenses', value: `Rs. ${(profitBreakdown.generalExpenses || 0).toLocaleString()}`, tone: 'text-amber-800' },
+                  { label: 'Missing / write-off loss', value: `Rs. ${(profitBreakdown.missingLoss || 0).toLocaleString()}`, tone: 'text-rose-700' },
+                  { label: 'Net realized profit', value: formatSignedMoney(profitBreakdown.netProfit), tone: (profitBreakdown.netProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' }
                 ].map((m) => (
                   <div key={m.label} className="bg-white rounded-xl border border-neutral-200/90 px-3.5 py-3 shadow-soft">
                     <p className="text-[11px] font-medium text-ink-muted normal-case">{m.label}</p>
@@ -2605,12 +2597,12 @@ const Reports = () => {
                     </p>
                   </div>
                 ))}
-              </div>
+            </div>
 
               <div className="bg-white rounded-xl border border-neutral-200/90 p-4 shadow-soft space-y-2">
                 <p className="text-[11px] font-medium text-ink-muted">Calculation</p>
                 <p className="text-sm text-ink">
-                  Realized profit = Paid − sold cost
+                  Gross = Paid − sold cost
                 </p>
                 <p className="text-sm text-ink-muted tabular-nums">
                   Rs. {(profitBreakdown.totalPaid || 0).toLocaleString()} − Rs. {(profitBreakdown.totalCost || 0).toLocaleString()}{' '}
@@ -2618,10 +2610,19 @@ const Reports = () => {
                     {formatSignedMoney(profitBreakdown.totalProfit)}
                   </span>
                 </p>
-                <p className="text-xs text-ink-muted">
-                  Unsold stock is capital (not loss). Due payments are not profit until collected.
+                <p className="text-sm text-ink mt-2">
+                  Net realized = Gross − general expenses − missing write-off
                 </p>
-              </div>
+                <p className="text-sm text-ink-muted tabular-nums">
+                  {formatSignedMoney(profitBreakdown.totalProfit)} − Rs. {(profitBreakdown.generalExpenses || 0).toLocaleString()} − Rs. {(profitBreakdown.missingLoss || 0).toLocaleString()}{' '}
+                  = <span className={`font-bold ${(profitBreakdown.netProfit || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {formatSignedMoney(profitBreakdown.netProfit)}
+                  </span>
+                </p>
+                <p className="text-xs text-ink-muted">
+                  Product expenses stay in sold cost. Missing stock (Adjust stock) is write-off loss. Unsold on-hand stock is capital (not loss).
+                    </p>
+                  </div>
 
               <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft overflow-hidden">
                 <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100">
@@ -2657,7 +2658,7 @@ const Reports = () => {
                                   )}
                                 </p>
                                 <div className="mt-2.5 grid grid-cols-3 gap-2 text-xs sm:text-sm max-w-md">
-                                  <div>
+                  <div>
                                     <p className="text-[10px] font-medium text-ink-muted">Paid</p>
                                     <p className="font-semibold text-emerald-700 tabular-nums">Rs. {(product.paidAmount || 0).toLocaleString()}</p>
                                   </div>
@@ -2665,15 +2666,15 @@ const Reports = () => {
                                     <p className="text-[10px] font-medium text-ink-muted">Due</p>
                                     <p className={`font-semibold tabular-nums ${(product.remainingAmount || 0) > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
                                       Rs. {(product.remainingAmount || 0).toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div>
+                    </p>
+                  </div>
+                  <div>
                                     <p className="text-[10px] font-medium text-ink-muted">Profit</p>
                                     <p className={`font-bold tabular-nums ${profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                       {formatSignedMoney(profit)}
-                                    </p>
-                                  </div>
-                                </div>
+                    </p>
+                  </div>
+                </div>
                                 {(product.remainingAmount || 0) > 0 && (
                                   <p className="text-[11px] text-amber-800 mt-2">
                                     {customers.length} customer{customers.length !== 1 ? 's' : ''} with due
@@ -2707,9 +2708,9 @@ const Reports = () => {
                                     Rs. {(product.remainingAmount || 0).toLocaleString()}
                                   </p>
                                 </div>
-                              </div>
+                </div>
 
-                              <div>
+                <div>
                                 <p className="text-sm font-semibold text-ink mb-2">Customers with due</p>
                                 {customers.length === 0 ? (
                                   <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-xl p-3">
@@ -2725,36 +2726,36 @@ const Reports = () => {
                                           <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Billed</th>
                                           <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Paid</th>
                                           <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Due</th>
-                                        </tr>
-                                      </thead>
+                        </tr>
+                      </thead>
                                       <tbody>
                                         {customers.map((c, ci) => (
                                           <tr key={ci} className="border-b border-neutral-50">
                                             <td className="py-2.5 px-3">
                                               <p className="font-medium text-ink">{formatDisplayName(c.customerName)}</p>
                                               {c.contact && <p className="text-xs text-ink-muted">{c.contact}</p>}
-                                            </td>
+                            </td>
                                             <td className="py-2.5 px-3 text-ink-muted text-xs">{c.invoiceNumber || '—'}</td>
                                             <td className="py-2.5 px-3 text-right tabular-nums">Rs. {c.billedAmount.toLocaleString()}</td>
                                             <td className="py-2.5 px-3 text-right text-emerald-700 tabular-nums">Rs. {c.paidAmount.toLocaleString()}</td>
                                             <td className="py-2.5 px-3 text-right font-semibold text-amber-800 tabular-nums">Rs. {c.remainingAmount.toLocaleString()}</td>
-                                          </tr>
+                          </tr>
                                         ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
+                      </tbody>
+                    </table>
+                  </div>
                                 )}
-                              </div>
-                            </div>
+                </div>
+              </div>
                           )}
                         </li>
                       );
                     })}
                   </ul>
                 )}
-              </div>
             </div>
           </div>
+        </div>
         </div>,
         document.body
       )}
@@ -2775,15 +2776,15 @@ const Reports = () => {
               <div className="min-w-0">
                 <h3 className="text-lg sm:text-xl font-bold text-ink tracking-tight">Total Stock Value</h3>
                 <p className="text-sm text-ink-muted mt-0.5">Product-wise stock details</p>
-              </div>
-              <button
+                </div>
+                <button
                 type="button"
-                onClick={() => setShowStockDetailModal(false)}
+                  onClick={() => setShowStockDetailModal(false)}
                 className="w-10 h-10 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
                 aria-label="Close"
-              >
+                >
                 <X size={18} />
-              </button>
+                </button>
             </div>
 
             <div className="p-4 sm:p-6 overflow-y-auto overscroll-contain min-h-0 flex-1">

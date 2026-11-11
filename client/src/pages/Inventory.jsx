@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, DollarSign, X, Users } from 'lucide-react';
-import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, getSales, getOnlineSalesStats, getProductExpenses, createExpensesBatch, deleteExpense, getInvestors } from '../services/api';
+import { Plus, Search, Filter, Edit2, Trash2, Package, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, DollarSign, X, Users, ClipboardList } from 'lucide-react';
+import { getInventory, getBrands, getCategories, createInventoryItem, updateInventoryItem, deleteInventoryItem, adjustInventoryStock, getSales, getOnlineSalesStats, getProductExpenses, createExpensesBatch, deleteExpense, getInvestors } from '../services/api';
 import ImageUpload from '../components/ImageUpload';
 import { showSuccess, showError } from '../utils/toast';
 import { TableRowShimmer } from '../components/Shimmer';
+
+const STAFF_MEMBERS = ['Almas', 'Shahzad'];
+const STOCK_ADJUST_REASONS = [
+  { value: 'Missing', label: 'Missing / lost', hint: 'Piece milay nahi' },
+  { value: 'Theft', label: 'Theft / chori', hint: 'Stock chori ho gaya' },
+  { value: 'Damage', label: 'Damage', hint: 'Kharab / unusable' },
+  { value: 'Count error', label: 'Count correction', hint: 'Zyada ya kam entry fix' },
+  { value: 'Found', label: 'Found / add stock', hint: 'Extra pieces milay' },
+  { value: 'Other', label: 'Other', hint: 'Notes me likhein' }
+];
 
 const Inventory = () => {
   const [inventory, setInventory] = useState([]);
@@ -31,6 +41,16 @@ const Inventory = () => {
   const [productExpenses, setProductExpenses] = useState([]);
   const [loadingCosting, setLoadingCosting] = useState(false);
   const [savingProductExpense, setSavingProductExpense] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustItem, setAdjustItem] = useState(null);
+  const [adjustCounts, setAdjustCounts] = useState([]); // [{ size, systemQty, physicalQty }]
+  const [adjustForm, setAdjustForm] = useState({
+    reason: 'Missing',
+    notes: '',
+    addedBy: '',
+    date: new Date().toISOString().split('T')[0]
+  });
+  const [savingAdjust, setSavingAdjust] = useState(false);
   const newProductExpenseLine = () => ({
     key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     category: 'Labour',
@@ -187,7 +207,7 @@ const Inventory = () => {
     parseFloat(item.totalPrice) ||
     ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
 
-  // Sold qty + billed amount + payment received/remaining (payment split by line share of sale)
+  // Sold qty + billed + paid. Untagged paid splits by bill share; tagged payments go to that product.
   const getProductSalePaymentStats = (inventoryItemId) => {
     let soldQty = 0;
     let soldAmount = 0;
@@ -203,25 +223,36 @@ const Inventory = () => {
         items.reduce((sum, line) => sum + getSaleLineTotal(line), 0) ||
         0;
       const salePaid = parseFloat(sale.paidAmount) || 0;
-      const saleRemaining =
-        parseFloat(sale.remainingAmount) >= 0
-          ? parseFloat(sale.remainingAmount)
-          : Math.max(0, saleTotal - salePaid);
 
+      let productLineTotal = 0;
+      let productSoldQty = 0;
       items.forEach((item) => {
         const invId = item.inventoryId || item.inventory;
-        if (invId !== inventoryItemId) return;
+        if (String(invId) !== String(inventoryItemId)) return;
+        productLineTotal += getSaleLineTotal(item);
+        productSoldQty += parseFloat(item.quantity) || 0;
+      });
+      if (productSoldQty <= 0 && productLineTotal <= 0) return;
 
-        const lineTotal = getSaleLineTotal(item);
-        soldQty += parseFloat(item.quantity) || 0;
-        soldAmount += lineTotal;
-
-        if (saleTotal > 0) {
-          const share = lineTotal / saleTotal;
-          paidAmount += salePaid * share;
-          remainingAmount += saleRemaining * share;
+      let taggedToProduct = 0;
+      let allTagged = 0;
+      (sale.payments || []).forEach((p) => {
+        const againstId = p.againstInventoryId;
+        if (!againstId) return;
+        const amt = parseFloat(p.amount) || 0;
+        allTagged += amt;
+        if (String(againstId) === String(inventoryItemId)) {
+          taggedToProduct += amt;
         }
       });
+      const untaggedPaid = Math.max(0, salePaid - allTagged);
+      const share = saleTotal > 0 ? productLineTotal / saleTotal : 0;
+      const productPaid = taggedToProduct + untaggedPaid * share;
+
+      soldQty += productSoldQty;
+      soldAmount += productLineTotal;
+      paidAmount += productPaid;
+      remainingAmount += Math.max(0, productLineTotal - productPaid);
     });
 
     return {
@@ -244,18 +275,41 @@ const Inventory = () => {
         items.reduce((sum, line) => sum + getSaleLineTotal(line), 0) ||
         0;
       const salePaid = parseFloat(sale.paidAmount) || 0;
-      const saleRemaining =
-        parseFloat(sale.remainingAmount) >= 0
-          ? parseFloat(sale.remainingAmount)
-          : Math.max(0, saleTotal - salePaid);
 
+      let productLinesTotal = 0;
       items.forEach((line) => {
         const invId = line.inventoryId || line.inventory;
-        if (invId !== inventoryItemId) return;
+        if (String(invId) !== String(inventoryItemId)) return;
+        productLinesTotal += getSaleLineTotal(line);
+      });
+
+      let allTagged = 0;
+      (sale.payments || []).forEach((p) => {
+        if (p.againstInventoryId) allTagged += parseFloat(p.amount) || 0;
+      });
+      const untaggedPaid = Math.max(0, salePaid - allTagged);
+
+      items.forEach((line, lineIndex) => {
+        const invId = line.inventoryId || line.inventory;
+        if (String(invId) !== String(inventoryItemId)) return;
 
         const lineTotal = getSaleLineTotal(line);
         const qty = parseFloat(line.quantity) || 0;
         const share = saleTotal > 0 ? lineTotal / saleTotal : 0;
+        const productLineShare = productLinesTotal > 0 ? lineTotal / productLinesTotal : 0;
+
+        let taggedToLine = 0;
+        (sale.payments || []).forEach((p) => {
+          if (String(p.againstInventoryId || '') !== String(inventoryItemId)) return;
+          const amt = parseFloat(p.amount) || 0;
+          if (typeof p.againstLineIndex === 'number') {
+            if (p.againstLineIndex === lineIndex) taggedToLine += amt;
+          } else {
+            taggedToLine += amt * productLineShare;
+          }
+        });
+
+        const paid = taggedToLine + untaggedPaid * share;
 
         buyers.push({
           saleId: sale.id || sale._id,
@@ -267,8 +321,8 @@ const Inventory = () => {
           size: line.size || '',
           unitPrice: parseFloat(line.unitPrice) || 0,
           billed: Math.round(lineTotal),
-          paid: Math.round(salePaid * share),
-          due: Math.round(saleRemaining * share)
+          paid: Math.round(paid),
+          due: Math.round(Math.max(0, lineTotal - paid))
         });
       });
     });
@@ -282,8 +336,9 @@ const Inventory = () => {
   };
 
   /**
-   * Cash-based profit: Paid − (sold qty × cost).
-   * Due baaki ho to profit kam; payment aate hi barhega. Unsold stock profit se minus nahi.
+   * Capital-first: Paid − (initial stock × cost).
+   * writtenOffQty (missing/damage) stays in capital so reducing stock doesn't fake profit.
+   * Missing loss = writtenOff × cost (capital not recoverable via sales).
    */
   const getProductRealizedProfit = (inventoryItem, onlineData = null) => {
     const itemId = inventoryItem?.id || inventoryItem?._id;
@@ -291,20 +346,104 @@ const Inventory = () => {
     const costPerUnit = parseFloat(inventoryItem?.costPerUnit) || 0;
     const onlineQty = parseFloat(onlineData?.totalQuantity) || 0;
     const onlineRevenue = parseFloat(onlineData?.totalRevenue) || 0;
+    const currentQty = (inventoryItem?.sizes || []).reduce(
+      (sum, s) => sum + (parseFloat(s.quantity) || 0),
+      0
+    );
+    const writtenOffQty = parseFloat(inventoryItem?.writtenOffQty) || 0;
     const soldQtyAll = pay.soldQty + onlineQty;
+    // Include written-off so capital does not shrink when stock is adjusted down
+    const initialQty = currentQty + soldQtyAll + writtenOffQty;
     const soldCost = soldQtyAll * costPerUnit;
+    const missingLoss = writtenOffQty * costPerUnit;
+    const stockCapital = initialQty * costPerUnit;
     const paidTotal = pay.paidAmount + onlineRevenue;
-    const realizedProfit = paidTotal - soldCost;
+    const realizedProfit = paidTotal - stockCapital;
+    const capitalLeft = Math.max(0, stockCapital - paidTotal);
+    const profitAfterCapital = Math.max(0, paidTotal - stockCapital);
     return {
       ...pay,
       onlineQty,
       onlineRevenue: Math.round(onlineRevenue),
       soldQtyAll,
+      writtenOffQty: Math.round(writtenOffQty),
+      missingLoss: Math.round(missingLoss),
+      initialQty: Math.round(initialQty),
       soldCost: Math.round(soldCost),
+      stockCapital: Math.round(stockCapital),
       paidTotal: Math.round(paidTotal),
       realizedProfit: Math.round(realizedProfit),
+      capitalLeft: Math.round(capitalLeft),
+      profitAfterCapital: Math.round(profitAfterCapital),
       costPerUnit
     };
+  };
+
+  const openAdjustStock = (item) => {
+    const sizes = (item.sizes || []).length
+      ? item.sizes
+      : [{ size: 'One Size', quantity: 0 }];
+    setAdjustItem(item);
+    setAdjustCounts(
+      sizes.map((s) => ({
+        size: s.size || 'One Size',
+        systemQty: parseFloat(s.quantity) || 0,
+        physicalQty: String(parseFloat(s.quantity) || 0)
+      }))
+    );
+    setAdjustForm({
+      reason: 'Missing',
+      notes: '',
+      addedBy: '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowAdjustModal(true);
+  };
+
+  const handleAdjustStock = async (e) => {
+    e.preventDefault();
+    if (!adjustItem) return;
+    if (!adjustForm.addedBy) {
+      showError('Please select who is adjusting stock');
+      return;
+    }
+    if (!adjustForm.reason) {
+      showError('Please select a reason');
+      return;
+    }
+    const counts = adjustCounts.map((row) => ({
+      size: row.size,
+      physicalQty: row.physicalQty === '' ? 0 : parseInt(row.physicalQty, 10) || 0
+    }));
+    const hasChange = counts.some((row, i) => row.physicalQty !== adjustCounts[i].systemQty);
+    if (!hasChange) {
+      showError('No stock change — physical matches system');
+      return;
+    }
+    setSavingAdjust(true);
+    try {
+      const res = await adjustInventoryStock(adjustItem.id || adjustItem._id, {
+        counts,
+        reason: adjustForm.reason,
+        notes: adjustForm.notes,
+        addedBy: adjustForm.addedBy,
+        date: adjustForm.date
+      });
+      const missing = res?.data?.adjustment?.missingQty || 0;
+      const loss = res?.data?.lossAmount || 0;
+      showSuccess(
+        missing > 0
+          ? `Stock updated · ${missing} pcs missing (loss Rs. ${loss.toLocaleString()})`
+          : 'Stock updated successfully'
+      );
+      setShowAdjustModal(false);
+      setAdjustItem(null);
+      await fetchData();
+    } catch (err) {
+      showError(err.message || 'Could not adjust stock');
+    } finally {
+      setSavingAdjust(false);
+    }
   };
 
   // Calculate sold quantity from sales records
@@ -788,7 +927,41 @@ const Inventory = () => {
   }, [searchTerm, filterBrand, filterCategory, showLowStock]);
 
   const getTotalQuantity = (sizes) => {
-    return sizes.reduce((sum, s) => sum + s.quantity, 0);
+    return (sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+  };
+
+  /** On hand / sold / written-off snapshot for UI + stock value (on-hand only). */
+  const getStockSnapshot = (item) => {
+    const onHand = getTotalQuantity(item?.sizes);
+    const sold = calculateSoldQuantity(item?.id || item?._id);
+    const writtenOff = parseFloat(item?.writtenOffQty) || 0;
+    const costPerUnit = parseFloat(item?.costPerUnit) || 0;
+    const lifetime = onHand + sold + writtenOff;
+    const storedInitial = parseFloat(item?.initialQuantity) || 0;
+    const initial = Math.max(storedInitial, lifetime);
+    return {
+      onHand,
+      sold,
+      writtenOff,
+      lifetime,
+      initial,
+      costPerUnit,
+      onHandValue: Math.round(onHand * costPerUnit),
+      // Total capital at cost for lifetime pieces (initial × cost)
+      actualCostValue: Math.round(initial * costPerUnit),
+      writeOffLoss: Math.round(writtenOff * costPerUnit),
+      adjustments: Array.isArray(item?.stockAdjustments) ? item.stockAdjustments : []
+    };
+  };
+
+  const formatAdjDate = (dateValue) => {
+    if (!dateValue) return '';
+    let d;
+    if (dateValue?.toDate) d = dateValue.toDate();
+    else if (dateValue?.seconds) d = new Date(dateValue.seconds * 1000);
+    else d = new Date(dateValue);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   const isLowStock = (item) => {
@@ -949,9 +1122,11 @@ const Inventory = () => {
                 </div>
               ) : (
                 paginatedInventory.map((item) => {
-                  const totalQty = getTotalQuantity(item.sizes);
-                  const soldQty = calculateSoldQuantity(item.id || item._id);
-                  const initialQty = totalQty + soldQty;
+                  const stock = getStockSnapshot(item);
+                  const totalQty = stock.onHand;
+                  const soldQty = stock.sold;
+                  const initialQty = stock.initial;
+                  const writtenOffQty = stock.writtenOff;
                   const lowStock = isLowStock(item);
                   const sellingPrice = parseFloat(item.sellingPrice) || 0;
                   const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
@@ -1022,7 +1197,12 @@ const Inventory = () => {
                                   )}
                                 </div>
                                 <p className="text-xs text-ink-muted truncate">
-                                  {[item.brand?.name, item.sku, `${totalQty} in stock`].filter(Boolean).join(' · ')}
+                                  {[
+                                    item.brand?.name,
+                                    item.sku,
+                                    `${totalQty} on hand`,
+                                    writtenOffQty > 0 ? `${writtenOffQty} written off` : null
+                                  ].filter(Boolean).join(' · ')}
                                 </p>
                                 {pay.soldQty > 0 && (
                                   <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -1071,51 +1251,52 @@ const Inventory = () => {
                       {/* Expandable Details */}
                       {isExpanded && (
                         <div className="px-4 pb-4 border-t border-neutral-100 space-y-3 pt-3 bg-neutral-50/80">
-                          <div className="flex gap-2 justify-end flex-wrap">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEdit(item);
-                              }}
-                              className="px-3 py-2 text-ink hover:bg-white border border-neutral-200 rounded-xl text-sm font-medium flex items-center gap-1.5"
-                              disabled={deleting === itemId}
-                              title="Edit"
-                            >
-                              <Edit2 size={16} />
-                              <span>Edit</span>
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openCostingModal(item);
-                              }}
-                              className="px-3 py-2 text-ink hover:bg-white border border-neutral-200 rounded-xl text-sm font-medium flex items-center gap-1.5"
-                              title="Product costing and expenses"
-                            >
-                              <DollarSign size={16} />
-                              <span>Costing</span>
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(itemId);
-                              }}
-                              className="px-3 py-2 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-1.5"
-                              disabled={deleting === itemId}
-                              title="Delete"
-                            >
-                              {deleting === itemId ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                                  <span className="text-sm">Deleting...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Trash2 size={18} />
-                                  <span className="text-sm">Delete</span>
-                                </>
-                              )}
-                            </button>
+                          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+                            <div className="inline-flex items-center gap-0.5 p-1 rounded-xl border border-neutral-200 bg-white shadow-soft">
+                              <button
+                                type="button"
+                                onClick={() => handleEdit(item)}
+                                disabled={deleting === itemId}
+                                className="h-9 px-3 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
+                                title="Edit"
+                              >
+                                <Edit2 size={14} />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openCostingModal(item)}
+                                className="h-9 px-3 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center gap-1.5 text-xs font-semibold transition-colors"
+                                title="Costing"
+                              >
+                                <DollarSign size={14} />
+                                Cost
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openAdjustStock(item)}
+                                className="h-9 px-3 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center gap-1.5 text-xs font-semibold transition-colors"
+                                title="Adjust stock"
+                              >
+                                <ClipboardList size={14} />
+                                Adjust
+                              </button>
+                              <span className="w-px h-5 bg-neutral-200 mx-0.5" aria-hidden />
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(itemId)}
+                                disabled={deleting === itemId}
+                                className="h-9 px-3 rounded-lg text-rose-600 hover:bg-rose-50 flex items-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-40"
+                                title="Delete"
+                              >
+                                {deleting === itemId ? (
+                                  <span className="w-3.5 h-3.5 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+                                ) : (
+                                  <Trash2 size={14} />
+                                )}
+                                Delete
+                              </button>
+                            </div>
                           </div>
                           {/* Badges */}
                           <div className="flex gap-2 mb-3 flex-wrap">
@@ -1196,24 +1377,32 @@ const Inventory = () => {
                           {/* Stock Information - Detailed */}
                           <div className="pt-3 border-t border-gray-200">
                             <div className="text-sm text-gray-700 mb-2 font-semibold">Stock Details</div>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg">
-                                <span className="text-sm text-gray-700 font-medium">Initial Stock:</span>
-                                <span className="text-base font-bold text-gray-900">{initialQty} units</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="bg-neutral-50 p-2.5 rounded-xl border border-neutral-200">
+                                <p className="text-[11px] text-ink-muted">Lifetime</p>
+                                <p className="text-base font-bold text-ink tabular-nums mt-0.5">{initialQty}</p>
                               </div>
-                              <div className="flex items-center justify-between bg-green-50 p-2.5 rounded-lg border border-green-200">
-                                <span className="text-sm text-gray-700 font-medium">Current Stock:</span>
-                                <span className={`text-lg font-bold ${lowStock ? 'text-red-600' : 'text-green-700'}`}>
-                                  {totalQty} units
-                                </span>
+                              <div className={`p-2.5 rounded-xl border ${lowStock ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                <p className="text-[11px] text-ink-muted">On hand</p>
+                                <p className={`text-base font-bold tabular-nums mt-0.5 ${lowStock ? 'text-rose-700' : 'text-emerald-700'}`}>{totalQty}</p>
                               </div>
-                              {soldQty > 0 && (
-                                <div className="flex items-center justify-between bg-orange-50 p-2.5 rounded-lg border border-orange-200">
-                                  <span className="text-sm text-gray-700 font-medium">Sold:</span>
-                                  <span className="text-base font-bold text-orange-700">{soldQty} units</span>
-                                </div>
-                              )}
+                              <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                                <p className="text-[11px] text-ink-muted">Sold</p>
+                                <p className="text-base font-bold text-amber-800 tabular-nums mt-0.5">{soldQty}</p>
+                              </div>
+                              <div className={`p-2.5 rounded-xl border ${writtenOffQty > 0 ? 'bg-rose-50 border-rose-200' : 'bg-neutral-50 border-neutral-200'}`}>
+                                <p className="text-[11px] text-ink-muted">Written off</p>
+                                <p className={`text-base font-bold tabular-nums mt-0.5 ${writtenOffQty > 0 ? 'text-rose-700' : 'text-ink-muted'}`}>{writtenOffQty}</p>
+                              </div>
                             </div>
+                            {writtenOffQty > 0 && (
+                              <p className="text-xs text-rose-700 mt-2">
+                                {writtenOffQty} pcs physically removed (missing/theft) · loss Rs. {stock.writeOffLoss.toLocaleString()}
+                              </p>
+                            )}
+                            <p className="text-xs text-ink-muted mt-1.5">
+                              On-hand value Rs. {stock.onHandValue.toLocaleString()} (only pieces still with you)
+                            </p>
                           </div>
 
                           {/* Sales & Payment (offline sales) */}
@@ -1263,9 +1452,19 @@ const Inventory = () => {
                                 </div>
                               </div>
                               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                                <div className="text-xs text-gray-600 mb-1.5 font-medium">Stock Value</div>
+                                <div className="text-xs text-gray-600 mb-1.5 font-medium">On-hand value</div>
                                 <div className="text-base sm:text-lg font-bold text-blue-700 break-words" style={{ minHeight: '24px' }}>
-                                  Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                  Rs. {stock.onHandValue.toLocaleString('en-IN')}
+                                </div>
+                                <div className="text-[11px] text-ink-muted mt-1">{totalQty} pcs × cost</div>
+                              </div>
+                              <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-200 col-span-2">
+                                <div className="text-xs text-gray-600 mb-1.5 font-medium">Actual cost value</div>
+                                <div className="text-base sm:text-lg font-bold text-ink break-words tabular-nums">
+                                  Rs. {stock.actualCostValue.toLocaleString('en-IN')}
+                                </div>
+                                <div className="text-[11px] text-ink-muted mt-1">
+                                  Lifetime {initialQty} pcs × Rs. {stock.costPerUnit.toLocaleString()}
                                 </div>
                               </div>
                             </div>
@@ -1325,36 +1524,42 @@ const Inventory = () => {
                             );
                           })()}
 
-                          {/* Realized Profit — Paid − sold cost (due clear hone pe barhega) */}
+                          {/* Realized — Paid − stock capital (pehle capital, phir profit) */}
                           {(() => {
                             const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
                             const onlineData = onlineSales[productKey];
                             const rp = getProductRealizedProfit(item, onlineData);
-                            const stockValue = (isNaN(initialQty) || isNaN(item.costPerUnit))
-                              ? 0
-                              : (initialQty * parseFloat(item.costPerUnit || 0));
-                            const totalProfit = rp.realizedProfit;
+                            const inProfit = rp.profitAfterCapital > 0;
+                            const capitalPending = rp.capitalLeft > 0;
+                            const showAmount = inProfit ? rp.profitAfterCapital : rp.capitalLeft;
 
                             return (
                               <div className="pt-3 border-t border-gray-200 mt-3">
                                 <div className="text-sm text-gray-700 mb-2 font-semibold">Realized Profit</div>
-                                <div className={`bg-gradient-to-r p-4 rounded-lg border-2 ${totalProfit > 0 ? 'from-green-100 to-green-50 border-green-300' : totalProfit < 0 ? 'from-red-100 to-red-50 border-red-300' : 'from-gray-100 to-gray-50 border-gray-300'}`}>
+                                <div className={`bg-gradient-to-r p-4 rounded-lg border-2 ${inProfit ? 'from-green-100 to-green-50 border-green-300' : capitalPending ? 'from-amber-100 to-amber-50 border-amber-300' : 'from-gray-100 to-gray-50 border-gray-300'}`}>
                                   <div className="flex items-center justify-between">
                                     <span className="text-sm sm:text-base font-bold text-gray-800">
-                                      {totalProfit > 0 ? 'Profit:' : totalProfit < 0 ? 'Loss:' : 'Break Even:'}
+                                      {inProfit ? 'Profit:' : capitalPending ? 'Capital left:' : 'Break Even:'}
                                     </span>
-                                    <span className={`text-lg sm:text-xl font-bold break-words ${totalProfit > 0 ? 'text-green-700' : totalProfit < 0 ? 'text-red-700' : 'text-gray-500'}`} style={{ minHeight: '28px' }}>
-                                      Rs. {(isNaN(totalProfit) ? 0 : parseFloat(totalProfit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                    <span className={`text-lg sm:text-xl font-bold break-words ${inProfit ? 'text-green-700' : capitalPending ? 'text-amber-800' : 'text-gray-500'}`} style={{ minHeight: '28px' }}>
+                                      {capitalPending ? '−' : inProfit ? '+' : ''}Rs. {(isNaN(showAmount) ? 0 : parseFloat(showAmount || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                                     </span>
                                   </div>
                                   <div className="mt-2 text-xs text-gray-600 space-y-0.5">
-                                    <div>Paid: Rs. {rp.paidTotal.toLocaleString('en-IN')} − Sold cost: Rs. {rp.soldCost.toLocaleString('en-IN')}</div>
-                                    {rp.remainingAmount > 0 && (
-                                      <div className="text-amber-700">
-                                        Due Rs. {rp.remainingAmount.toLocaleString('en-IN')} — jab aayega profit badhega
+                                    <div>Paid Rs. {rp.paidTotal.toLocaleString('en-IN')} − Stock capital Rs. {rp.stockCapital.toLocaleString('en-IN')}</div>
+                                    {rp.writtenOffQty > 0 && (
+                                      <div className="text-rose-700">
+                                        Missing/write-off {rp.writtenOffQty} pcs · loss Rs. {rp.missingLoss.toLocaleString('en-IN')}
                                       </div>
                                     )}
-                                    <div className="text-gray-400">Stock value (unsold capital): Rs. {stockValue.toLocaleString('en-IN')}</div>
+                                    {capitalPending && (
+                                      <div className="text-amber-800">Abhi capital recover nahi hua — uske baad profit</div>
+                                    )}
+                                    {rp.remainingAmount > 0 && (
+                                      <div className="text-amber-700">
+                                        Due Rs. {rp.remainingAmount.toLocaleString('en-IN')} — jab aayega capital/profit badhega
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -1368,345 +1573,281 @@ const Inventory = () => {
               )}
             </div>
 
-            {/* Desktop Table View */}
+            {/* Desktop Table View — clean, less congested */}
             <div className="hidden md:block overflow-x-auto">
-              <table className="w-full min-w-[900px]">
-                <thead className="bg-neutral-50/80 border-b border-neutral-200">
-                  <tr>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal">Product</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden md:table-cell">Brand</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden lg:table-cell">Category</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal">Sizes</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden lg:table-cell">Stock</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden xl:table-cell">Cost</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal">Price</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden md:table-cell">Online</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden xl:table-cell">Stock value</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden lg:table-cell">Sold / payment</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden xl:table-cell">Revenue</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden xl:table-cell">Realized profit</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal hidden lg:table-cell">Added</th>
-                    <th className="px-4 py-3.5 text-left text-[11px] font-medium text-ink-muted normal-case tracking-normal">Actions</th>
+              <table className="w-full min-w-[1080px] border-separate border-spacing-0">
+                <thead>
+                  <tr className="bg-neutral-50/90">
+                    <th className="sticky left-0 z-20 bg-neutral-50/95 backdrop-blur px-5 py-3.5 text-left text-[11px] font-semibold text-ink-muted border-b border-neutral-200">
+                      Product
+                    </th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold text-ink-muted border-b border-neutral-200">Stock</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold text-ink-muted border-b border-neutral-200">Price</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold text-ink-muted border-b border-neutral-200 hidden lg:table-cell">Cost value</th>
+                    <th className="px-4 py-3.5 text-left text-[11px] font-semibold text-ink-muted border-b border-neutral-200 hidden lg:table-cell">Collections</th>
+                    <th className="px-4 py-3.5 text-right text-[11px] font-semibold text-ink-muted border-b border-neutral-200 hidden xl:table-cell">P&amp;L</th>
+                    <th className="sticky right-0 z-20 bg-neutral-50/95 backdrop-blur px-4 py-3.5 text-right text-[11px] font-semibold text-ink-muted border-b border-neutral-200">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-neutral-100">
+                <tbody>
                   {paginatedInventory.map((item) => {
-                    const totalQty = getTotalQuantity(item.sizes);
-                    const soldQty = calculateSoldQuantity(item.id || item._id);
-                    const initialQty = totalQty + soldQty;
+                    const stock = getStockSnapshot(item);
+                    const totalQty = stock.onHand;
+                    const soldQty = stock.sold;
+                    const initialQty = stock.initial;
+                    const writtenOffQty = stock.writtenOff;
                     const lowStock = isLowStock(item);
+                    const itemId = item.id || item._id;
+                    const sellingPrice = parseFloat(item.sellingPrice) || 0;
+                    const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
+                    const isSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
+                      item.isSale || item.sale ||
+                      (sellingPrice > onlinePrice && onlinePrice > 0);
+                    const isNewBadge = item.tag === 'new' || item.status === 'new' || item.isNew || item.new;
+                    const pay = getProductSalePaymentStats(itemId);
+                    const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
+                    const onlineData = onlineSales[productKey];
+                    const rp = getProductRealizedProfit(item, onlineData);
+                    const inProfit = rp.profitAfterCapital > 0;
+                    const capitalPending = rp.capitalLeft > 0;
+                    const showAmount = inProfit ? rp.profitAfterCapital : rp.capitalLeft;
+                    const payStatus =
+                      pay.soldQty <= 0 && pay.soldAmount <= 0
+                        ? null
+                        : pay.remainingAmount <= 0
+                          ? 'Paid'
+                          : pay.paidAmount > 0
+                            ? 'Partial'
+                            : 'Unpaid';
+                    const sizePreview = (item.sizes || [])
+                      .filter((s) => (parseFloat(s.quantity) || 0) > 0 || (item.sizes || []).length <= 2)
+                      .slice(0, 3);
 
                     return (
                       <tr
-                        key={item.id || item._id}
+                        key={itemId}
                         onClick={() => openProductDetail(item)}
-                        className={`transition-colors cursor-pointer group ${lowStock ? 'bg-amber-50/40' : 'hover:bg-neutral-50'
-                          }`}
+                        className={`group cursor-pointer transition-colors ${
+                          lowStock ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'bg-white hover:bg-neutral-50/80'
+                        }`}
                         title="Open buyers & payments"
                       >
-                        <td className="px-4 py-4">
-                          <div className="flex items-center gap-3">
+                        {/* Product */}
+                        <td className={`sticky left-0 z-10 px-5 py-4 border-b border-neutral-100 align-top min-w-[240px] max-w-[320px] ${
+                          lowStock ? 'bg-amber-50/30 group-hover:bg-amber-50/50' : 'bg-white group-hover:bg-neutral-50/80'
+                        }`}>
+                          <div className="flex items-start gap-3">
                             {item.imageUrl ? (
                               <img
                                 src={item.imageUrl}
                                 alt={item.productName}
-                                className="w-11 h-11 object-cover rounded-lg border border-neutral-100"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                }}
+                                className="w-12 h-12 object-cover rounded-xl border border-neutral-100 shrink-0"
+                                onError={(e) => { e.target.style.display = 'none'; }}
                               />
                             ) : (
-                              <div className="w-11 h-11 bg-neutral-100 rounded-lg flex items-center justify-center">
+                              <div className="w-12 h-12 bg-neutral-100 rounded-xl flex items-center justify-center shrink-0">
                                 <Package size={18} className="text-neutral-400" />
                               </div>
                             )}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold text-ink break-words group-hover:underline underline-offset-2 decoration-neutral-300">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-ink text-[15px] leading-snug break-words group-hover:text-ink">
                                   {item.productName || 'Unnamed Product'}
                                 </span>
                                 {lowStock && (
-                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-200">
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900">
                                     Low
                                   </span>
                                 )}
+                                {isNewBadge && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-ink text-white">NEW</span>
+                                )}
+                                {isSaleBadge && (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-800 border border-rose-100">SALE</span>
+                                )}
                               </div>
-                              {item.sku && (
-                                <p className="text-xs text-ink-muted mt-0.5 tabular-nums">{item.sku}</p>
-                              )}
-                              <div className="flex gap-1.5 mt-1 flex-wrap">
-                                {(() => {
-                                  const isNew = item.tag === 'new' || item.status === 'new' ||
-                                    item.isNew || item.new;
-                                  const isSale = item.tag === 'sale' || item.status === 'sale' ||
-                                    item.isSale || item.sale ||
-                                    (item.sellingPrice && item.onlinePrice && item.sellingPrice > item.onlinePrice && item.onlinePrice > 0);
-                                  return (
-                                    <>
-                                      {isNew && (
-                                        <span className="px-1.5 py-0.5 bg-ink text-white text-[10px] font-semibold rounded">
-                                          NEW
-                                        </span>
-                                      )}
-                                      {isSale && (
-                                        <span className="px-1.5 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 text-[10px] font-semibold rounded">
-                                          SALE
-                                        </span>
-                                      )}
-                                    </>
-                                  );
-                                })()}
+                              <p className="text-xs text-ink-muted mt-1 truncate">
+                                {[item.brand?.name, item.category?.name].filter(Boolean).join(' · ') || '—'}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {sizePreview.map((s, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-100 text-[11px] font-medium text-ink tabular-nums"
+                                  >
+                                    {s.size}
+                                    <span className="text-ink-muted font-normal mx-1">·</span>
+                                    {s.quantity}
+                                  </span>
+                                ))}
+                                {(item.sizes || []).length > 3 && (
+                                  <span className="text-[11px] text-ink-muted">+{(item.sizes || []).length - 3}</span>
+                                )}
+                                <span className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold border ${
+                                  item.onlineStatus
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                                    : 'bg-neutral-50 text-ink-muted border-neutral-200'
+                                }`}>
+                                  {item.onlineStatus ? 'Online' : 'Hidden'}
+                                </span>
                               </div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm hidden md:table-cell">
-                          {item.brand?.name ? (
-                            <span className="text-gray-800 font-medium">{item.brand.name}</span>
-                          ) : item.brandId ? (
-                            <span className="text-gray-400 italic">Loading...</span>
+
+                        {/* Stock */}
+                        <td className="px-4 py-4 border-b border-neutral-100 align-top whitespace-nowrap">
+                          <p className={`text-xl font-bold tabular-nums tracking-tight ${lowStock ? 'text-rose-700' : 'text-ink'}`}>
+                            {totalQty}
+                            <span className="text-xs font-medium text-ink-muted ml-1.5">on hand</span>
+                          </p>
+                          <p className="text-[11px] text-ink-muted mt-1.5 tabular-nums">
+                            Lifetime {initialQty}
+                            <span className="mx-1.5 text-neutral-300">·</span>
+                            Sold {soldQty}
+                          </p>
+                          {writtenOffQty > 0 ? (
+                            <p className="text-[11px] font-semibold text-rose-700 mt-1 tabular-nums">
+                              Written off {writtenOffQty}
+                            </p>
                           ) : (
-                            <span className="text-gray-400">—</span>
+                            <p className="text-[11px] text-ink-faint mt-1">No write-offs</p>
                           )}
                         </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm hidden lg:table-cell">
-                          {item.category?.name ? (
-                            <span className="text-gray-800 font-medium">{item.category.name}</span>
-                          ) : item.categoryId ? (
-                            <span className="text-gray-400 italic">Loading...</span>
+
+                        {/* Price */}
+                        <td className="px-4 py-4 border-b border-neutral-100 align-top text-right whitespace-nowrap">
+                          {isSaleBadge && sellingPrice > onlinePrice && onlinePrice > 0 ? (
+                            <div>
+                              <p className="text-xs text-ink-muted line-through tabular-nums">Rs. {sellingPrice.toLocaleString()}</p>
+                              <p className="text-base font-bold text-rose-700 tabular-nums mt-0.5">Rs. {onlinePrice.toLocaleString()}</p>
+                            </div>
                           ) : (
-                            <span className="text-gray-400">—</span>
+                            <p className="text-base font-semibold text-ink tabular-nums">Rs. {onlinePrice.toLocaleString()}</p>
+                          )}
+                          <p className="text-[11px] text-ink-muted mt-1.5 tabular-nums">
+                            Cost Rs. {(parseFloat(item.costPerUnit) || 0).toLocaleString()}
+                          </p>
+                        </td>
+
+                        {/* Cost value: on-hand + actual (lifetime) */}
+                        <td className="px-4 py-4 border-b border-neutral-100 align-top text-right whitespace-nowrap hidden lg:table-cell">
+                          <p className="text-[11px] text-ink-muted">On hand</p>
+                          <p className="text-base font-semibold text-sky-700 tabular-nums">
+                            Rs. {stock.onHandValue.toLocaleString('en-IN')}
+                          </p>
+                          <p className="text-[11px] text-ink-muted mt-2">Actual cost</p>
+                          <p className="text-sm font-bold text-ink tabular-nums">
+                            Rs. {stock.actualCostValue.toLocaleString('en-IN')}
+                          </p>
+                          <p className="text-[10px] text-ink-muted mt-0.5 tabular-nums">
+                            {initialQty} pcs × Rs. {stock.costPerUnit.toLocaleString()}
+                          </p>
+                          {writtenOffQty > 0 && (
+                            <p className="text-[11px] text-rose-700 font-medium mt-1.5 tabular-nums">
+                              Write-off Rs. {stock.writeOffLoss.toLocaleString()}
+                            </p>
                           )}
                         </td>
-                        <td className="px-4 sm:px-6 py-5">
-                          <div className="flex flex-wrap gap-1">
-                            {item.sizes.map((s, idx) => {
-                              // For sizes, if current > stored initial, it means more items were added
-                              // Calculate size initial as: current + sold (if we can estimate sold)
-                              // For now, use stored initialQuantity if available, otherwise use current
-                              const storedInitial = s.initialQuantity;
-                              const sizeCurrent = s.quantity;
-                              // If current > stored initial, more items were added, so recalculate
-                              const sizeInitial = storedInitial && sizeCurrent <= storedInitial
-                                ? storedInitial
-                                : sizeCurrent; // If current > initial, assume no sold for this size yet
-                              const sizeSold = sizeInitial > sizeCurrent ? sizeInitial - sizeCurrent : 0;
-                              return (
-                                <span key={idx} className="px-2 py-1 bg-gray-100 text-xs rounded" title={`Initial: ${sizeInitial}, Current: ${sizeCurrent}, Sold: ${sizeSold}`}>
-                                  {s.size}: {sizeCurrent}
-                                  {sizeSold > 0 && <span className="text-red-500 ml-1">(-{sizeSold})</span>}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 hidden lg:table-cell">
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">Initial:</span>
-                              <span className="font-semibold text-gray-700">{initialQty}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">Current:</span>
-                              <span className={`font-bold ${lowStock ? 'text-red-600' : 'text-green-600'}`}>
-                                {totalQty}
-                              </span>
-                            </div>
-                            {soldQty > 0 && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-500">Sold:</span>
-                                <span className="font-medium text-orange-600">{soldQty}</span>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden xl:table-cell">
-                          <div className="flex flex-col gap-1">
-                            <div>
-                              <span className="text-xs text-gray-500">Cost/Unit: </span>
-                              <span className="font-medium">Rs. {parseFloat(item.costPerUnit || 0).toLocaleString()}</span>
-                            </div>
-                            <div>
-                              <span className="text-xs text-gray-500">Stock Value: </span>
-                              <span className="font-bold text-blue-700">
-                                Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm">
-                          {(() => {
-                            const sellingPrice = parseFloat(item.sellingPrice) || 0;
-                            const onlinePrice = parseFloat(item.onlinePrice) || sellingPrice;
-                            const isSale = sellingPrice > onlinePrice && onlinePrice > 0;
 
-                            // Check for sale badge
-                            const hasSaleBadge = item.tag === 'sale' || item.status === 'sale' ||
-                              item.isSale || item.sale || isSale;
-
-                            if (hasSaleBadge && sellingPrice > onlinePrice && sellingPrice > 0 && onlinePrice > 0) {
-                              return (
-                                <div className="space-y-0.5">
-                                  <div className="text-xs text-gray-500 line-through">
-                                    Was Rs. {sellingPrice.toLocaleString()}
-                                  </div>
-                                  <div className="font-bold text-red-600 text-base">
-                                    Now Rs. {onlinePrice.toLocaleString()}
-                                  </div>
-                                </div>
-                              );
-                            } else {
-                              return (
-                                <div className="text-gray-900 font-medium">
-                                  Rs. {onlinePrice.toLocaleString()}
-                                  {item.onlinePrice && item.onlinePrice !== item.sellingPrice && !hasSaleBadge && (
-                                    <div className="text-xs text-blue-600 mt-1 font-normal">
-                                      Online: Rs. {item.onlinePrice.toLocaleString()}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-                          })()}
-                        </td>
-                        <td className="px-4 py-4 hidden md:table-cell">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${item.onlineStatus
-                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            : 'bg-neutral-50 text-ink-muted border-neutral-200'
-                            }`}>
-                            {item.onlineStatus ? 'Online' : 'Hidden'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-4 text-sm font-medium text-ink tabular-nums hidden xl:table-cell">
-                          Rs. {(isNaN(initialQty) || isNaN(item.costPerUnit)) ? '0' : (initialQty * parseFloat(item.costPerUnit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-4 text-sm hidden lg:table-cell">
-                          {(() => {
-                            const pay = getProductSalePaymentStats(item.id || item._id);
-                            if (pay.soldQty <= 0 && pay.soldAmount <= 0) {
-                              return <span className="text-ink-faint text-xs">—</span>;
-                            }
-                            const st =
-                              pay.remainingAmount <= 0 ? 'Paid' : pay.paidAmount > 0 ? 'Partial' : 'Unpaid';
-                            return (
-                              <div className="space-y-1 min-w-[130px]">
-                                <span className={`inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${st === 'Paid'
-                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                  : st === 'Partial'
-                                    ? 'bg-amber-50 text-amber-900 border-amber-200'
-                                    : 'bg-rose-50 text-rose-800 border-rose-200'
-                                  }`}>
-                                  {st}
-                                </span>
-                                <div className="text-xs text-ink-muted tabular-nums">
-                                  {pay.soldQty} sold · Paid Rs. {pay.paidAmount.toLocaleString()}
-                                </div>
+                        {/* Collections */}
+                        <td className="px-4 py-4 border-b border-neutral-100 align-top hidden lg:table-cell min-w-[148px]">
+                          {!payStatus ? (
+                            <span className="text-xs text-ink-faint">No sales yet</span>
+                          ) : (
+                            <div>
+                              <span className={`inline-flex text-[11px] font-semibold px-2 py-0.5 rounded-md border ${
+                                payStatus === 'Paid'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                                  : payStatus === 'Partial'
+                                    ? 'bg-amber-50 text-amber-900 border-amber-100'
+                                    : 'bg-rose-50 text-rose-800 border-rose-100'
+                              }`}>
+                                {payStatus}
+                              </span>
+                              <p className="text-sm font-semibold text-ink tabular-nums mt-2">
+                                Rs. {pay.paidAmount.toLocaleString()}
+                              </p>
+                              <p className="text-[11px] text-ink-muted mt-0.5 tabular-nums">
+                                {pay.soldQty} sold
                                 {pay.remainingAmount > 0 && (
-                                  <div className="text-xs text-amber-800 font-medium tabular-nums">
-                                    Due Rs. {pay.remainingAmount.toLocaleString()}
-                                  </div>
+                                  <span className="text-amber-800 font-medium"> · Due Rs. {pay.remainingAmount.toLocaleString()}</span>
                                 )}
-                              </div>
-                            );
-                          })()}
+                              </p>
+                            </div>
+                          )}
                         </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
-                          {(() => {
-                            const totalEarned = calculateTotalEarned(item.id || item._id);
-                            const onlineSalesData = onlineSales[item.id || item._id];
-                            return (
-                              <div className="flex flex-col gap-1">
-                                <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                                  Rs. {totalEarned.toLocaleString()}
-                                </span>
-                                {totalEarned > 0 && soldQty > 0 && (
-                                  <span className="text-xs text-gray-500">
-                                    ({soldQty} sold)
-                                  </span>
-                                )}
-                                {(() => {
-                                  // Find online sales for this product
-                                  const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
-                                  const onlineData = onlineSales[productKey];
-                                  if (onlineData && onlineData.totalRevenue > 0) {
-                                    return (
-                                      <div className="mt-1 pt-1 border-t border-gray-200">
-                                        <span className="text-xs text-blue-600 font-semibold">
-                                          Online: Rs. {onlineData.totalRevenue.toLocaleString()}
-                                        </span>
-                                        <span className="text-xs text-gray-500 ml-1">
-                                          ({onlineData.totalQuantity} units)
-                                        </span>
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                })()}
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm hidden xl:table-cell">
-                          {(() => {
-                            const productKey = `${item.productName}_${item.sizes?.[0]?.size || 'N/A'}`;
-                            const onlineData = onlineSales[productKey];
-                            const rp = getProductRealizedProfit(item, onlineData);
-                            const totalProfit = rp.realizedProfit;
 
-                            return (
-                              <div className="flex flex-col gap-1">
-                                <span className={`font-bold text-base tabular-nums ${totalProfit > 0 ? 'text-emerald-700' : totalProfit < 0 ? 'text-rose-700' : 'text-ink-muted'}`}>
-                                  Rs. {(isNaN(totalProfit) ? 0 : parseFloat(totalProfit || 0)).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                                </span>
-                                {totalProfit !== 0 && (
-                                  <span className={`text-[11px] font-medium ${totalProfit > 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                    {totalProfit > 0 ? 'Profit' : 'Loss'}
-                                  </span>
-                                )}
-                                {rp.remainingAmount > 0 && (
-                                  <span className="text-[10px] text-amber-800 font-medium">
-                                    Due Rs. {rp.remainingAmount.toLocaleString()}
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })()}
+                        {/* P&L */}
+                        <td className="px-4 py-4 border-b border-neutral-100 align-top text-right whitespace-nowrap hidden xl:table-cell">
+                          <p className={`text-base font-bold tabular-nums ${
+                            inProfit ? 'text-emerald-700' : capitalPending ? 'text-amber-800' : 'text-ink-muted'
+                          }`}>
+                            {capitalPending ? '−' : inProfit ? '+' : ''}
+                            Rs. {(isNaN(showAmount) ? 0 : parseFloat(showAmount || 0)).toLocaleString('en-IN')}
+                          </p>
+                          <p className={`text-[11px] font-medium mt-1 ${
+                            inProfit ? 'text-emerald-700' : capitalPending ? 'text-amber-800' : 'text-ink-muted'
+                          }`}>
+                            {inProfit ? 'Profit' : capitalPending ? 'Capital left' : 'Break even'}
+                          </p>
                         </td>
-                        <td className="px-3 sm:px-6 py-4 text-sm text-gray-600 hidden lg:table-cell">
-                          {item.createdAt ? formatDate(item.createdAt) : 'N/A'}
-                        </td>
-                        <td className="px-4 py-4 text-sm" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleEdit(item)}
-                              className="w-9 h-9 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center"
-                              disabled={deleting === (item.id || item._id)}
-                              title="Edit"
-                            >
-                              <Edit2 size={16} />
-                            </button>
-                            <button
-                              onClick={() => openCostingModal(item)}
-                              className="w-9 h-9 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center"
-                              title="Product costing"
-                            >
-                              <DollarSign size={16} />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(item.id || item._id)}
-                              className="w-9 h-9 rounded-lg text-ink-muted hover:text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center justify-center"
-                              disabled={deleting === (item.id || item._id)}
-                              title="Delete"
-                            >
-                              {deleting === (item.id || item._id) ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                                  <span className="text-xs">Deleting...</span>
-                                </>
-                              ) : (
-                                <Trash2 size={18} />
-                              )}
-                            </button>
+
+                        {/* Actions */}
+                        <td
+                          className={`sticky right-0 z-10 px-4 py-4 border-b border-neutral-100 align-middle ${
+                            lowStock ? 'bg-amber-50/30 group-hover:bg-amber-50/50' : 'bg-white group-hover:bg-neutral-50/80'
+                          }`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex justify-end">
+                            <div className="inline-flex items-center gap-0.5 p-1 rounded-xl border border-neutral-200/90 bg-white shadow-soft">
+                              <button
+                                type="button"
+                                onClick={() => handleEdit(item)}
+                                disabled={deleting === itemId}
+                                className="w-9 h-9 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center transition-colors disabled:opacity-40"
+                                title="Edit product"
+                                aria-label="Edit product"
+                              >
+                                <Edit2 size={15} strokeWidth={2} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openCostingModal(item)}
+                                className="w-9 h-9 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center transition-colors"
+                                title="Costing"
+                                aria-label="Costing"
+                              >
+                                <DollarSign size={15} strokeWidth={2} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openAdjustStock(item)}
+                                className="w-9 h-9 rounded-lg text-ink-muted hover:text-ink hover:bg-neutral-100 flex items-center justify-center transition-colors"
+                                title="Adjust stock"
+                                aria-label="Adjust stock"
+                              >
+                                <ClipboardList size={15} strokeWidth={2} />
+                              </button>
+                              <span className="w-px h-5 bg-neutral-200 mx-0.5" aria-hidden />
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(itemId)}
+                                disabled={deleting === itemId}
+                                className="w-9 h-9 rounded-lg text-rose-600 hover:text-rose-700 hover:bg-rose-50 flex items-center justify-center transition-colors disabled:opacity-40"
+                                title="Delete"
+                                aria-label="Delete"
+                              >
+                                {deleting === itemId ? (
+                                  <span className="w-3.5 h-3.5 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+                                ) : (
+                                  <Trash2 size={15} strokeWidth={2} />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -2494,6 +2635,290 @@ const Inventory = () => {
         </div>
       )}
 
+      {/* Adjust stock — physical count / write-off / add */}
+      {showAdjustModal && adjustItem && (() => {
+        const costPerUnit = parseFloat(adjustItem.costPerUnit) || 0;
+        const snap = getStockSnapshot(adjustItem);
+        const rows = adjustCounts.map((row) => {
+          const physical = row.physicalQty === '' ? 0 : parseInt(row.physicalQty, 10) || 0;
+          const diff = physical - row.systemQty;
+          return { ...row, physical, diff };
+        });
+        const totalMissing = rows.reduce((s, r) => s + (r.diff < 0 ? Math.abs(r.diff) : 0), 0);
+        const totalFound = rows.reduce((s, r) => s + (r.diff > 0 ? r.diff : 0), 0);
+        const lossPreview = Math.round(totalMissing * costPerUnit);
+        const newOnHand = rows.reduce((s, r) => s + r.physical, 0);
+        const newOnHandValue = Math.round(newOnHand * costPerUnit);
+        const hasChange = rows.some((r) => r.diff !== 0);
+        const canSubmit = hasChange && !!adjustForm.addedBy && !!adjustForm.reason && !!adjustForm.date && !savingAdjust;
+        const history = [...(adjustItem.stockAdjustments || [])].slice().reverse();
+
+        return (
+          <div
+            className="fixed inset-0 z-[100] bg-ink/45 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={() => { if (!savingAdjust) { setShowAdjustModal(false); setAdjustItem(null); } }}
+          >
+            <div
+              className="bg-neutral-100 rounded-t-2xl sm:rounded-2xl shadow-elevated max-w-xl w-full max-h-[min(94dvh,900px)] flex flex-col overflow-hidden border border-neutral-200/80"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="shrink-0 bg-white px-5 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+                <div className="min-w-0 flex items-start gap-3">
+                  <span className="w-10 h-10 rounded-xl bg-ink text-white flex items-center justify-center shrink-0">
+                    <ClipboardList size={18} />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-ink tracking-tight">Stock count &amp; adjust</h3>
+                    <p className="text-sm text-ink-muted mt-0.5 truncate">{adjustItem.productName}</p>
+                    <p className="text-[11px] text-ink-muted mt-1">
+                      Physical count likho — kam = write-off · zyada = add stock
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowAdjustModal(false); setAdjustItem(null); }}
+                  className="w-9 h-9 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-ink-muted shrink-0"
+                  aria-label="Close"
+                  disabled={savingAdjust}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleAdjustStock} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+                {/* Current snapshot */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { label: 'Lifetime', value: snap.initial, tone: 'text-ink' },
+                    { label: 'On hand now', value: snap.onHand, tone: 'text-emerald-700' },
+                    { label: 'Sold', value: snap.sold, tone: 'text-amber-800' },
+                    { label: 'Written off', value: snap.writtenOff, tone: snap.writtenOff > 0 ? 'text-rose-700' : 'text-ink-muted' }
+                  ].map((m) => (
+                    <div key={m.label} className="bg-white rounded-xl border border-neutral-200/90 px-3 py-2.5 shadow-soft">
+                      <p className="text-[10px] font-medium text-ink-muted">{m.label}</p>
+                      <p className={`text-lg font-bold tabular-nums mt-0.5 ${m.tone}`}>{m.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                  <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-ink">Physical count</p>
+                      <p className="text-[11px] text-ink-muted mt-0.5">Jo ab warehouse me maujood hai</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAdjustCounts((prev) => prev.map((r) => ({ ...r, physicalQty: '0' })))}
+                      className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-100 px-2.5 py-1.5 rounded-lg hover:bg-rose-100"
+                    >
+                      Clear all to 0
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm min-w-[420px]">
+                      <thead className="bg-neutral-50/80">
+                        <tr>
+                          <th className="text-left py-2.5 px-4 text-[11px] font-medium text-ink-muted">Size</th>
+                          <th className="text-right py-2.5 px-3 text-[11px] font-medium text-ink-muted">System</th>
+                          <th className="text-right py-2.5 px-3 text-[11px] font-medium text-ink-muted">Physical</th>
+                          <th className="text-right py-2.5 px-4 text-[11px] font-medium text-ink-muted">Change</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-100">
+                        {rows.map((row, idx) => (
+                          <tr key={`${row.size}-${idx}`} className="hover:bg-neutral-50/60">
+                            <td className="py-3 px-4 font-medium text-ink">{row.size}</td>
+                            <td className="py-3 px-3 text-right tabular-nums text-ink-muted">{row.systemQty}</td>
+                            <td className="py-3 px-3 text-right">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={adjustCounts[idx].physicalQty}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === '' || /^\d+$/.test(value)) {
+                                    setAdjustCounts((prev) =>
+                                      prev.map((r, i) => (i === idx ? { ...r, physicalQty: value } : r))
+                                    );
+                                  }
+                                }}
+                                className="input-field text-right tabular-nums w-[5.5rem] ml-auto py-2 font-semibold"
+                                aria-label={`Physical count for ${row.size}`}
+                              />
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <span className={`inline-flex min-w-[3rem] justify-end px-2 py-0.5 rounded-md text-xs font-bold tabular-nums ${
+                                row.diff < 0
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-100'
+                                  : row.diff > 0
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                    : 'bg-neutral-50 text-ink-muted border border-neutral-100'
+                              }`}>
+                                {row.diff > 0 ? `+${row.diff}` : row.diff}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Impact preview */}
+                <div className={`rounded-xl border px-4 py-3.5 ${
+                  totalMissing > 0 && totalFound === 0
+                    ? 'bg-rose-50 border-rose-100'
+                    : totalFound > 0 && totalMissing === 0
+                      ? 'bg-emerald-50 border-emerald-100'
+                      : hasChange
+                        ? 'bg-amber-50 border-amber-100'
+                        : 'bg-white border-neutral-200'
+                }`}>
+                  {!hasChange ? (
+                    <p className="text-sm text-ink-muted">Physical count system jaisa hai — koi change nahi</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">After save</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                        <span className="text-ink">
+                          On hand <strong className="tabular-nums">{snap.onHand} → {newOnHand}</strong>
+                        </span>
+                        <span className="text-ink-muted">
+                          Value <strong className="tabular-nums text-ink">Rs. {snap.onHandValue.toLocaleString()} → Rs. {newOnHandValue.toLocaleString()}</strong>
+                        </span>
+                      </div>
+                      {totalMissing > 0 && (
+                        <p className="text-sm font-semibold text-rose-800">
+                          Physically remove −{totalMissing} pcs · write-off loss Rs. {lossPreview.toLocaleString()}
+                        </p>
+                      )}
+                      {totalFound > 0 && (
+                        <p className="text-sm font-semibold text-emerald-800">
+                          Add +{totalFound} pcs to on-hand stock
+                        </p>
+                      )}
+                      <p className="text-xs text-ink-muted">
+                        Written-off pieces history me rehte hain — Initial/Sold same; sirf on-hand &amp; value update
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft p-4 space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-ink mb-1">Staff *</label>
+                      <select
+                        required
+                        value={adjustForm.addedBy}
+                        onChange={(e) => setAdjustForm({ ...adjustForm, addedBy: e.target.value })}
+                        className="input-field"
+                      >
+                        <option value="">Select staff</option>
+                        {STAFF_MEMBERS.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-ink mb-1">Date *</label>
+                      <input
+                        type="date"
+                        required
+                        value={adjustForm.date}
+                        max={new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setAdjustForm({ ...adjustForm, date: e.target.value })}
+                        className="input-field"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-ink mb-1">Reason *</label>
+                    <select
+                      required
+                      value={adjustForm.reason}
+                      onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })}
+                      className="input-field"
+                    >
+                      {STOCK_ADJUST_REASONS.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-ink-muted mt-1">
+                      {STOCK_ADJUST_REASONS.find((r) => r.value === adjustForm.reason)?.hint || ''}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-ink mb-1">Notes</label>
+                    <textarea
+                      value={adjustForm.notes}
+                      onChange={(e) => setAdjustForm({ ...adjustForm, notes: e.target.value })}
+                      className="input-field"
+                      rows="2"
+                      placeholder="e.g. Warehouse count — 12 pcs missing / chori"
+                    />
+                  </div>
+                </div>
+
+                {history.length > 0 && (
+                  <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft overflow-hidden">
+                    <div className="px-4 py-3 border-b border-neutral-100">
+                      <p className="text-sm font-semibold text-ink">Adjustment history</p>
+                      <p className="text-[11px] text-ink-muted mt-0.5">Physically hataaye / add kiye gaye pieces</p>
+                    </div>
+                    <ul className="divide-y divide-neutral-100 max-h-48 overflow-y-auto">
+                      {history.map((adj) => (
+                        <li key={adj.id || `${adj.reason}-${adj.date}`} className="px-4 py-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-ink">
+                              {adj.reason}
+                              {adj.missingQty > 0 && (
+                                <span className="text-rose-700"> · −{adj.missingQty} pcs</span>
+                              )}
+                              {adj.foundQty > 0 && (
+                                <span className="text-emerald-700"> · +{adj.foundQty} pcs</span>
+                              )}
+                            </p>
+                            <p className="text-[11px] text-ink-muted mt-0.5">
+                              {formatAdjDate(adj.date)}
+                              {adj.addedBy ? ` · ${adj.addedBy}` : ''}
+                              {adj.notes ? ` · ${adj.notes}` : ''}
+                            </p>
+                          </div>
+                          <span className={`text-xs font-semibold tabular-nums shrink-0 ${adj.lossAmount > 0 ? 'text-rose-700' : 'text-ink-muted'}`}>
+                            {adj.lossAmount > 0 ? `−Rs. ${Number(adj.lossAmount).toLocaleString()}` : adj.foundQty > 0 ? 'Added' : '—'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2.5 pt-1 pb-1 sticky bottom-0 bg-neutral-100/95 backdrop-blur py-3 -mx-1 px-1">
+                  <button
+                    type="button"
+                    onClick={() => { setShowAdjustModal(false); setAdjustItem(null); }}
+                    className="btn-secondary"
+                    disabled={savingAdjust}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!canSubmit}
+                    className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {savingAdjust ? 'Saving...' : 'Save stock adjustment'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Product buyers / payment detail — Shopify/Deel-style clean sheet */}
       {detailItem && (() => {
         const itemId = detailItem.id || detailItem._id;
@@ -2605,9 +3030,11 @@ const Inventory = () => {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[11px] font-medium normal-case tracking-normal text-ink-muted">Realized profit</p>
-                      <p className={`text-xl font-bold tabular-nums tracking-tight mt-0.5 ${rp.realizedProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {rp.realizedProfit >= 0 ? '+' : '−'}{fmt(rp.realizedProfit)}
+                      <p className="text-[11px] font-medium normal-case tracking-normal text-ink-muted">
+                        {rp.profitAfterCapital > 0 ? 'Realized profit' : rp.capitalLeft > 0 ? 'Capital left' : 'Realized'}
+                      </p>
+                      <p className={`text-xl font-bold tabular-nums tracking-tight mt-0.5 ${rp.profitAfterCapital > 0 ? 'text-emerald-700' : rp.capitalLeft > 0 ? 'text-amber-800' : 'text-ink-muted'}`}>
+                        {rp.profitAfterCapital > 0 ? '+' : rp.capitalLeft > 0 ? '−' : ''}{fmt(rp.profitAfterCapital > 0 ? rp.profitAfterCapital : rp.capitalLeft)}
                       </p>
                     </div>
                   </div>
@@ -2618,13 +3045,20 @@ const Inventory = () => {
                     />
                   </div>
                   <p className="text-xs text-ink-muted">
-                    Paid {fmt(rp.paidTotal)} − sold cost {fmt(rp.soldCost)}
-                    {pay.remainingAmount > 0
-                      ? ` · Due clear hone pe profit badhega`
-                      : pay.soldQty > 0
-                        ? ' · Fully collected'
-                        : ''}
+                    Paid {fmt(rp.paidTotal)} − stock capital {fmt(rp.stockCapital)}
+                    {rp.capitalLeft > 0
+                      ? ' · Pehle capital recover, phir profit'
+                      : pay.remainingAmount > 0
+                        ? ' · Due clear hone pe profit badhega'
+                        : pay.soldQty > 0
+                          ? ' · Capital recover + collected'
+                          : ''}
                   </p>
+                  {rp.writtenOffQty > 0 && (
+                    <p className="text-xs text-rose-700 font-medium">
+                      Write-off {rp.writtenOffQty} pcs · loss {fmt(rp.missingLoss)} (in capital, not sale)
+                    </p>
+                  )}
                 </div>
 
                 {/* Buyers */}

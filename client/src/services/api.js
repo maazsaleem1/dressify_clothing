@@ -14,11 +14,11 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
-  runTransaction
-} from 'firebase/firestore';
-import { db } from '../firebase-config';
+  runTransaction,
+} from "firebase/firestore";
+import { db } from "../firebase-config";
 
-// Helper function to safely convert Firestore Timestamp to Date 
+// Helper function to safely convert Firestore Timestamp to Date
 const convertTimestamp = (timestamp) => {
   if (!timestamp) return null;
 
@@ -28,7 +28,7 @@ const convertTimestamp = (timestamp) => {
   }
 
   // If it has toDate method (Firestore Timestamp)
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+  if (timestamp.toDate && typeof timestamp.toDate === "function") {
     return timestamp.toDate();
   }
 
@@ -38,8 +38,14 @@ const convertTimestamp = (timestamp) => {
   }
 
   // If it's a number (timestamp in milliseconds)
-  if (typeof timestamp === 'number') {
+  if (typeof timestamp === "number") {
     return new Date(timestamp);
+  }
+
+  // ISO / date string (common on sale.payments after edits)
+  if (typeof timestamp === "string") {
+    const d = new Date(timestamp);
+    return isNaN(d.getTime()) ? null : d;
   }
 
   // Return as-is if we can't convert it
@@ -88,18 +94,24 @@ const prepareData = (data) => {
   if (prepared.saleDate && prepared.saleDate instanceof Date) {
     prepared.saleDate = Timestamp.fromDate(prepared.saleDate);
   }
-  if (prepared.expectedCompletionDate && prepared.expectedCompletionDate instanceof Date) {
-    prepared.expectedCompletionDate = Timestamp.fromDate(prepared.expectedCompletionDate);
+  if (
+    prepared.expectedCompletionDate &&
+    prepared.expectedCompletionDate instanceof Date
+  ) {
+    prepared.expectedCompletionDate = Timestamp.fromDate(
+      prepared.expectedCompletionDate,
+    );
   }
 
   // Clean arrays - remove undefined, null, and empty string elements
-  Object.keys(prepared).forEach(key => {
+  Object.keys(prepared).forEach((key) => {
     if (Array.isArray(prepared[key])) {
-      prepared[key] = prepared[key].filter(item =>
-        item !== undefined &&
-        item !== null &&
-        item !== '' &&
-        !(typeof item === 'object' && Object.keys(item).length === 0)
+      prepared[key] = prepared[key].filter(
+        (item) =>
+          item !== undefined &&
+          item !== null &&
+          item !== "" &&
+          !(typeof item === "object" && Object.keys(item).length === 0),
       );
     }
   });
@@ -110,7 +122,7 @@ const prepareData = (data) => {
 // ==================== BRANDS ====================
 export const getBrands = async () => {
   try {
-    const q = query(collection(db, 'brands'), orderBy('name'));
+    const q = query(collection(db, "brands"), orderBy("name"));
     const snapshot = await getDocs(q);
     const brands = snapshot.docs.map(docToObject);
     return { data: brands };
@@ -125,9 +137,9 @@ export const createBrand = async (brandData) => {
       ...prepareData(brandData),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
-      isActive: brandData.isActive !== undefined ? brandData.isActive : true
+      isActive: brandData.isActive !== undefined ? brandData.isActive : true,
     };
-    const docRef = await addDoc(collection(db, 'brands'), data);
+    const docRef = await addDoc(collection(db, "brands"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
     throw error;
@@ -138,19 +150,18 @@ export const updateBrand = async (id, brandData) => {
   try {
     const data = {
       ...prepareData(brandData),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'brands', id), data);
+    await updateDoc(doc(db, "brands", id), data);
     return { data: { id, ...data } };
   } catch (error) {
     throw error;
   }
 };
 
-
 export const deleteBrand = async (id) => {
   try {
-    await deleteDoc(doc(db, 'brands', id));
+    await deleteDoc(doc(db, "brands", id));
     return { success: true };
   } catch (error) {
     throw error;
@@ -160,26 +171,25 @@ export const deleteBrand = async (id) => {
 // ==================== CATEGORIES ====================
 export const getCategories = async (filters = {}) => {
   try {
-    let q = collection(db, 'categories');
+    let q = collection(db, "categories");
 
     if (filters.brandId) {
-      q = query(q, where('brandId', '==', filters.brandId));
+      q = query(q, where("brandId", "==", filters.brandId));
     }
 
     if (filters.parentCategoryId) {
-      q = query(q, where('parentCategoryId', '==', filters.parentCategoryId));
+      q = query(q, where("parentCategoryId", "==", filters.parentCategoryId));
     }
 
     if (filters.mainCategoriesOnly) {
-      q = query(q, where('parentCategoryId', '==', null));
+      q = query(q, where("parentCategoryId", "==", null));
     }
 
-    q = query(q, orderBy('name'));
+    q = query(q, orderBy("name"));
     const snapshot = await getDocs(q);
     const categories = snapshot.docs.map(docToObject);
     return { data: categories };
   } catch (error) {
-
     throw error;
   }
 };
@@ -190,13 +200,13 @@ export const createCategory = async (categoryData) => {
       ...prepareData(categoryData),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
-      isActive: categoryData.isActive !== undefined ? categoryData.isActive : true,
-      parentCategoryId: categoryData.parentCategoryId || null
+      isActive:
+        categoryData.isActive !== undefined ? categoryData.isActive : true,
+      parentCategoryId: categoryData.parentCategoryId || null,
     };
-    const docRef = await addDoc(collection(db, 'categories'), data);
+    const docRef = await addDoc(collection(db, "categories"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
@@ -206,22 +216,20 @@ export const updateCategory = async (id, categoryData) => {
     const data = {
       ...prepareData(categoryData),
       updatedAt: Timestamp.now(),
-      parentCategoryId: categoryData.parentCategoryId || null
+      parentCategoryId: categoryData.parentCategoryId || null,
     };
-    await updateDoc(doc(db, 'categories', id), data);
+    await updateDoc(doc(db, "categories", id), data);
     return { data: { id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteCategory = async (id) => {
   try {
-    await deleteDoc(doc(db, 'categories', id));
+    await deleteDoc(doc(db, "categories", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -229,33 +237,36 @@ export const deleteCategory = async (id) => {
 // ==================== INVENTORY ====================
 export const getInventory = async (filters = {}) => {
   try {
-    let q = collection(db, 'inventory');
+    let q = collection(db, "inventory");
 
     if (filters.brand) {
-      q = query(q, where('brandId', '==', filters.brand));
+      q = query(q, where("brandId", "==", filters.brand));
     }
 
     if (filters.category) {
-      q = query(q, where('categoryId', '==', filters.category));
+      q = query(q, where("categoryId", "==", filters.category));
     }
 
     // Prefer latest-first; fall back if createdAt index missing with filters
     try {
-      q = query(q, orderBy('createdAt', 'desc'));
+      q = query(q, orderBy("createdAt", "desc"));
     } catch (_) {
-      q = query(q, orderBy('productName'));
+      q = query(q, orderBy("productName"));
     }
     let snapshot;
     try {
       snapshot = await getDocs(q);
     } catch (indexError) {
       // Composite index missing (brand/category + createdAt) — fetch without order, sort client-side
-      let fallbackQ = collection(db, 'inventory');
+      let fallbackQ = collection(db, "inventory");
       if (filters.brand) {
-        fallbackQ = query(fallbackQ, where('brandId', '==', filters.brand));
+        fallbackQ = query(fallbackQ, where("brandId", "==", filters.brand));
       }
       if (filters.category) {
-        fallbackQ = query(fallbackQ, where('categoryId', '==', filters.category));
+        fallbackQ = query(
+          fallbackQ,
+          where("categoryId", "==", filters.category),
+        );
       }
       snapshot = await getDocs(fallbackQ);
     }
@@ -263,8 +274,9 @@ export const getInventory = async (filters = {}) => {
 
     // Filter low stock items if needed
     if (filters.lowStock) {
-      inventory = inventory.filter(item => {
-        const totalQty = item.sizes?.reduce((sum, s) => sum + (s.quantity || 0), 0) || 0;
+      inventory = inventory.filter((item) => {
+        const totalQty =
+          item.sizes?.reduce((sum, s) => sum + (s.quantity || 0), 0) || 0;
         return totalQty <= (item.lowStockThreshold || 10);
       });
     }
@@ -272,22 +284,22 @@ export const getInventory = async (filters = {}) => {
     // Populate brand and category references
     const [brandsRes, categoriesRes] = await Promise.all([
       getBrands(),
-      getCategories()
+      getCategories(),
     ]);
     const brands = brandsRes.data;
     const categories = categoriesRes.data;
 
-    inventory = inventory.map(item => ({
+    inventory = inventory.map((item) => ({
       ...item,
-      brand: brands.find(b => (b.id || b._id) === item.brandId),
-      category: categories.find(c => (c.id || c._id) === item.categoryId)
+      brand: brands.find((b) => (b.id || b._id) === item.brandId),
+      category: categories.find((c) => (c.id || c._id) === item.categoryId),
     }));
 
     // Latest products on top (createdAt desc); items without date go last
     const toMs = (v) => {
       if (!v) return 0;
       if (v instanceof Date) return v.getTime();
-      if (typeof v?.toDate === 'function') return v.toDate().getTime();
+      if (typeof v?.toDate === "function") return v.toDate().getTime();
       if (v?.seconds != null) return v.seconds * 1000;
       const d = new Date(v);
       return isNaN(d.getTime()) ? 0 : d.getTime();
@@ -296,27 +308,31 @@ export const getInventory = async (filters = {}) => {
 
     return { data: inventory };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const createInventoryItem = async (itemData) => {
   try {
-    console.log('🔍 [API] createInventoryItem - Received itemData:', itemData);
+    console.log("🔍 [API] createInventoryItem - Received itemData:", itemData);
 
     const prepared = prepareData(itemData);
-    console.log('🔍 [API] createInventoryItem - After prepareData:', prepared);
+    console.log("🔍 [API] createInventoryItem - After prepareData:", prepared);
 
     // Remove undefined values - Firestore doesn't accept undefined
     const cleanData = Object.fromEntries(
-      Object.entries(prepared).filter(([_, value]) => value !== undefined)
+      Object.entries(prepared).filter(([_, value]) => value !== undefined),
     );
-    console.log('🔍 [API] createInventoryItem - After removing undefined:', cleanData);
+    console.log(
+      "🔍 [API] createInventoryItem - After removing undefined:",
+      cleanData,
+    );
 
     // Clean productImages array - remove empty/undefined/null elements
     const cleanProductImages = Array.isArray(itemData.productImages)
-      ? itemData.productImages.filter(img => img && img !== '' && img !== undefined && img !== null)
+      ? itemData.productImages.filter(
+        (img) => img && img !== "" && img !== undefined && img !== null,
+      )
       : [];
 
     const data = {
@@ -324,25 +340,35 @@ export const createInventoryItem = async (itemData) => {
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       sizes: itemData.sizes || [],
-      productImages: cleanProductImages
+      productImages: cleanProductImages,
     };
 
     // Only add brandId and categoryId if they are defined
-    if (itemData.brand !== undefined && itemData.brand !== null && itemData.brand !== '') {
+    if (
+      itemData.brand !== undefined &&
+      itemData.brand !== null &&
+      itemData.brand !== ""
+    ) {
       data.brandId = itemData.brand;
     }
-    if (itemData.category !== undefined && itemData.category !== null && itemData.category !== '') {
+    if (
+      itemData.category !== undefined &&
+      itemData.category !== null &&
+      itemData.category !== ""
+    ) {
       data.categoryId = itemData.category;
     }
 
     // Deep clean: Remove undefined from nested objects and arrays
     const deepClean = (obj) => {
       if (Array.isArray(obj)) {
-        return obj.map(item => deepClean(item)).filter(item => item !== undefined && item !== null && item !== '');
+        return obj
+          .map((item) => deepClean(item))
+          .filter((item) => item !== undefined && item !== null && item !== "");
       }
-      if (obj && typeof obj === 'object') {
+      if (obj && typeof obj === "object") {
         const cleaned = {};
-        Object.keys(obj).forEach(key => {
+        Object.keys(obj).forEach((key) => {
           const value = obj[key];
           if (value !== undefined && value !== null) {
             cleaned[key] = deepClean(value);
@@ -357,93 +383,127 @@ export const createInventoryItem = async (itemData) => {
 
     // Final cleanup to remove any undefined values that might have been added
     const finalData = Object.fromEntries(
-      Object.entries(cleanedData).filter(([_, value]) => value !== undefined)
+      Object.entries(cleanedData).filter(([_, value]) => value !== undefined),
     );
 
     // Check for undefined values before sending to Firestore
-    const undefinedFields = Object.entries(finalData).filter(([key, value]) => value === undefined);
+    const undefinedFields = Object.entries(finalData).filter(
+      ([key, value]) => value === undefined,
+    );
     if (undefinedFields.length > 0) {
-      console.error('❌ [API] createInventoryItem - Found undefined fields in finalData:', undefinedFields);
-      console.error('❌ [API] createInventoryItem - Full finalData:', finalData);
+      console.error(
+        "❌ [API] createInventoryItem - Found undefined fields in finalData:",
+        undefinedFields,
+      );
+      console.error(
+        "❌ [API] createInventoryItem - Full finalData:",
+        finalData,
+      );
     } else {
-      console.log('✅ [API] createInventoryItem - No undefined fields, sending to Firestore:', finalData);
+      console.log(
+        "✅ [API] createInventoryItem - No undefined fields, sending to Firestore:",
+        finalData,
+      );
     }
 
-    const docRef = await addDoc(collection(db, 'inventory'), finalData);
+    const docRef = await addDoc(collection(db, "inventory"), finalData);
 
     // Set base purchase & landed cost fields for product costing
-    const totalQty = parseFloat(itemData.initialQuantity) ||
-      (itemData.sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+    const totalQty =
+      parseFloat(itemData.initialQuantity) ||
+      (itemData.sizes || []).reduce(
+        (sum, s) => sum + (parseFloat(s.quantity) || 0),
+        0,
+      );
     const unitInput = parseFloat(itemData.costPerUnit) || 0;
-    const basePurchaseCost = parseFloat(itemData.basePurchaseCost) || (unitInput * totalQty) || 0;
-    const costPerUnit = totalQty > 0
-      ? Math.round(basePurchaseCost / totalQty)
-      : Math.round(unitInput);
-    await updateDoc(doc(db, 'inventory', docRef.id), {
+    const basePurchaseCost =
+      parseFloat(itemData.basePurchaseCost) || unitInput * totalQty || 0;
+    const costPerUnit =
+      totalQty > 0
+        ? Math.round(basePurchaseCost / totalQty)
+        : Math.round(unitInput);
+    await updateDoc(doc(db, "inventory", docRef.id), {
       initialQuantity: totalQty || finalData.initialQuantity,
       basePurchaseCost,
       productExpensesTotal: 0,
       totalLandedCost: basePurchaseCost,
       costPerUnit,
-      fundingOwnAmount: parseFloat(itemData.fundingOwnAmount) >= 0
-        ? parseFloat(itemData.fundingOwnAmount)
-        : Math.max(0, basePurchaseCost - (parseFloat(itemData.fundingInvestorAmount) || 0)),
+      fundingOwnAmount:
+        parseFloat(itemData.fundingOwnAmount) >= 0
+          ? parseFloat(itemData.fundingOwnAmount)
+          : Math.max(
+            0,
+            basePurchaseCost -
+            (parseFloat(itemData.fundingInvestorAmount) || 0),
+          ),
       fundingInvestorId: itemData.fundingInvestorId || null,
-      fundingInvestorName: itemData.fundingInvestorName || '',
-      fundingInvestorAmount: parseFloat(itemData.fundingInvestorAmount) || 0
+      fundingInvestorName: itemData.fundingInvestorName || "",
+      fundingInvestorAmount: parseFloat(itemData.fundingInvestorAmount) || 0,
     });
 
-    return { data: { id: docRef.id, ...finalData, basePurchaseCost, costPerUnit } };
+    return {
+      data: { id: docRef.id, ...finalData, basePurchaseCost, costPerUnit },
+    };
   } catch (error) {
-    console.error('❌ [API] createInventoryItem - Error:', error);
-    console.error('❌ [API] createInventoryItem - Error message:', error.message);
+    console.error("❌ [API] createInventoryItem - Error:", error);
+    console.error(
+      "❌ [API] createInventoryItem - Error message:",
+      error.message,
+    );
     throw error;
   }
 };
 
 export const updateInventoryItem = async (id, itemData) => {
   try {
-    console.log('🔍 [API] updateInventoryItem - Received itemData:', itemData);
-    console.log('🔍 [API] updateInventoryItem - Document ID:', id);
+    console.log("🔍 [API] updateInventoryItem - Received itemData:", itemData);
+    console.log("🔍 [API] updateInventoryItem - Document ID:", id);
 
     const prepared = prepareData(itemData);
-    console.log('🔍 [API] updateInventoryItem - After prepareData:', prepared);
+    console.log("🔍 [API] updateInventoryItem - After prepareData:", prepared);
 
     // Remove undefined values - Firestore doesn't accept undefined
     const cleanData = Object.fromEntries(
-      Object.entries(prepared).filter(([_, value]) => value !== undefined)
+      Object.entries(prepared).filter(([_, value]) => value !== undefined),
     );
-    console.log('🔍 [API] updateInventoryItem - After removing undefined:', cleanData);
+    console.log(
+      "🔍 [API] updateInventoryItem - After removing undefined:",
+      cleanData,
+    );
 
     // Clean productImages array - remove empty/undefined/null elements
     const cleanProductImages = Array.isArray(itemData.productImages)
-      ? itemData.productImages.filter(img => img && img !== '' && img !== undefined && img !== null)
-      : (itemData.productImages || []);
+      ? itemData.productImages.filter(
+        (img) => img && img !== "" && img !== undefined && img !== null,
+      )
+      : itemData.productImages || [];
 
     const data = {
       ...cleanData,
       updatedAt: Timestamp.now(),
-      productImages: cleanProductImages
+      productImages: cleanProductImages,
     };
 
     // Only add brandId and categoryId if they are defined
     const brandId = itemData.brand || itemData.brandId;
-    if (brandId !== undefined && brandId !== null && brandId !== '') {
+    if (brandId !== undefined && brandId !== null && brandId !== "") {
       data.brandId = brandId;
     }
     const categoryId = itemData.category || itemData.categoryId;
-    if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+    if (categoryId !== undefined && categoryId !== null && categoryId !== "") {
       data.categoryId = categoryId;
     }
 
     // Deep clean: Remove undefined from nested objects and arrays
     const deepClean = (obj) => {
       if (Array.isArray(obj)) {
-        return obj.map(item => deepClean(item)).filter(item => item !== undefined && item !== null && item !== '');
+        return obj
+          .map((item) => deepClean(item))
+          .filter((item) => item !== undefined && item !== null && item !== "");
       }
-      if (obj && typeof obj === 'object') {
+      if (obj && typeof obj === "object") {
         const cleaned = {};
-        Object.keys(obj).forEach(key => {
+        Object.keys(obj).forEach((key) => {
           const value = obj[key];
           if (value !== undefined && value !== null) {
             cleaned[key] = deepClean(value);
@@ -458,23 +518,34 @@ export const updateInventoryItem = async (id, itemData) => {
 
     // Final cleanup to remove any undefined values that might have been added
     const finalData = Object.fromEntries(
-      Object.entries(cleanedData).filter(([_, value]) => value !== undefined)
+      Object.entries(cleanedData).filter(([_, value]) => value !== undefined),
     );
 
     // Check for undefined values before sending to Firestore
-    const undefinedFields = Object.entries(finalData).filter(([key, value]) => value === undefined);
+    const undefinedFields = Object.entries(finalData).filter(
+      ([key, value]) => value === undefined,
+    );
     if (undefinedFields.length > 0) {
-      console.error('❌ [API] updateInventoryItem - Found undefined fields in finalData:', undefinedFields);
-      console.error('❌ [API] updateInventoryItem - Full finalData:', finalData);
+      console.error(
+        "❌ [API] updateInventoryItem - Found undefined fields in finalData:",
+        undefinedFields,
+      );
+      console.error(
+        "❌ [API] updateInventoryItem - Full finalData:",
+        finalData,
+      );
     } else {
-      console.log('✅ [API] updateInventoryItem - No undefined fields, sending to Firestore:', finalData);
+      console.log(
+        "✅ [API] updateInventoryItem - No undefined fields, sending to Firestore:",
+        finalData,
+      );
     }
 
-    await updateDoc(doc(db, 'inventory', id), finalData);
+    await updateDoc(doc(db, "inventory", id), finalData);
 
-    if (itemData.basePurchaseCost != null && itemData.basePurchaseCost !== '') {
+    if (itemData.basePurchaseCost != null && itemData.basePurchaseCost !== "") {
       await recalculateInventoryLandedCost(id, {
-        basePurchaseCost: parseFloat(itemData.basePurchaseCost)
+        basePurchaseCost: parseFloat(itemData.basePurchaseCost),
       });
     } else {
       await recalculateInventoryLandedCost(id);
@@ -482,18 +553,129 @@ export const updateInventoryItem = async (id, itemData) => {
 
     return { data: { id, ...finalData } };
   } catch (error) {
-    console.error('❌ [API] updateInventoryItem - Error:', error);
-    console.error('❌ [API] updateInventoryItem - Error message:', error.message);
+    console.error("❌ [API] updateInventoryItem - Error:", error);
+    console.error(
+      "❌ [API] updateInventoryItem - Error message:",
+      error.message,
+    );
     throw error;
   }
 };
 
 export const deleteInventoryItem = async (id) => {
   try {
-    await deleteDoc(doc(db, 'inventory', id));
+    await deleteDoc(doc(db, "inventory", id));
     return { success: true };
   } catch (error) {
+    throw error;
+  }
+};
 
+/**
+ * Physical stock count / write-off.
+ * Sets size quantities to physical counts; missing qty increases writtenOffQty
+ * so capital/profit does not inflate when stock is removed without a sale.
+ */
+export const adjustInventoryStock = async (id, adjustmentData = {}) => {
+  try {
+    const itemRef = doc(db, "inventory", id);
+    const itemSnap = await getDoc(itemRef);
+    if (!itemSnap.exists()) throw new Error("Inventory item not found");
+
+    const item = itemSnap.data();
+    const sizes = Array.isArray(item.sizes) ? [...item.sizes] : [];
+    const costPerUnit = parseFloat(item.costPerUnit) || 0;
+    const counts = Array.isArray(adjustmentData.counts)
+      ? adjustmentData.counts
+      : [];
+
+    if (!counts.length) {
+      throw new Error("Enter at least one physical count");
+    }
+    if (!adjustmentData.reason) {
+      throw new Error("Please select a reason");
+    }
+
+    const lineChanges = [];
+    let totalMissingQty = 0;
+    let totalFoundQty = 0;
+
+    counts.forEach((row) => {
+      const sizeLabel = row.size || "One Size";
+      const physicalQty = Math.max(0, parseInt(row.physicalQty, 10) || 0);
+      let idx = sizes.findIndex((s) => s.size === sizeLabel);
+      if (idx < 0) {
+        sizes.push({ size: sizeLabel, quantity: 0 });
+        idx = sizes.length - 1;
+      }
+      const systemQty = parseFloat(sizes[idx].quantity) || 0;
+      const diff = physicalQty - systemQty;
+      if (diff === 0) return;
+
+      sizes[idx] = { ...sizes[idx], quantity: physicalQty };
+      if (diff < 0) totalMissingQty += Math.abs(diff);
+      if (diff > 0) totalFoundQty += diff;
+
+      lineChanges.push({
+        size: sizeLabel,
+        systemQty,
+        physicalQty,
+        diff,
+      });
+    });
+
+    if (!lineChanges.length) {
+      throw new Error("No stock change — physical matches system");
+    }
+
+    const prevWrittenOff = parseFloat(item.writtenOffQty) || 0;
+    const writtenOffQty = prevWrittenOff + totalMissingQty;
+    const lossAmount = Math.round(totalMissingQty * costPerUnit);
+
+    const adjustmentDate = adjustmentData.date
+      ? Timestamp.fromDate(
+        new Date(
+          adjustmentData.date +
+          (String(adjustmentData.date).includes("T") ? "" : "T12:00:00"),
+        ),
+      )
+      : Timestamp.now();
+
+    const adjustmentEntry = {
+      id: `adj-${Date.now()}`,
+      date: adjustmentDate,
+      reason: adjustmentData.reason || "Missing",
+      notes: adjustmentData.notes || "",
+      addedBy: adjustmentData.addedBy || "",
+      costPerUnit,
+      missingQty: totalMissingQty,
+      foundQty: totalFoundQty,
+      lossAmount,
+      lines: lineChanges,
+    };
+
+    const stockAdjustments = [
+      ...(Array.isArray(item.stockAdjustments) ? item.stockAdjustments : []),
+      adjustmentEntry,
+    ];
+
+    await updateDoc(itemRef, {
+      sizes,
+      writtenOffQty,
+      stockAdjustments,
+      updatedAt: Timestamp.now(),
+    });
+
+    return {
+      data: {
+        id,
+        sizes,
+        writtenOffQty,
+        lossAmount,
+        adjustment: adjustmentEntry,
+      },
+    };
+  } catch (error) {
     throw error;
   }
 };
@@ -501,56 +683,60 @@ export const deleteInventoryItem = async (id) => {
 // ==================== CUSTOMERS ====================
 export const getCustomers = async (filters = {}) => {
   try {
-    let q = collection(db, 'customers');
+    let q = collection(db, "customers");
 
     if (filters.type) {
-      q = query(q, where('customerType', '==', filters.type));
+      q = query(q, where("customerType", "==", filters.type));
     }
 
-    q = query(q, orderBy('name'));
+    q = query(q, orderBy("name"));
     const snapshot = await getDocs(q);
     const customers = snapshot.docs.map(docToObject);
     return { data: customers };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const getCustomer = async (id) => {
   try {
-    const docSnap = await getDoc(doc(db, 'customers', id));
+    const docSnap = await getDoc(doc(db, "customers", id));
     if (!docSnap.exists()) {
-      throw new Error('Customer not found');
+      throw new Error("Customer not found");
     }
 
     const customer = docToObject(docSnap);
 
     // Get customer's sales
     const salesQuery = query(
-      collection(db, 'sales'),
-      where('customerId', '==', id),
-      orderBy('saleDate', 'desc')
+      collection(db, "sales"),
+      where("customerId", "==", id),
+      orderBy("saleDate", "desc"),
     );
     const salesSnapshot = await getDocs(salesQuery);
     const recentSales = salesSnapshot.docs.map(docToObject).slice(0, 10);
 
     // Calculate summary
     const summary = {
-      totalPurchases: recentSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0),
+      totalPurchases: recentSales.reduce(
+        (sum, s) => sum + (s.totalAmount || 0),
+        0,
+      ),
       totalPaid: recentSales.reduce((sum, s) => sum + (s.paidAmount || 0), 0),
-      totalOutstanding: recentSales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0)
+      totalOutstanding: recentSales.reduce(
+        (sum, s) => sum + (s.remainingAmount || 0),
+        0,
+      ),
     };
 
     return {
       data: {
         customer,
         recentSales,
-        summary
-      }
+        summary,
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -560,12 +746,11 @@ export const createCustomer = async (customerData) => {
     const data = {
       ...prepareData(customerData),
       createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    const docRef = await addDoc(collection(db, 'customers'), data);
+    const docRef = await addDoc(collection(db, "customers"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
@@ -574,22 +759,20 @@ export const updateCustomer = async (id, customerData) => {
   try {
     const data = {
       ...prepareData(customerData),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'customers', id), data);
+    await updateDoc(doc(db, "customers", id), data);
     return { data: { id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteCustomer = async (id) => {
   try {
-    await deleteDoc(doc(db, 'customers', id));
+    await deleteDoc(doc(db, "customers", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -597,13 +780,17 @@ export const deleteCustomer = async (id) => {
 // ==================== SALES ====================
 export const getSales = async (filters = {}) => {
   try {
-    let q = query(collection(db, 'sales'));
+    let q = query(collection(db, "sales"));
 
     // Try to use server-side filtering if status is provided
-    if (filters.status && filters.status.trim() !== '') {
-      q = query(q, where('paymentStatus', '==', filters.status), orderBy('saleDate', 'desc'));
+    if (filters.status && filters.status.trim() !== "") {
+      q = query(
+        q,
+        where("paymentStatus", "==", filters.status),
+        orderBy("saleDate", "desc"),
+      );
     } else {
-      q = query(q, orderBy('saleDate', 'desc'));
+      q = query(q, orderBy("saleDate", "desc"));
     }
 
     const snapshot = await getDocs(q);
@@ -613,42 +800,52 @@ export const getSales = async (filters = {}) => {
     const customersRes = await getCustomers();
     const customers = customersRes.data;
 
-    sales = sales.map(sale => ({
+    sales = sales.map((sale) => ({
       ...sale,
-      customer: customers.find(c => (c.id || c._id) === sale.customerId),
-      items: sale.items?.map(it => ({
+      customer: customers.find((c) => (c.id || c._id) === sale.customerId),
+      items: sale.items?.map((it) => ({
         ...it,
-        addedToSaleAt: it.addedToSaleAt ? convertTimestamp(it.addedToSaleAt) : undefined
-      }))
+        addedToSaleAt: it.addedToSaleAt
+          ? convertTimestamp(it.addedToSaleAt)
+          : undefined,
+      })),
     }));
 
     return { data: sales };
   } catch (error) {
     // If the error is about missing index, try fetching all and filtering client-side
-    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
-      console.warn('Firestore index missing. Fetching all sales and filtering client-side.');
+    if (
+      error.message &&
+      (error.message.includes("index") ||
+        error.message.includes("requires an index"))
+    ) {
+      console.warn(
+        "Firestore index missing. Fetching all sales and filtering client-side.",
+      );
       try {
         // Fetch all sales without the status filter
-        let q = query(collection(db, 'sales'), orderBy('saleDate', 'desc'));
+        let q = query(collection(db, "sales"), orderBy("saleDate", "desc"));
         const snapshot = await getDocs(q);
         let sales = snapshot.docs.map(docToObject);
 
         // Client-side filtering
-        if (filters.status && filters.status.trim() !== '') {
-          sales = sales.filter(sale => sale.paymentStatus === filters.status);
+        if (filters.status && filters.status.trim() !== "") {
+          sales = sales.filter((sale) => sale.paymentStatus === filters.status);
         }
 
         // Populate customer references
         const customersRes = await getCustomers();
         const customers = customersRes.data;
 
-        sales = sales.map(sale => ({
+        sales = sales.map((sale) => ({
           ...sale,
-          customer: customers.find(c => (c.id || c._id) === sale.customerId),
-          items: sale.items?.map(it => ({
+          customer: customers.find((c) => (c.id || c._id) === sale.customerId),
+          items: sale.items?.map((it) => ({
             ...it,
-            addedToSaleAt: it.addedToSaleAt ? convertTimestamp(it.addedToSaleAt) : undefined
-          }))
+            addedToSaleAt: it.addedToSaleAt
+              ? convertTimestamp(it.addedToSaleAt)
+              : undefined,
+          })),
         }));
 
         return { data: sales };
@@ -666,10 +863,14 @@ export const createSale = async (saleData) => {
     const invoiceNumber = `INV-${Date.now()}`;
 
     // Calculate totals
-    const totalAmount = saleData.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const totalAmount = saleData.items.reduce(
+      (sum, item) => sum + (item.totalPrice || 0),
+      0,
+    );
     const paidAmount = saleData.paidAmount || 0;
     const remainingAmount = totalAmount - paidAmount;
-    const paymentStatus = remainingAmount === 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+    const paymentStatus =
+      remainingAmount === 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
 
     const data = {
       ...prepareData(saleData),
@@ -679,65 +880,68 @@ export const createSale = async (saleData) => {
       paidAmount,
       remainingAmount,
       paymentStatus,
-      addedBy: saleData.addedBy || '',
+      addedBy: saleData.addedBy || "",
       saleDate: Timestamp.now(),
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
-      items: saleData.items.map(item => ({
+      items: saleData.items.map((item) => ({
         ...item,
         inventoryId: item.inventory,
-        addedToSaleAt: Timestamp.now()
-      }))
+        addedToSaleAt: Timestamp.now(),
+      })),
     };
 
-    const docRef = await addDoc(collection(db, 'sales'), data);
+    const docRef = await addDoc(collection(db, "sales"), data);
 
     // If paid at sale time, record initial payment on sale and in payments collection for reporting
     if (paidAmount > 0) {
-      const paymentMethod = saleData.saleType || 'Cash';
-      const paymentDocRef = await addDoc(collection(db, 'payments'), {
+      const paymentMethod = saleData.saleType || "Cash";
+      const paymentDocRef = await addDoc(collection(db, "payments"), {
         saleId: docRef.id,
         invoiceNumber,
         customerId: saleData.customer || null,
-        customerName: saleData.customerName || '',
+        customerName: saleData.customerName || "",
         amount: paidAmount,
         paymentDate: Timestamp.now(),
-        paymentType: 'Initial Sale',
+        paymentType: "Initial Sale",
         paymentMethod,
-        notes: saleData.notes || '',
-        addedBy: saleData.addedBy || ''
+        notes: saleData.notes || "",
+        addedBy: saleData.addedBy || "",
       });
       const initialPayment = {
         amount: paidAmount,
         paymentMethod,
-        notes: saleData.notes || '',
+        notes: saleData.notes || "",
         date: Timestamp.now(),
-        paymentType: 'Initial Sale',
+        paymentType: "Initial Sale",
         paymentId: paymentDocRef.id,
         collectionId: paymentDocRef.id,
-        addedBy: saleData.addedBy || ''
+        addedBy: saleData.addedBy || "",
       };
-      await updateDoc(doc(db, 'sales', docRef.id), {
+      await updateDoc(doc(db, "sales", docRef.id), {
         payments: [initialPayment],
-        updatedAt: Timestamp.now()
+        updatedAt: Timestamp.now(),
       });
     }
 
     // Update inventory quantities
     for (const item of saleData.items) {
-      const inventoryRef = doc(db, 'inventory', item.inventory);
+      const inventoryRef = doc(db, "inventory", item.inventory);
       const inventoryDoc = await getDoc(inventoryRef);
 
       if (inventoryDoc.exists()) {
         const inventoryData = inventoryDoc.data();
         const sizes = inventoryData.sizes || [];
-        const sizeIndex = sizes.findIndex(s => s.size === item.size);
+        const sizeIndex = sizes.findIndex((s) => s.size === item.size);
 
         if (sizeIndex >= 0) {
           const newSizes = [...sizes];
           newSizes[sizeIndex] = {
             ...newSizes[sizeIndex],
-            quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
+            quantity: Math.max(
+              0,
+              (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0),
+            ),
           };
           await updateDoc(inventoryRef, { sizes: newSizes });
         }
@@ -746,27 +950,30 @@ export const createSale = async (saleData) => {
 
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const updateSale = async (saleId, saleData) => {
   try {
-    const saleRef = doc(db, 'sales', saleId);
+    const saleRef = doc(db, "sales", saleId);
     const saleDoc = await getDoc(saleRef);
 
     if (!saleDoc.exists()) {
-      throw new Error('Sale not found');
+      throw new Error("Sale not found");
     }
 
     const existingSale = saleDoc.data();
 
     // Calculate new totals
-    const totalAmount = saleData.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const totalAmount = saleData.items.reduce(
+      (sum, item) => sum + (item.totalPrice || 0),
+      0,
+    );
     const paidAmount = saleData.paidAmount || existingSale.paidAmount || 0;
     const remainingAmount = totalAmount - paidAmount;
-    const paymentStatus = remainingAmount === 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+    const paymentStatus =
+      remainingAmount === 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
 
     // Get old items to restore inventory
     const oldItems = existingSale.items || [];
@@ -779,8 +986,12 @@ export const updateSale = async (saleId, saleData) => {
     for (const item of oldItems) {
       if (item.inventoryId) {
         const key = `${item.inventoryId}_${item.size}`;
-        const currentChange = inventoryChanges.get(key) || { inventoryId: item.inventoryId, size: item.size, quantity: 0 };
-        currentChange.quantity += (item.quantity || 0); // Add back old quantity
+        const currentChange = inventoryChanges.get(key) || {
+          inventoryId: item.inventoryId,
+          size: item.size,
+          quantity: 0,
+        };
+        currentChange.quantity += item.quantity || 0; // Add back old quantity
         inventoryChanges.set(key, currentChange);
       }
     }
@@ -790,29 +1001,34 @@ export const updateSale = async (saleId, saleData) => {
       const inventoryId = item.inventory || item.inventoryId;
       if (inventoryId) {
         const key = `${inventoryId}_${item.size}`;
-        const currentChange = inventoryChanges.get(key) || { inventoryId, size: item.size, quantity: 0 };
-        currentChange.quantity -= (item.quantity || 0); // Subtract new quantity
+        const currentChange = inventoryChanges.get(key) || {
+          inventoryId,
+          size: item.size,
+          quantity: 0,
+        };
+        currentChange.quantity -= item.quantity || 0; // Subtract new quantity
         inventoryChanges.set(key, currentChange);
       }
     }
 
     // Apply inventory changes (net difference)
     for (const change of inventoryChanges.values()) {
-      if (change.quantity !== 0) { // Only update if there's a change
-        const inventoryRef = doc(db, 'inventory', change.inventoryId);
+      if (change.quantity !== 0) {
+        // Only update if there's a change
+        const inventoryRef = doc(db, "inventory", change.inventoryId);
         const inventoryDoc = await getDoc(inventoryRef);
 
         if (inventoryDoc.exists()) {
           const inventoryData = inventoryDoc.data();
           const sizes = inventoryData.sizes || [];
-          const sizeIndex = sizes.findIndex(s => s.size === change.size);
+          const sizeIndex = sizes.findIndex((s) => s.size === change.size);
 
           if (sizeIndex >= 0) {
             const newSizes = [...sizes];
             const currentQty = newSizes[sizeIndex].quantity || 0;
             newSizes[sizeIndex] = {
               ...newSizes[sizeIndex],
-              quantity: Math.max(0, currentQty + change.quantity) // Add the net change
+              quantity: Math.max(0, currentQty + change.quantity), // Add the net change
             };
             await updateDoc(inventoryRef, { sizes: newSizes });
           }
@@ -826,31 +1042,34 @@ export const updateSale = async (saleId, saleData) => {
     const usedOldIndices = new Set();
     const data = {
       ...Object.fromEntries(
-        Object.entries(preparedData).filter(([_, value]) => value !== undefined)
+        Object.entries(preparedData).filter(
+          ([_, value]) => value !== undefined,
+        ),
       ),
       customerId: saleData.customer || existingSale.customerId || null,
       totalAmount,
       paidAmount,
       remainingAmount,
       paymentStatus,
-      items: saleData.items.map(item => {
+      items: saleData.items.map((item) => {
         const invId = item.inventory || item.inventoryId;
         const matchedIdx = oldItemsList.findIndex(
           (oi, idx) =>
             !usedOldIndices.has(idx) &&
             oi.inventoryId === invId &&
-            oi.size === item.size
+            oi.size === item.size,
         );
         let addedToSaleAt;
         if (matchedIdx >= 0) {
           usedOldIndices.add(matchedIdx);
-          addedToSaleAt = oldItemsList[matchedIdx].addedToSaleAt || Timestamp.now();
+          addedToSaleAt =
+            oldItemsList[matchedIdx].addedToSaleAt || Timestamp.now();
         } else {
           addedToSaleAt = Timestamp.now();
         }
         return {
-          productName: item.productName || '',
-          size: item.size || '',
+          productName: item.productName || "",
+          size: item.size || "",
           quantity: item.quantity || 0,
           unitPrice: item.unitPrice || 0,
           totalPrice: item.totalPrice || 0,
@@ -859,17 +1078,20 @@ export const updateSale = async (saleId, saleData) => {
           inventoryCostPrice: item.inventoryCostPrice || null,
           profitPerUnit: item.profitPerUnit || null,
           totalProfit: item.totalProfit || null,
-          addedToSaleAt
+          addedToSaleAt,
         };
       }),
-      saleType: saleData.saleType || existingSale.saleType || 'Cash',
-      notes: saleData.notes !== undefined ? saleData.notes : (existingSale.notes || ''),
-      updatedAt: Timestamp.now()
+      saleType: saleData.saleType || existingSale.saleType || "Cash",
+      notes:
+        saleData.notes !== undefined
+          ? saleData.notes
+          : existingSale.notes || "",
+      updatedAt: Timestamp.now(),
     };
 
     // Remove any remaining undefined values
     const cleanData = Object.fromEntries(
-      Object.entries(data).filter(([_, value]) => value !== undefined)
+      Object.entries(data).filter(([_, value]) => value !== undefined),
     );
 
     await updateDoc(saleRef, cleanData);
@@ -882,50 +1104,61 @@ export const updateSale = async (saleId, saleData) => {
 
 export const addItemsToSale = async (saleId, items) => {
   try {
-    const saleRef = doc(db, 'sales', saleId);
+    const saleRef = doc(db, "sales", saleId);
     const saleDoc = await getDoc(saleRef);
 
     if (!saleDoc.exists()) {
-      throw new Error('Sale not found');
+      throw new Error("Sale not found");
     }
 
     const saleData = saleDoc.data();
     const existingItems = saleData.items || [];
-    const newItems = items.map(item => ({
+    const newItems = items.map((item) => ({
       ...item,
       inventoryId: item.inventory,
-      addedToSaleAt: Timestamp.now()
+      addedToSaleAt: Timestamp.now(),
     }));
 
     const updatedItems = [...existingItems, ...newItems];
-    const additionalAmount = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const additionalAmount = items.reduce(
+      (sum, item) => sum + (item.totalPrice || 0),
+      0,
+    );
     const newTotalAmount = (saleData.totalAmount || 0) + additionalAmount;
     const newRemainingAmount = newTotalAmount - (saleData.paidAmount || 0);
-    const newPaymentStatus = newRemainingAmount === 0 ? 'Paid' : saleData.paidAmount > 0 ? 'Partial' : 'Unpaid';
+    const newPaymentStatus =
+      newRemainingAmount === 0
+        ? "Paid"
+        : saleData.paidAmount > 0
+          ? "Partial"
+          : "Unpaid";
 
     await updateDoc(saleRef, {
       items: updatedItems,
       totalAmount: newTotalAmount,
       remainingAmount: newRemainingAmount,
       paymentStatus: newPaymentStatus,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     // Update inventory
     for (const item of items) {
-      const inventoryRef = doc(db, 'inventory', item.inventory);
+      const inventoryRef = doc(db, "inventory", item.inventory);
       const inventoryDoc = await getDoc(inventoryRef);
 
       if (inventoryDoc.exists()) {
         const inventoryData = inventoryDoc.data();
         const sizes = inventoryData.sizes || [];
-        const sizeIndex = sizes.findIndex(s => s.size === item.size);
+        const sizeIndex = sizes.findIndex((s) => s.size === item.size);
 
         if (sizeIndex >= 0) {
           const newSizes = [...sizes];
           newSizes[sizeIndex] = {
             ...newSizes[sizeIndex],
-            quantity: Math.max(0, (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0))
+            quantity: Math.max(
+              0,
+              (newSizes[sizeIndex].quantity || 0) - (item.quantity || 0),
+            ),
           };
           await updateDoc(inventoryRef, { sizes: newSizes });
         }
@@ -934,67 +1167,109 @@ export const addItemsToSale = async (saleId, items) => {
 
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const addPayment = async (saleId, paymentData) => {
   try {
-    const saleRef = doc(db, 'sales', saleId);
+    const saleRef = doc(db, "sales", saleId);
     const saleDoc = await getDoc(saleRef);
 
     if (!saleDoc.exists()) {
-      throw new Error('Sale not found');
+      throw new Error("Sale not found");
     }
 
     const saleData = saleDoc.data();
     const paymentAmount = paymentData.amount || 0;
-    const paymentMethod = paymentData.paymentMethod || paymentData.method || 'Cash';
+    const paymentMethod =
+      paymentData.paymentMethod || paymentData.method || "Cash";
     const newPaidAmount = (saleData.paidAmount || 0) + paymentAmount;
     const newRemainingAmount = (saleData.totalAmount || 0) - newPaidAmount;
-    const newPaymentStatus = newRemainingAmount === 0 ? 'Paid' : newPaidAmount > 0 ? 'Partial' : 'Unpaid';
+    const newPaymentStatus =
+      newRemainingAmount === 0
+        ? "Paid"
+        : newPaidAmount > 0
+          ? "Partial"
+          : "Unpaid";
 
     // Get customer name for payment record
-    let customerName = saleData.customerName || '';
+    let customerName = saleData.customerName || "";
     if (saleData.customerId) {
       try {
-        const custDoc = await getDoc(doc(db, 'customers', saleData.customerId));
-        if (custDoc.exists()) customerName = custDoc.data().name || customerName;
+        const custDoc = await getDoc(doc(db, "customers", saleData.customerId));
+        if (custDoc.exists())
+          customerName = custDoc.data().name || customerName;
       } catch (_) { }
     }
 
-    const recoveryDate = paymentData.paymentDate || paymentData.date
-      ? Timestamp.fromDate(new Date(
-        (paymentData.paymentDate || paymentData.date) +
-        ((String(paymentData.paymentDate || paymentData.date).includes('T')) ? '' : 'T12:00:00')
-      ))
-      : Timestamp.now();
+    const recoveryDate =
+      paymentData.paymentDate || paymentData.date
+        ? Timestamp.fromDate(
+          new Date(
+            (paymentData.paymentDate || paymentData.date) +
+            (String(paymentData.paymentDate || paymentData.date).includes(
+              "T",
+            )
+              ? ""
+              : "T12:00:00"),
+          ),
+        )
+        : Timestamp.now();
 
     const recoveryPayment = {
       amount: paymentAmount,
       paymentMethod,
-      notes: paymentData.notes || '',
+      notes: paymentData.notes || "",
       date: recoveryDate,
-      paymentType: 'Recovery',
-      addedBy: paymentData.addedBy || ''
+      paymentType: "Recovery",
+      addedBy: paymentData.addedBy || "",
     };
+
+    // Optional: tag recovery against a specific sale line / product
+    if (paymentData.againstInventoryId) {
+      recoveryPayment.againstInventoryId = String(
+        paymentData.againstInventoryId,
+      );
+      recoveryPayment.againstProductName = paymentData.againstProductName || "";
+      recoveryPayment.againstSize = paymentData.againstSize || "";
+      if (
+        paymentData.againstLineIndex !== "" &&
+        paymentData.againstLineIndex != null &&
+        !Number.isNaN(Number(paymentData.againstLineIndex))
+      ) {
+        recoveryPayment.againstLineIndex = Number(paymentData.againstLineIndex);
+      }
+    }
 
     const payments = saleData.payments || [];
 
     // Record in payments collection for reports (daily/monthly payment totals)
-    const paymentDocRef = await addDoc(collection(db, 'payments'), {
+    const paymentDocPayload = {
       saleId,
-      invoiceNumber: saleData.invoiceNumber || '',
+      invoiceNumber: saleData.invoiceNumber || "",
       customerId: saleData.customerId || null,
       customerName,
       amount: paymentAmount,
       paymentDate: recoveryDate,
-      paymentType: 'Recovery',
+      paymentType: "Recovery",
       paymentMethod,
-      notes: paymentData.notes || '',
-      addedBy: paymentData.addedBy || ''
-    });
+      notes: paymentData.notes || "",
+      addedBy: paymentData.addedBy || "",
+    };
+    if (recoveryPayment.againstInventoryId) {
+      paymentDocPayload.againstInventoryId = recoveryPayment.againstInventoryId;
+      paymentDocPayload.againstProductName =
+        recoveryPayment.againstProductName || "";
+      paymentDocPayload.againstSize = recoveryPayment.againstSize || "";
+      if (typeof recoveryPayment.againstLineIndex === "number") {
+        paymentDocPayload.againstLineIndex = recoveryPayment.againstLineIndex;
+      }
+    }
+    const paymentDocRef = await addDoc(
+      collection(db, "payments"),
+      paymentDocPayload,
+    );
 
     recoveryPayment.paymentId = paymentDocRef.id;
     recoveryPayment.collectionId = paymentDocRef.id;
@@ -1005,46 +1280,63 @@ export const addPayment = async (saleId, paymentData) => {
       remainingAmount: newRemainingAmount,
       paymentStatus: newPaymentStatus,
       payments,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
 
 const recalculateSalePaymentTotals = (totalAmount, payments) => {
-  const paidAmount = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const paidAmount = payments.reduce(
+    (s, p) => s + (parseFloat(p.amount) || 0),
+    0,
+  );
   const total = parseFloat(totalAmount) || 0;
   const remainingAmount = Math.max(0, total - paidAmount);
-  const paymentStatus = remainingAmount <= 0 && paidAmount > 0 ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Unpaid';
+  const paymentStatus =
+    remainingAmount <= 0 && paidAmount > 0
+      ? "Paid"
+      : paidAmount > 0
+        ? "Partial"
+        : "Unpaid";
   return { paidAmount, remainingAmount, paymentStatus };
 };
 
 const findSalePaymentIndex = (payments, paymentKey) => {
-  if (typeof paymentKey === 'string' && paymentKey.startsWith('idx-')) {
-    const idx = parseInt(paymentKey.replace('idx-', ''), 10);
+  if (typeof paymentKey === "string" && paymentKey.startsWith("idx-")) {
+    const idx = parseInt(paymentKey.replace("idx-", ""), 10);
     return Number.isNaN(idx) ? -1 : idx;
   }
-  return payments.findIndex(p => p.paymentId === paymentKey || p.collectionId === paymentKey);
+  return payments.findIndex(
+    (p) => p.paymentId === paymentKey || p.collectionId === paymentKey,
+  );
 };
 
 const findPaymentsCollectionDoc = async (saleId, salePayment) => {
   const collId = salePayment.collectionId || salePayment.paymentId;
   if (collId) {
-    const d = await getDoc(doc(db, 'payments', collId));
+    const d = await getDoc(doc(db, "payments", collId));
     if (d.exists()) return d;
   }
-  const snap = await getDocs(query(collection(db, 'payments'), where('saleId', '==', saleId)));
-  const payDate = salePayment.date?.toDate ? salePayment.date.toDate() : new Date(salePayment.date || 0);
+  const snap = await getDocs(
+    query(collection(db, "payments"), where("saleId", "==", saleId)),
+  );
+  const payDate = salePayment.date?.toDate
+    ? salePayment.date.toDate()
+    : new Date(salePayment.date || 0);
   const amount = parseFloat(salePayment.amount) || 0;
   for (const d of snap.docs) {
     const data = d.data();
-    const dDate = data.paymentDate?.toDate ? data.paymentDate.toDate() : new Date(data.paymentDate);
-    if (Math.abs((parseFloat(data.amount) || 0) - amount) < 0.01 &&
-      Math.abs(dDate.getTime() - payDate.getTime()) < 120000) {
+    const dDate = data.paymentDate?.toDate
+      ? data.paymentDate.toDate()
+      : new Date(data.paymentDate);
+    if (
+      Math.abs((parseFloat(data.amount) || 0) - amount) < 0.01 &&
+      Math.abs(dDate.getTime() - payDate.getTime()) < 120000
+    ) {
       return d;
     }
   }
@@ -1053,49 +1345,117 @@ const findPaymentsCollectionDoc = async (saleId, salePayment) => {
 
 export const updateSalePayment = async (saleId, paymentKey, paymentData) => {
   try {
-    const saleRef = doc(db, 'sales', saleId);
+    const saleRef = doc(db, "sales", saleId);
     const saleDoc = await getDoc(saleRef);
-    if (!saleDoc.exists()) throw new Error('Sale not found');
+    if (!saleDoc.exists()) throw new Error("Sale not found");
 
     const saleData = saleDoc.data();
     const payments = [...(saleData.payments || [])];
     const idx = findSalePaymentIndex(payments, paymentKey);
-    if (idx < 0 || idx >= payments.length) throw new Error('Payment not found');
+    if (idx < 0 || idx >= payments.length) throw new Error("Payment not found");
 
     const oldPayment = payments[idx];
     const updatedPayment = {
       ...oldPayment,
       amount: parseFloat(paymentData.amount) || 0,
-      paymentMethod: paymentData.paymentMethod || paymentData.method || oldPayment.paymentMethod || 'Cash',
-      notes: paymentData.notes != null ? paymentData.notes : (oldPayment.notes || ''),
-      paymentType: oldPayment.paymentType || 'Recovery',
-      editedBy: paymentData.editedBy || paymentData.addedBy || oldPayment.editedBy || ''
+      paymentMethod:
+        paymentData.paymentMethod ||
+        paymentData.method ||
+        oldPayment.paymentMethod ||
+        "Cash",
+      notes:
+        paymentData.notes != null ? paymentData.notes : oldPayment.notes || "",
+      paymentType: oldPayment.paymentType || "Recovery",
+      editedBy:
+        paymentData.editedBy ||
+        paymentData.addedBy ||
+        oldPayment.editedBy ||
+        "",
     };
     if (paymentData.date) {
       updatedPayment.date = Timestamp.fromDate(new Date(paymentData.date));
     }
 
+    // Optional against-product: pass againstInventoryId '' to clear
+    if (
+      Object.prototype.hasOwnProperty.call(paymentData, "againstInventoryId")
+    ) {
+      if (paymentData.againstInventoryId) {
+        updatedPayment.againstInventoryId = String(
+          paymentData.againstInventoryId,
+        );
+        updatedPayment.againstProductName =
+          paymentData.againstProductName || "";
+        updatedPayment.againstSize = paymentData.againstSize || "";
+        if (
+          paymentData.againstLineIndex !== "" &&
+          paymentData.againstLineIndex != null &&
+          !Number.isNaN(Number(paymentData.againstLineIndex))
+        ) {
+          updatedPayment.againstLineIndex = Number(
+            paymentData.againstLineIndex,
+          );
+        } else {
+          delete updatedPayment.againstLineIndex;
+        }
+      } else {
+        delete updatedPayment.againstInventoryId;
+        delete updatedPayment.againstProductName;
+        delete updatedPayment.againstSize;
+        delete updatedPayment.againstLineIndex;
+      }
+    }
+
     payments[idx] = updatedPayment;
-    const { paidAmount, remainingAmount, paymentStatus } = recalculateSalePaymentTotals(saleData.totalAmount, payments);
+    const { paidAmount, remainingAmount, paymentStatus } =
+      recalculateSalePaymentTotals(saleData.totalAmount, payments);
 
     await updateDoc(saleRef, {
       payments,
       paidAmount,
       remainingAmount,
       paymentStatus,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     const collDoc = await findPaymentsCollectionDoc(saleId, oldPayment);
     if (collDoc) {
-      await updateDoc(doc(db, 'payments', collDoc.id), {
+      const collectionUpdate = {
         amount: updatedPayment.amount,
         paymentMethod: updatedPayment.paymentMethod,
         notes: updatedPayment.notes,
         paymentDate: updatedPayment.date || oldPayment.date || Timestamp.now(),
-        editedBy: updatedPayment.editedBy || '',
-        updatedAt: Timestamp.now()
-      });
+        editedBy: updatedPayment.editedBy || "",
+        updatedAt: Timestamp.now(),
+      };
+      if (
+        Object.prototype.hasOwnProperty.call(paymentData, "againstInventoryId")
+      ) {
+        if (updatedPayment.againstInventoryId) {
+          collectionUpdate.againstInventoryId =
+            updatedPayment.againstInventoryId;
+          collectionUpdate.againstProductName =
+            updatedPayment.againstProductName || "";
+          collectionUpdate.againstSize = updatedPayment.againstSize || "";
+          if (typeof updatedPayment.againstLineIndex === "number") {
+            collectionUpdate.againstLineIndex = updatedPayment.againstLineIndex;
+          }
+        } else {
+          collectionUpdate.againstInventoryId = null;
+          collectionUpdate.againstProductName = null;
+          collectionUpdate.againstSize = null;
+          collectionUpdate.againstLineIndex = null;
+        }
+      }
+      await updateDoc(doc(db, "payments", collDoc.id), collectionUpdate);
+      if (!updatedPayment.collectionId && !updatedPayment.paymentId) {
+        payments[idx] = {
+          ...updatedPayment,
+          collectionId: collDoc.id,
+          paymentId: collDoc.id,
+        };
+        await updateDoc(saleRef, { payments, updatedAt: Timestamp.now() });
+      }
     }
 
     return { success: true };
@@ -1106,30 +1466,31 @@ export const updateSalePayment = async (saleId, paymentKey, paymentData) => {
 
 export const deleteSalePayment = async (saleId, paymentKey) => {
   try {
-    const saleRef = doc(db, 'sales', saleId);
+    const saleRef = doc(db, "sales", saleId);
     const saleDoc = await getDoc(saleRef);
-    if (!saleDoc.exists()) throw new Error('Sale not found');
+    if (!saleDoc.exists()) throw new Error("Sale not found");
 
     const saleData = saleDoc.data();
     const payments = [...(saleData.payments || [])];
     const idx = findSalePaymentIndex(payments, paymentKey);
-    if (idx < 0 || idx >= payments.length) throw new Error('Payment not found');
+    if (idx < 0 || idx >= payments.length) throw new Error("Payment not found");
 
     const removedPayment = payments[idx];
     payments.splice(idx, 1);
-    const { paidAmount, remainingAmount, paymentStatus } = recalculateSalePaymentTotals(saleData.totalAmount, payments);
+    const { paidAmount, remainingAmount, paymentStatus } =
+      recalculateSalePaymentTotals(saleData.totalAmount, payments);
 
     await updateDoc(saleRef, {
       payments,
       paidAmount,
       remainingAmount,
       paymentStatus,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     const collDoc = await findPaymentsCollectionDoc(saleId, removedPayment);
     if (collDoc) {
-      await deleteDoc(doc(db, 'payments', collDoc.id));
+      await deleteDoc(doc(db, "payments", collDoc.id));
     }
 
     return { success: true };
@@ -1145,46 +1506,59 @@ export const deleteSalePayment = async (saleId, paymentKey) => {
  */
 export const getPayments = async (filters = {}) => {
   try {
-    const paymentsRef = collection(db, 'payments');
+    const paymentsRef = collection(db, "payments");
     let q;
 
     if (filters.startDate || filters.endDate) {
       const start = filters.startDate
-        ? Timestamp.fromDate(new Date(filters.startDate + 'T00:00:00'))
+        ? Timestamp.fromDate(new Date(filters.startDate + "T00:00:00"))
         : Timestamp.fromDate(new Date(0));
       const end = filters.endDate
-        ? Timestamp.fromDate(new Date(filters.endDate + 'T23:59:59.999'))
+        ? Timestamp.fromDate(new Date(filters.endDate + "T23:59:59.999"))
         : Timestamp.now();
       q = query(
         paymentsRef,
-        where('paymentDate', '>=', start),
-        where('paymentDate', '<=', end),
-        orderBy('paymentDate', 'desc')
+        where("paymentDate", ">=", start),
+        where("paymentDate", "<=", end),
+        orderBy("paymentDate", "desc"),
       );
     } else {
-      q = query(paymentsRef, orderBy('paymentDate', 'desc'));
+      q = query(paymentsRef, orderBy("paymentDate", "desc"));
     }
 
     const snapshot = await getDocs(q);
     const payments = snapshot.docs.map(paymentToObject);
     return { data: payments };
   } catch (error) {
-    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
-      console.warn('Payments index missing. Fetching all payments and filtering client-side.');
-      const snapshot = await getDocs(collection(db, 'payments'));
+    if (
+      error.message &&
+      (error.message.includes("index") ||
+        error.message.includes("requires an index"))
+    ) {
+      console.warn(
+        "Payments index missing. Fetching all payments and filtering client-side.",
+      );
+      const snapshot = await getDocs(collection(db, "payments"));
       let payments = snapshot.docs.map(paymentToObject);
       if (filters.startDate || filters.endDate) {
-        const startStr = filters.startDate || '1970-01-01';
-        const endStr = filters.endDate || '9999-12-31';
-        payments = payments.filter(p => {
+        const startStr = filters.startDate || "1970-01-01";
+        const endStr = filters.endDate || "9999-12-31";
+        payments = payments.filter((p) => {
           const d = p.paymentDate;
-          const date = d instanceof Date ? d : (d?.toDate ? d.toDate() : new Date(d));
-          const key = date.toISOString().split('T')[0];
+          const date =
+            d instanceof Date ? d : d?.toDate ? d.toDate() : new Date(d);
+          const key = date.toISOString().split("T")[0];
           return key >= startStr && key <= endStr;
         });
         payments.sort((a, b) => {
-          const da = a.paymentDate instanceof Date ? a.paymentDate : (a.paymentDate?.toDate?.() || new Date(a.paymentDate));
-          const db_ = b.paymentDate instanceof Date ? b.paymentDate : (b.paymentDate?.toDate?.() || new Date(b.paymentDate));
+          const da =
+            a.paymentDate instanceof Date
+              ? a.paymentDate
+              : a.paymentDate?.toDate?.() || new Date(a.paymentDate);
+          const db_ =
+            b.paymentDate instanceof Date
+              ? b.paymentDate
+              : b.paymentDate?.toDate?.() || new Date(b.paymentDate);
           return db_.getTime() - da.getTime();
         });
       }
@@ -1196,7 +1570,7 @@ export const getPayments = async (filters = {}) => {
 
 export const deleteSale = async (id) => {
   try {
-    const saleRef = doc(db, 'sales', id);
+    const saleRef = doc(db, "sales", id);
     const saleDoc = await getDoc(saleRef);
 
     if (saleDoc.exists()) {
@@ -1204,19 +1578,20 @@ export const deleteSale = async (id) => {
 
       // Restore inventory
       for (const item of saleData.items || []) {
-        const inventoryRef = doc(db, 'inventory', item.inventoryId);
+        const inventoryRef = doc(db, "inventory", item.inventoryId);
         const inventoryDoc = await getDoc(inventoryRef);
 
         if (inventoryDoc.exists()) {
           const inventoryData = inventoryDoc.data();
           const sizes = inventoryData.sizes || [];
-          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+          const sizeIndex = sizes.findIndex((s) => s.size === item.size);
 
           if (sizeIndex >= 0) {
             const newSizes = [...sizes];
             newSizes[sizeIndex] = {
               ...newSizes[sizeIndex],
-              quantity: (newSizes[sizeIndex].quantity || 0) + (item.quantity || 0)
+              quantity:
+                (newSizes[sizeIndex].quantity || 0) + (item.quantity || 0),
             };
             await updateDoc(inventoryRef, { sizes: newSizes });
           }
@@ -1227,17 +1602,20 @@ export const deleteSale = async (id) => {
     // Remove related payment docs so Reports "Payment breakdown" stays in sync
     try {
       const paySnap = await getDocs(
-        query(collection(db, 'payments'), where('saleId', '==', id))
+        query(collection(db, "payments"), where("saleId", "==", id)),
       );
       await Promise.all(paySnap.docs.map((d) => deleteDoc(d.ref)));
     } catch (payErr) {
-      console.warn('Could not delete related payment docs for sale:', id, payErr);
+      console.warn(
+        "Could not delete related payment docs for sale:",
+        id,
+        payErr,
+      );
     }
 
     await deleteDoc(saleRef);
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1245,7 +1623,10 @@ export const deleteSale = async (id) => {
 // ==================== PRODUCTION ====================
 export const getProductions = async () => {
   try {
-    const q = query(collection(db, 'productions'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, "productions"),
+      orderBy("createdAt", "desc"),
+    );
     const snapshot = await getDocs(q);
     let productions = snapshot.docs.map(docToObject);
 
@@ -1253,14 +1634,13 @@ export const getProductions = async () => {
     const categoriesRes = await getCategories();
     const categories = categoriesRes.data;
 
-    productions = productions.map(prod => ({
+    productions = productions.map((prod) => ({
       ...prod,
-      category: categories.find(c => (c.id || c._id) === prod.category)
+      category: categories.find((c) => (c.id || c._id) === prod.category),
     }));
 
     return { data: productions };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1274,12 +1654,11 @@ export const createProduction = async (productionData) => {
       category: productionData.category,
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
-      addedToInventory: false
+      addedToInventory: false,
     };
-    const docRef = await addDoc(collection(db, 'productions'), data);
+    const docRef = await addDoc(collection(db, "productions"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1288,23 +1667,22 @@ export const updateProduction = async (id, productionData) => {
   try {
     const data = {
       ...prepareData(productionData),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'productions', id), data);
+    await updateDoc(doc(db, "productions", id), data);
     return { data: { id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const moveToInventory = async (productionId, { brandId }) => {
   try {
-    const prodRef = doc(db, 'productions', productionId);
+    const prodRef = doc(db, "productions", productionId);
     const prodDoc = await getDoc(prodRef);
 
     if (!prodDoc.exists()) {
-      throw new Error('Production batch not found');
+      throw new Error("Production batch not found");
     }
 
     const prodData = prodDoc.data();
@@ -1320,31 +1698,29 @@ export const moveToInventory = async (productionId, { brandId }) => {
       lowStockThreshold: 10,
       notes: `From production batch: ${prodData.batchName}`,
       createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
 
-    await addDoc(collection(db, 'inventory'), inventoryData);
+    await addDoc(collection(db, "inventory"), inventoryData);
 
     // Update production status
     await updateDoc(prodRef, {
-      status: 'Added to Stock',
+      status: "Added to Stock",
       addedToInventory: true,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteProduction = async (id) => {
   try {
-    await deleteDoc(doc(db, 'productions', id));
+    await deleteDoc(doc(db, "productions", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1352,12 +1728,13 @@ export const deleteProduction = async (id) => {
 // ==================== STATS ====================
 export const getDashboardStats = async () => {
   try {
-    const [inventoryRes, salesRes, customersRes, productionsRes] = await Promise.all([
-      getInventory(),
-      getSales(),
-      getCustomers(),
-      getProductions()
-    ]);
+    const [inventoryRes, salesRes, customersRes, productionsRes] =
+      await Promise.all([
+        getInventory(),
+        getSales(),
+        getCustomers(),
+        getProductions(),
+      ]);
 
     const inventory = inventoryRes.data;
     const sales = salesRes.data;
@@ -1366,36 +1743,48 @@ export const getDashboardStats = async () => {
 
     // Calculate inventory stats
     const totalStock = inventory.reduce((sum, item) => {
-      return sum + (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0);
+      return (
+        sum +
+        (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0)
+      );
     }, 0);
 
     const totalValue = inventory.reduce((sum, item) => {
-      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
-      return sum + (qty * (item.costPerUnit || 0));
+      const qty =
+        item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+      return sum + qty * (item.costPerUnit || 0);
     }, 0);
 
-    const lowStockItems = inventory.filter(item => {
-      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+    const lowStockItems = inventory.filter((item) => {
+      const qty =
+        item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
       return qty <= (item.lowStockThreshold || 10);
     });
 
     // Calculate sales stats
     const totalSales = sales.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
     const totalPaid = sales.reduce((sum, s) => sum + (s.paidAmount || 0), 0);
-    const totalCredit = sales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0);
+    const totalCredit = sales.reduce(
+      (sum, s) => sum + (s.remainingAmount || 0),
+      0,
+    );
 
     // Sales by date (last 30 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const recentSales = sales.filter(s => {
-      const saleDate = s.saleDate?.toDate ? s.saleDate.toDate() : new Date(s.saleDate);
+    const recentSales = sales.filter((s) => {
+      const saleDate = s.saleDate?.toDate
+        ? s.saleDate.toDate()
+        : new Date(s.saleDate);
       return saleDate >= thirtyDaysAgo;
     });
 
     const salesByDate = {};
-    recentSales.forEach(sale => {
-      const date = sale.saleDate?.toDate ? sale.saleDate.toDate() : new Date(sale.saleDate);
-      const dateKey = date.toISOString().split('T')[0];
+    recentSales.forEach((sale) => {
+      const date = sale.saleDate?.toDate
+        ? sale.saleDate.toDate()
+        : new Date(sale.saleDate);
+      const dateKey = date.toISOString().split("T")[0];
       if (!salesByDate[dateKey]) {
         salesByDate[dateKey] = { totalSales: 0, count: 0 };
       }
@@ -1405,10 +1794,13 @@ export const getDashboardStats = async () => {
 
     // Top products
     const productSales = {};
-    sales.forEach(sale => {
-      sale.items?.forEach(item => {
+    sales.forEach((sale) => {
+      sale.items?.forEach((item) => {
         if (!productSales[item.productName]) {
-          productSales[item.productName] = { totalQuantity: 0, totalRevenue: 0 };
+          productSales[item.productName] = {
+            totalQuantity: 0,
+            totalRevenue: 0,
+          };
         }
         productSales[item.productName].totalQuantity += item.quantity || 0;
         productSales[item.productName].totalRevenue += item.totalPrice || 0;
@@ -1426,34 +1818,35 @@ export const getDashboardStats = async () => {
           totalStock,
           totalValue,
           totalProducts: inventory.length,
-          lowStockItems: lowStockItems.map(item => ({
+          lowStockItems: lowStockItems.map((item) => ({
             productName: item.productName,
-            brand: item.brand?.name || 'N/A',
-            category: item.category?.name || 'N/A',
-            quantity: item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0
-          }))
+            brand: item.brand?.name || "N/A",
+            category: item.category?.name || "N/A",
+            quantity:
+              item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0,
+          })),
         },
         sales: {
           totalSales,
           totalPaid,
           totalCredit,
-          totalTransactions: sales.length
+          totalTransactions: sales.length,
         },
         customers: {
-          total: customers.length
+          total: customers.length,
         },
         production: {
-          inProcess: productions.filter(p => p.status === 'In Process').length
+          inProcess: productions.filter((p) => p.status === "In Process")
+            .length,
         },
         salesByDate: Object.entries(salesByDate).map(([date, stats]) => ({
           _id: date,
-          ...stats
+          ...stats,
         })),
-        topProducts
-      }
+        topProducts,
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1467,12 +1860,14 @@ export const getSalesStats = async () => {
       data: {
         totalSales: sales.reduce((sum, s) => sum + (s.totalAmount || 0), 0),
         totalPaid: sales.reduce((sum, s) => sum + (s.paidAmount || 0), 0),
-        totalCredit: sales.reduce((sum, s) => sum + (s.remainingAmount || 0), 0),
-        totalTransactions: sales.length
-      }
+        totalCredit: sales.reduce(
+          (sum, s) => sum + (s.remainingAmount || 0),
+          0,
+        ),
+        totalTransactions: sales.length,
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1483,23 +1878,26 @@ export const getInventoryStats = async () => {
     const inventory = inventoryRes.data;
 
     const totalStock = inventory.reduce((sum, item) => {
-      return sum + (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0);
+      return (
+        sum +
+        (item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0)
+      );
     }, 0);
 
     const totalValue = inventory.reduce((sum, item) => {
-      const qty = item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
-      return sum + (qty * (item.costPerUnit || 0));
+      const qty =
+        item.sizes?.reduce((s, size) => s + (size.quantity || 0), 0) || 0;
+      return sum + qty * (item.costPerUnit || 0);
     }, 0);
 
     return {
       data: {
         totalStock,
         totalValue,
-        totalProducts: inventory.length
-      }
+        totalProducts: inventory.length,
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1507,12 +1905,11 @@ export const getInventoryStats = async () => {
 // ==================== SLIDERS ====================
 export const getSliders = async () => {
   try {
-    const q = query(collection(db, 'sliders'), orderBy('order', 'asc'));
+    const q = query(collection(db, "sliders"), orderBy("order", "asc"));
     const snapshot = await getDocs(q);
     const sliders = snapshot.docs.map(docToObject);
     return { data: sliders };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1524,12 +1921,11 @@ export const createSlider = async (sliderData) => {
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       status: sliderData.status !== undefined ? sliderData.status : true,
-      order: sliderData.order || 0
+      order: sliderData.order || 0,
     };
-    const docRef = await addDoc(collection(db, 'sliders'), data);
+    const docRef = await addDoc(collection(db, "sliders"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1538,22 +1934,20 @@ export const updateSlider = async (id, sliderData) => {
   try {
     const data = {
       ...prepareData(sliderData),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'sliders', id), data);
+    await updateDoc(doc(db, "sliders", id), data);
     return { data: { id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteSlider = async (id) => {
   try {
-    await deleteDoc(doc(db, 'sliders', id));
+    await deleteDoc(doc(db, "sliders", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1562,12 +1956,11 @@ export const reorderSliders = async (updates) => {
   try {
     // Update multiple sliders' order values
     const updatePromises = updates.map(({ id, order }) =>
-      updateDoc(doc(db, 'sliders', id), { order, updatedAt: Timestamp.now() })
+      updateDoc(doc(db, "sliders", id), { order, updatedAt: Timestamp.now() }),
     );
     await Promise.all(updatePromises);
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1575,13 +1968,13 @@ export const reorderSliders = async (updates) => {
 // ==================== ORDERS ====================
 export const getOrders = async (filters = {}) => {
   try {
-    let q = collection(db, 'orders');
+    let q = collection(db, "orders");
 
     if (filters.status) {
-      q = query(q, where('status', '==', filters.status));
+      q = query(q, where("status", "==", filters.status));
     }
 
-    q = query(q, orderBy('orderDate', 'desc'));
+    q = query(q, orderBy("orderDate", "desc"));
     const snapshot = await getDocs(q);
     let orders = snapshot.docs.map(docToObject);
 
@@ -1589,23 +1982,24 @@ export const getOrders = async (filters = {}) => {
     const customersRes = await getCustomers();
     const customers = customersRes.data;
 
-    orders = orders.map(order => ({
+    orders = orders.map((order) => ({
       ...order,
-      customer: order.customerId ? customers.find(c => (c.id || c._id) === order.customerId) : order.customer
+      customer: order.customerId
+        ? customers.find((c) => (c.id || c._id) === order.customerId)
+        : order.customer,
     }));
 
     return { data: orders };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const getOrder = async (id) => {
   try {
-    const docSnap = await getDoc(doc(db, 'orders', id));
+    const docSnap = await getDoc(doc(db, "orders", id));
     if (!docSnap.exists()) {
-      throw new Error('Order not found');
+      throw new Error("Order not found");
     }
 
     const order = docToObject(docSnap);
@@ -1615,15 +2009,14 @@ export const getOrder = async (id) => {
       try {
         const customersRes = await getCustomers();
         const customers = customersRes.data;
-        order.customer = customers.find(c => (c.id || c._id) === order.customerId);
-      } catch (error) {
-
-      }
+        order.customer = customers.find(
+          (c) => (c.id || c._id) === order.customerId,
+        );
+      } catch (error) { }
     }
 
     return { data: order };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1637,44 +2030,51 @@ export const createOrder = async (orderData) => {
       ...prepareData(orderData),
       orderNumber,
       orderDate: Timestamp.now(),
-      status: orderData.status || 'Pending',
+      status: orderData.status || "Pending",
       createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
 
-    const docRef = await addDoc(collection(db, 'orders'), data);
+    const docRef = await addDoc(collection(db, "orders"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const updateOrderStatus = async (id, newStatus) => {
   try {
-    const validStatuses = ['Pending', 'Accepted', 'Shipped', 'Delivered', 'Cancelled'];
+    const validStatuses = [
+      "Pending",
+      "Accepted",
+      "Shipped",
+      "Delivered",
+      "Cancelled",
+    ];
     if (!validStatuses.includes(newStatus)) {
-      throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+      throw new Error(
+        `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      );
     }
 
     // Get current order to check previous status
-    const orderRef = doc(db, 'orders', id);
+    const orderRef = doc(db, "orders", id);
     const orderDoc = await getDoc(orderRef);
 
     if (!orderDoc.exists()) {
-      throw new Error('Order not found');
+      throw new Error("Order not found");
     }
 
     const currentOrder = orderDoc.data();
     const previousStatus = currentOrder.status;
 
     // If status is changing to "Accepted", reduce inventory atomically
-    if (newStatus === 'Accepted' && previousStatus === 'Pending') {
+    if (newStatus === "Accepted" && previousStatus === "Pending") {
       await runTransaction(db, async (transaction) => {
         // Re-read order to ensure we have latest data
         const orderSnap = await transaction.get(orderRef);
         if (!orderSnap.exists()) {
-          throw new Error('Order not found');
+          throw new Error("Order not found");
         }
 
         const order = orderSnap.data();
@@ -1683,7 +2083,7 @@ export const updateOrderStatus = async (id, newStatus) => {
         for (const item of order.items || []) {
           if (!item.inventoryId) continue;
 
-          const inventoryRef = doc(db, 'inventory', item.inventoryId);
+          const inventoryRef = doc(db, "inventory", item.inventoryId);
           const inventorySnap = await transaction.get(inventoryRef);
 
           if (!inventorySnap.exists()) {
@@ -1692,7 +2092,7 @@ export const updateOrderStatus = async (id, newStatus) => {
 
           const inventoryData = inventorySnap.data();
           const sizes = inventoryData.sizes || [];
-          const sizeIndex = sizes.findIndex(s => s.size === item.size);
+          const sizeIndex = sizes.findIndex((s) => s.size === item.size);
 
           if (sizeIndex >= 0) {
             const currentQuantity = sizes[sizeIndex].quantity || 0;
@@ -1702,7 +2102,7 @@ export const updateOrderStatus = async (id, newStatus) => {
             if (currentQuantity < requestedQuantity) {
               throw new Error(
                 `Insufficient stock for ${item.productName} (Size: ${item.size}). ` +
-                `Available: ${currentQuantity}, Requested: ${requestedQuantity}`
+                `Available: ${currentQuantity}, Requested: ${requestedQuantity}`,
               );
             }
 
@@ -1710,22 +2110,24 @@ export const updateOrderStatus = async (id, newStatus) => {
             const newSizes = [...sizes];
             newSizes[sizeIndex] = {
               ...newSizes[sizeIndex],
-              quantity: currentQuantity - requestedQuantity
+              quantity: currentQuantity - requestedQuantity,
             };
 
             transaction.update(inventoryRef, {
               sizes: newSizes,
-              updatedAt: Timestamp.now()
+              updatedAt: Timestamp.now(),
             });
           } else {
-            throw new Error(`Size ${item.size} not found for ${item.productName}`);
+            throw new Error(
+              `Size ${item.size} not found for ${item.productName}`,
+            );
           }
         }
 
         // Update order status
         const updateData = {
           status: newStatus,
-          updatedAt: Timestamp.now()
+          updatedAt: Timestamp.now(),
         };
 
         transaction.update(orderRef, updateData);
@@ -1734,11 +2136,11 @@ export const updateOrderStatus = async (id, newStatus) => {
       // For other status changes, just update order
       const updateData = {
         status: newStatus,
-        updatedAt: Timestamp.now()
+        updatedAt: Timestamp.now(),
       };
 
       // Add tracking number if status is Shipped
-      if (newStatus === 'Shipped' && !currentOrder.trackingNumber) {
+      if (newStatus === "Shipped" && !currentOrder.trackingNumber) {
         updateData.trackingNumber = `TRACK-${Date.now()}`;
       }
 
@@ -1747,7 +2149,6 @@ export const updateOrderStatus = async (id, newStatus) => {
 
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1756,22 +2157,20 @@ export const updateOrder = async (id, orderData) => {
   try {
     const data = {
       ...prepareData(orderData),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'orders', id), data);
+    await updateDoc(doc(db, "orders", id), data);
     return { data: { id, ...data } };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteOrder = async (id) => {
   try {
-    await deleteDoc(doc(db, 'orders', id));
+    await deleteDoc(doc(db, "orders", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1783,40 +2182,45 @@ export const getOnlineSalesStats = async () => {
     const orders = ordersRes.data;
 
     // Filter only delivered orders for revenue calculation
-    const deliveredOrders = orders.filter(o => o.status === 'Delivered');
+    const deliveredOrders = orders.filter((o) => o.status === "Delivered");
 
     // Calculate total online revenue
-    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+    const totalRevenue = deliveredOrders.reduce(
+      (sum, order) => sum + (order.totalAmount || 0),
+      0,
+    );
 
     // Calculate product-wise sales
     const productSales = {};
-    deliveredOrders.forEach(order => {
-      order.items?.forEach(item => {
-        const productKey = `${item.productName}_${item.size || 'N/A'}`;
+    deliveredOrders.forEach((order) => {
+      order.items?.forEach((item) => {
+        const productKey = `${item.productName}_${item.size || "N/A"}`;
         if (!productSales[productKey]) {
           productSales[productKey] = {
             productName: item.productName,
-            size: item.size || 'N/A',
-            sku: item.sku || 'N/A',
+            size: item.size || "N/A",
+            sku: item.sku || "N/A",
             totalQuantity: 0,
             totalRevenue: 0,
-            unitPrice: item.unitPrice || 0
+            unitPrice: item.unitPrice || 0,
           };
         }
         productSales[productKey].totalQuantity += item.quantity || 0;
-        productSales[productKey].totalRevenue += (item.unitPrice || 0) * (item.quantity || 0);
+        productSales[productKey].totalRevenue +=
+          (item.unitPrice || 0) * (item.quantity || 0);
       });
     });
 
     // Convert to array and sort by revenue
-    const productSalesArray = Object.values(productSales)
-      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+    const productSalesArray = Object.values(productSales).sort(
+      (a, b) => b.totalRevenue - a.totalRevenue,
+    );
 
     // Calculate metrics
     const totalOrders = orders.length;
-    const pendingOrders = orders.filter(o => o.status === 'Pending').length;
-    const acceptedOrders = orders.filter(o => o.status === 'Accepted').length;
-    const shippedOrders = orders.filter(o => o.status === 'Shipped').length;
+    const pendingOrders = orders.filter((o) => o.status === "Pending").length;
+    const acceptedOrders = orders.filter((o) => o.status === "Accepted").length;
+    const shippedOrders = orders.filter((o) => o.status === "Shipped").length;
     const deliveredOrdersCount = deliveredOrders.length;
 
     return {
@@ -1829,12 +2233,15 @@ export const getOnlineSalesStats = async () => {
         deliveredOrders: deliveredOrdersCount,
         productSales: productSalesArray,
         // Additional metrics
-        averageOrderValue: deliveredOrdersCount > 0 ? totalRevenue / deliveredOrdersCount : 0,
-        totalUnitsSold: productSalesArray.reduce((sum, p) => sum + p.totalQuantity, 0)
-      }
+        averageOrderValue:
+          deliveredOrdersCount > 0 ? totalRevenue / deliveredOrdersCount : 0,
+        totalUnitsSold: productSalesArray.reduce(
+          (sum, p) => sum + p.totalQuantity,
+          0,
+        ),
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1842,13 +2249,13 @@ export const getOnlineSalesStats = async () => {
 export const getProductOnlineSales = async (productId) => {
   try {
     const ordersRes = await getOrders();
-    const orders = ordersRes.data.filter(o => o.status === 'Delivered');
+    const orders = ordersRes.data.filter((o) => o.status === "Delivered");
 
     let totalQuantity = 0;
     let totalRevenue = 0;
 
-    orders.forEach(order => {
-      order.items?.forEach(item => {
+    orders.forEach((order) => {
+      order.items?.forEach((item) => {
         if (item.inventoryId === productId) {
           totalQuantity += item.quantity || 0;
           totalRevenue += (item.unitPrice || 0) * (item.quantity || 0);
@@ -1859,11 +2266,10 @@ export const getProductOnlineSales = async (productId) => {
     return {
       data: {
         totalQuantity,
-        totalRevenue
-      }
+        totalRevenue,
+      },
     };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1871,15 +2277,15 @@ export const getProductOnlineSales = async (productId) => {
 // ==================== REVIEWS ====================
 export const getReviews = async (filters = {}) => {
   try {
-    let q = collection(db, 'reviews');
+    let q = collection(db, "reviews");
 
     // Apply filters without orderBy to avoid composite index requirement
     if (filters.status) {
-      q = query(q, where('status', '==', filters.status));
+      q = query(q, where("status", "==", filters.status));
     }
 
     if (filters.productId) {
-      q = query(q, where('productId', '==', filters.productId));
+      q = query(q, where("productId", "==", filters.productId));
     }
 
     // Fetch without orderBy - sort client-side instead
@@ -1888,43 +2294,48 @@ export const getReviews = async (filters = {}) => {
 
     // Sort client-side by createdAt (descending) - no index needed
     reviews.sort((a, b) => {
-      const dateA = a.createdAt?.seconds || a.createdAt?._seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0);
-      const dateB = b.createdAt?.seconds || b.createdAt?._seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0);
+      const dateA =
+        a.createdAt?.seconds ||
+        a.createdAt?._seconds ||
+        (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0);
+      const dateB =
+        b.createdAt?.seconds ||
+        b.createdAt?._seconds ||
+        (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0);
       return dateB - dateA; // Descending order (newest first)
     });
 
     return { data: reviews };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const updateReviewStatus = async (reviewId, status) => {
   try {
-    const validStatuses = ['pending', 'approved', 'rejected'];
+    const validStatuses = ["pending", "approved", "rejected"];
     if (!validStatuses.includes(status)) {
-      throw new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+      throw new Error(
+        `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      );
     }
 
-    await updateDoc(doc(db, 'reviews', reviewId), {
+    await updateDoc(doc(db, "reviews", reviewId), {
       status,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     });
 
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
 
 export const deleteReview = async (id) => {
   try {
-    await deleteDoc(doc(db, 'reviews', id));
+    await deleteDoc(doc(db, "reviews", id));
     return { success: true };
   } catch (error) {
-
     throw error;
   }
 };
@@ -1932,24 +2343,36 @@ export const deleteReview = async (id) => {
 // ==================== EXPENSES ====================
 
 /** Recalculate landed cost per piece: (basePurchase + product expenses) / initialQuantity */
-export const recalculateInventoryLandedCost = async (inventoryId, options = {}) => {
-  const invRef = doc(db, 'inventory', inventoryId);
+export const recalculateInventoryLandedCost = async (
+  inventoryId,
+  options = {},
+) => {
+  const invRef = doc(db, "inventory", inventoryId);
   const invDoc = await getDoc(invRef);
   if (!invDoc.exists()) return;
 
   const inv = invDoc.data();
-  const initialQuantity = parseFloat(inv.initialQuantity) ||
-    (inv.sizes || []).reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+  const initialQuantity =
+    parseFloat(inv.initialQuantity) ||
+    (inv.sizes || []).reduce(
+      (sum, s) => sum + (parseFloat(s.quantity) || 0),
+      0,
+    );
 
-  let basePurchaseCost = options.basePurchaseCost != null
-    ? parseFloat(options.basePurchaseCost)
-    : parseFloat(inv.basePurchaseCost);
+  let basePurchaseCost =
+    options.basePurchaseCost != null
+      ? parseFloat(options.basePurchaseCost)
+      : parseFloat(inv.basePurchaseCost);
 
   if (!basePurchaseCost || isNaN(basePurchaseCost)) {
     const cpu = parseFloat(inv.costPerUnit) || 0;
     const pet = parseFloat(inv.productExpensesTotal) || 0;
     basePurchaseCost = Math.max(0, cpu * initialQuantity - pet);
-    if ((!basePurchaseCost || isNaN(basePurchaseCost)) && cpu && initialQuantity) {
+    if (
+      (!basePurchaseCost || isNaN(basePurchaseCost)) &&
+      cpu &&
+      initialQuantity
+    ) {
       basePurchaseCost = cpu * initialQuantity;
     }
   }
@@ -1957,20 +2380,24 @@ export const recalculateInventoryLandedCost = async (inventoryId, options = {}) 
   let productExpensesTotal = 0;
   try {
     const expSnap = await getDocs(
-      query(collection(db, 'expenses'), where('inventoryId', '==', inventoryId))
+      query(
+        collection(db, "expenses"),
+        where("inventoryId", "==", inventoryId),
+      ),
     );
     productExpensesTotal = expSnap.docs.reduce(
       (sum, d) => sum + (parseFloat(d.data().amount) || 0),
-      0
+      0,
     );
   } catch (e) {
-    console.warn('Could not fetch product expenses for costing:', e);
+    console.warn("Could not fetch product expenses for costing:", e);
   }
 
   const totalLandedCost = basePurchaseCost + productExpensesTotal;
-  const costPerUnit = initialQuantity > 0
-    ? Math.round(totalLandedCost / initialQuantity)
-    : Math.round(parseFloat(inv.costPerUnit) || 0);
+  const costPerUnit =
+    initialQuantity > 0
+      ? Math.round(totalLandedCost / initialQuantity)
+      : Math.round(parseFloat(inv.costPerUnit) || 0);
 
   await updateDoc(invRef, {
     basePurchaseCost,
@@ -1978,27 +2405,33 @@ export const recalculateInventoryLandedCost = async (inventoryId, options = {}) 
     totalLandedCost,
     costPerUnit,
     initialQuantity: initialQuantity || inv.initialQuantity,
-    updatedAt: Timestamp.now()
+    updatedAt: Timestamp.now(),
   });
 
-  return { basePurchaseCost, productExpensesTotal, totalLandedCost, costPerUnit, initialQuantity };
+  return {
+    basePurchaseCost,
+    productExpensesTotal,
+    totalLandedCost,
+    costPerUnit,
+    initialQuantity,
+  };
 };
 
 export const getProductExpenses = async (inventoryId) => {
   try {
     const q = query(
-      collection(db, 'expenses'),
-      where('inventoryId', '==', inventoryId),
-      orderBy('expenseDate', 'desc')
+      collection(db, "expenses"),
+      where("inventoryId", "==", inventoryId),
+      orderBy("expenseDate", "desc"),
     );
     const snapshot = await getDocs(q);
     return { data: snapshot.docs.map(docToObject) };
   } catch (error) {
-    if (error.message?.includes('index')) {
-      const snapshot = await getDocs(collection(db, 'expenses'));
+    if (error.message?.includes("index")) {
+      const snapshot = await getDocs(collection(db, "expenses"));
       const expenses = snapshot.docs
         .map(docToObject)
-        .filter(e => e.inventoryId === inventoryId)
+        .filter((e) => e.inventoryId === inventoryId)
         .sort((a, b) => {
           const da = convertTimestamp(a.expenseDate)?.getTime() || 0;
           const db = convertTimestamp(b.expenseDate)?.getTime() || 0;
@@ -2012,23 +2445,46 @@ export const getProductExpenses = async (inventoryId) => {
 
 export const getExpenses = async (filters = {}) => {
   try {
-    let q = collection(db, 'expenses');
+    let q = collection(db, "expenses");
 
     if (filters.startDate && filters.endDate) {
       const startTimestamp = Timestamp.fromDate(new Date(filters.startDate));
       const endTimestamp = Timestamp.fromDate(new Date(filters.endDate));
       endTimestamp.seconds += 86400; // Add 1 day to include the end date
-      q = query(q, where('expenseDate', '>=', startTimestamp), where('expenseDate', '<=', endTimestamp), orderBy('expenseDate', 'desc'));
-    } else if (filters.month && filters.year && !isNaN(filters.month) && !isNaN(filters.year)) {
+      q = query(
+        q,
+        where("expenseDate", ">=", startTimestamp),
+        where("expenseDate", "<=", endTimestamp),
+        orderBy("expenseDate", "desc"),
+      );
+    } else if (
+      filters.month &&
+      filters.year &&
+      !isNaN(filters.month) &&
+      !isNaN(filters.year)
+    ) {
       // Filter by month and year
-      const startDate = new Date(filters.year, filters.month - 1, 1, 0, 0, 0, 0);
+      const startDate = new Date(
+        filters.year,
+        filters.month - 1,
+        1,
+        0,
+        0,
+        0,
+        0,
+      );
       const endDate = new Date(filters.year, filters.month, 0, 23, 59, 59, 999);
       const startTimestamp = Timestamp.fromDate(startDate);
       const endTimestamp = Timestamp.fromDate(endDate);
-      q = query(q, where('expenseDate', '>=', startTimestamp), where('expenseDate', '<=', endTimestamp), orderBy('expenseDate', 'desc'));
+      q = query(
+        q,
+        where("expenseDate", ">=", startTimestamp),
+        where("expenseDate", "<=", endTimestamp),
+        orderBy("expenseDate", "desc"),
+      );
     } else {
       // No filters, just order by date
-      q = query(q, orderBy('expenseDate', 'desc'));
+      q = query(q, orderBy("expenseDate", "desc"));
     }
 
     const snapshot = await getDocs(q);
@@ -2037,26 +2493,38 @@ export const getExpenses = async (filters = {}) => {
     return { data: expenses };
   } catch (error) {
     // If the error is about missing index, try fetching all and filtering client-side
-    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
-      console.warn('Firestore index missing for expenses. Using client-side filtering.');
+    if (
+      error.message &&
+      (error.message.includes("index") ||
+        error.message.includes("requires an index"))
+    ) {
+      console.warn(
+        "Firestore index missing for expenses. Using client-side filtering.",
+      );
       try {
         // Fetch all expenses without filter
-        let q = query(collection(db, 'expenses'), orderBy('expenseDate', 'desc'));
+        let q = query(
+          collection(db, "expenses"),
+          orderBy("expenseDate", "desc"),
+        );
         const snapshot = await getDocs(q);
         let expenses = snapshot.docs.map(docToObject);
 
         // Client-side filtering
         if (filters.month && filters.year) {
-          expenses = expenses.filter(expense => {
+          expenses = expenses.filter((expense) => {
             const expenseDate = convertTimestamp(expense.expenseDate);
             if (!expenseDate) return false;
-            return expenseDate.getFullYear() === filters.year && expenseDate.getMonth() === filters.month - 1;
+            return (
+              expenseDate.getFullYear() === filters.year &&
+              expenseDate.getMonth() === filters.month - 1
+            );
           });
         } else if (filters.startDate && filters.endDate) {
           const startDate = new Date(filters.startDate);
           const endDate = new Date(filters.endDate);
           endDate.setHours(23, 59, 59, 999);
-          expenses = expenses.filter(expense => {
+          expenses = expenses.filter((expense) => {
             const expenseDate = convertTimestamp(expense.expenseDate);
             if (!expenseDate) return false;
             return expenseDate >= startDate && expenseDate <= endDate;
@@ -2074,23 +2542,26 @@ export const getExpenses = async (filters = {}) => {
 
 export const createExpense = async (expenseData, options = {}) => {
   try {
-    const inventoryId = expenseData.inventoryId && expenseData.inventoryId !== ''
-      ? expenseData.inventoryId
-      : null;
+    const inventoryId =
+      expenseData.inventoryId && expenseData.inventoryId !== ""
+        ? expenseData.inventoryId
+        : null;
     const data = {
-      description: expenseData.description || '',
+      description: expenseData.description || "",
       amount: parseFloat(expenseData.amount) || 0,
-      category: expenseData.category || 'Other',
-      notes: expenseData.notes || '',
-      expenseScope: inventoryId ? 'product' : 'general',
-      productName: expenseData.productName || '',
-      expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
+      category: expenseData.category || "Other",
+      notes: expenseData.notes || "",
+      expenseScope: inventoryId ? "product" : "general",
+      productName: expenseData.productName || "",
+      expenseDate: expenseData.expenseDate
+        ? Timestamp.fromDate(new Date(expenseData.expenseDate))
+        : Timestamp.now(),
       createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
     if (inventoryId) data.inventoryId = inventoryId;
 
-    const docRef = await addDoc(collection(db, 'expenses'), data);
+    const docRef = await addDoc(collection(db, "expenses"), data);
     if (inventoryId && !options.skipRecalc) {
       await recalculateInventoryLandedCost(inventoryId);
     }
@@ -2105,7 +2576,9 @@ export const createExpensesBatch = async (expensesList) => {
   const inventoryIdsToRecalc = new Set();
   const results = [];
   for (const expenseData of expensesList) {
-    const { data, inventoryId } = await createExpense(expenseData, { skipRecalc: true });
+    const { data, inventoryId } = await createExpense(expenseData, {
+      skipRecalc: true,
+    });
     results.push(data);
     if (inventoryId) inventoryIdsToRecalc.add(inventoryId);
   }
@@ -2117,21 +2590,24 @@ export const createExpensesBatch = async (expensesList) => {
 
 export const updateExpense = async (id, expenseData) => {
   try {
-    const oldDoc = await getDoc(doc(db, 'expenses', id));
+    const oldDoc = await getDoc(doc(db, "expenses", id));
     const oldInventoryId = oldDoc.exists() ? oldDoc.data().inventoryId : null;
 
-    const inventoryId = expenseData.inventoryId && expenseData.inventoryId !== ''
-      ? expenseData.inventoryId
-      : null;
+    const inventoryId =
+      expenseData.inventoryId && expenseData.inventoryId !== ""
+        ? expenseData.inventoryId
+        : null;
     const data = {
-      description: expenseData.description || '',
+      description: expenseData.description || "",
       amount: parseFloat(expenseData.amount) || 0,
-      category: expenseData.category || 'Other',
-      notes: expenseData.notes || '',
-      expenseScope: inventoryId ? 'product' : 'general',
-      productName: expenseData.productName || '',
-      expenseDate: expenseData.expenseDate ? Timestamp.fromDate(new Date(expenseData.expenseDate)) : Timestamp.now(),
-      updatedAt: Timestamp.now()
+      category: expenseData.category || "Other",
+      notes: expenseData.notes || "",
+      expenseScope: inventoryId ? "product" : "general",
+      productName: expenseData.productName || "",
+      expenseDate: expenseData.expenseDate
+        ? Timestamp.fromDate(new Date(expenseData.expenseDate))
+        : Timestamp.now(),
+      updatedAt: Timestamp.now(),
     };
     if (inventoryId) {
       data.inventoryId = inventoryId;
@@ -2139,7 +2615,7 @@ export const updateExpense = async (id, expenseData) => {
       data.inventoryId = null;
     }
 
-    await updateDoc(doc(db, 'expenses', id), data);
+    await updateDoc(doc(db, "expenses", id), data);
 
     const idsToRecalc = new Set([oldInventoryId, inventoryId].filter(Boolean));
     for (const invId of idsToRecalc) {
@@ -2153,10 +2629,10 @@ export const updateExpense = async (id, expenseData) => {
 
 export const deleteExpense = async (id) => {
   try {
-    const oldDoc = await getDoc(doc(db, 'expenses', id));
+    const oldDoc = await getDoc(doc(db, "expenses", id));
     const oldInventoryId = oldDoc.exists() ? oldDoc.data().inventoryId : null;
 
-    await deleteDoc(doc(db, 'expenses', id));
+    await deleteDoc(doc(db, "expenses", id));
 
     if (oldInventoryId) {
       await recalculateInventoryLandedCost(oldInventoryId);
@@ -2167,13 +2643,128 @@ export const deleteExpense = async (id) => {
   }
 };
 
+const paymentEntryTime = (p) =>
+  convertTimestamp(p?.date || p?.paymentDate)?.getTime() || 0;
+
+/**
+ * If payments[] sum > sale.paidAmount (stale / wrong credit edit), keep earliest
+ * payments that fit paidAmount and drop the excess (e.g. accidental 100000 recovery).
+ */
+const reconcileEmbeddedPayments = (embedded, paidAmount) => {
+  const list = Array.isArray(embedded) ? embedded.filter(Boolean) : [];
+  const paid = parseFloat(paidAmount);
+  if (!list.length) return [];
+  if (!Number.isFinite(paid) || paid < 0) return list;
+
+  const sorted = [...list].sort(
+    (a, b) => paymentEntryTime(a) - paymentEntryTime(b),
+  );
+  const sum = sorted.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  if (sum <= paid + 0.51) return sorted;
+
+  const kept = [];
+  let running = 0;
+  for (const p of sorted) {
+    const amt = parseFloat(p.amount) || 0;
+    if (amt <= 0) continue;
+    if (running >= paid - 0.01) break;
+    const room = paid - running;
+    if (amt <= room + 0.01) {
+      kept.push(p);
+      running += amt;
+    } else if (room > 0.5) {
+      kept.push({ ...p, amount: Math.round(room * 100) / 100 });
+      running = paid;
+      break;
+    } else {
+      break;
+    }
+  }
+  return kept;
+};
+
+/**
+ * Sale credit edits update `sales.payments` — that is the source of truth.
+ * Also reconcile to paidAmount so accidental oversized recoveries don't inflate reports.
+ */
+const buildCanonicalPaymentsFromSales = (sales) => {
+  const list = [];
+  (sales || []).forEach((sale) => {
+    const saleId = sale.id || sale._id;
+    if (!saleId) return;
+    const customerName =
+      sale.customer?.name ||
+      sale.customerName ||
+      sale.customerDetails?.name ||
+      "";
+    const invoiceNumber = sale.invoiceNumber || "";
+    const paidAmount = parseFloat(sale.paidAmount) || 0;
+    const embedded = reconcileEmbeddedPayments(sale.payments, paidAmount);
+
+    if (embedded.length > 0) {
+      embedded.forEach((p, idx) => {
+        const amount = parseFloat(p.amount) || 0;
+        if (amount <= 0) return;
+        const entry = {
+          id: p.collectionId || p.paymentId || `${saleId}-pay-${idx}`,
+          saleId,
+          invoiceNumber,
+          customerName: p.customerName || customerName,
+          amount,
+          paymentDate:
+            p.date || p.paymentDate || sale.saleDate || sale.createdAt,
+          paymentType:
+            p.paymentType || (idx === 0 ? "Initial Sale" : "Recovery"),
+          paymentMethod: p.paymentMethod || p.method || "Cash",
+          notes: p.notes || "",
+          addedBy: p.addedBy || "",
+          editedBy: p.editedBy || "",
+        };
+        if (p.againstInventoryId) {
+          entry.againstInventoryId = p.againstInventoryId;
+          entry.againstProductName = p.againstProductName || "";
+          entry.againstSize = p.againstSize || "";
+          if (typeof p.againstLineIndex === "number") {
+            entry.againstLineIndex = p.againstLineIndex;
+          }
+        }
+        list.push(entry);
+      });
+      return;
+    }
+
+    // Legacy sales: paidAmount set but no payments[] array
+    if (paidAmount > 0) {
+      list.push({
+        id: `${saleId}-legacy-paid`,
+        saleId,
+        invoiceNumber,
+        customerName,
+        amount: paidAmount,
+        paymentDate: sale.saleDate || sale.createdAt,
+        paymentType: "Initial Sale",
+        paymentMethod: sale.saleType || "Cash",
+        notes: "",
+      });
+    }
+  });
+  return list;
+};
+
 /**
  * Month closing:
  * - This-month sales paid vs prior recovery
  * - Own vs investor funding split (inventory tags)
  * - COGS, closing stock, net = trading + recovery − expenses
  */
-const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inventory) => {
+const buildMonthlyProfitLossData = (
+  year,
+  month,
+  sales,
+  payments,
+  expenses,
+  inventory,
+) => {
   const inMonth = (dateVal) => {
     const d = convertTimestamp(dateVal);
     if (!d || isNaN(d.getTime())) return false;
@@ -2185,7 +2776,9 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     const inv = invId ? inventoryById[invId] : null;
     let costPerUnit = parseFloat(inv?.costPerUnit) || 0;
     if (!costPerUnit && item.productName) {
-      const byName = (inventory || []).find((i) => i.productName === item.productName);
+      const byName = (inventory || []).find(
+        (i) => i.productName === item.productName,
+      );
       costPerUnit = parseFloat(byName?.costPerUnit) || 0;
     }
     if (!costPerUnit) costPerUnit = parseFloat(item.costPerUnit) || 0;
@@ -2194,7 +2787,7 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
 
   const getLineTotal = (item) =>
     parseFloat(item.totalPrice) ||
-    ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
+    (parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0);
 
   const inventoryById = {};
   (inventory || []).forEach((inv) => {
@@ -2203,21 +2796,24 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   });
 
   const isInvestorFundedInv = (inv) =>
-    !!(inv?.fundingInvestorId) && (parseFloat(inv?.fundingInvestorAmount) || 0) > 0;
+    !!inv?.fundingInvestorId &&
+    (parseFloat(inv?.fundingInvestorAmount) || 0) > 0;
 
   const getItemFundingMeta = (item) => {
     const invId = item.inventoryId || item.inventory;
     let inv = invId ? inventoryById[invId] : null;
     if (!inv && item.productName) {
-      inv = (inventory || []).find((i) => i.productName === item.productName) || null;
+      inv =
+        (inventory || []).find((i) => i.productName === item.productName) ||
+        null;
     }
     const investor = isInvestorFundedInv(inv);
     return {
       inv,
-      funding: investor ? 'investor' : 'own',
+      funding: investor ? "investor" : "own",
       investorId: inv?.fundingInvestorId || null,
-      investorName: inv?.fundingInvestorName || '',
-      fundingInvestorAmount: parseFloat(inv?.fundingInvestorAmount) || 0
+      investorName: inv?.fundingInvestorName || "",
+      fundingInvestorAmount: parseFloat(inv?.fundingInvestorAmount) || 0,
     };
   };
 
@@ -2239,17 +2835,17 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       const share = saleTotal > 0 ? lineBill / saleTotal : 1 / items.length;
       const lineAmt = amount * share;
       const meta = getItemFundingMeta(item);
-      if (meta.funding === 'investor') {
+      if (meta.funding === "investor") {
         investor += lineAmt;
       } else {
         own += lineAmt;
       }
       lines.push({
-        productName: item.productName || 'N/A',
-        size: item.size || '',
+        productName: item.productName || "N/A",
+        size: item.size || "",
         amount: Math.round(lineAmt),
         funding: meta.funding,
-        investorName: meta.investorName
+        investorName: meta.investorName,
       });
     });
     return { own, investor, lines };
@@ -2263,7 +2859,7 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       const qty = parseFloat(item.quantity) || 0;
       const lineCost = qty * getCostPerUnit(item, inventoryById);
       const meta = getItemFundingMeta(item);
-      if (meta.funding === 'investor') investorCost += lineCost;
+      if (meta.funding === "investor") investorCost += lineCost;
       else ownCost += lineCost;
     });
     return { ownCost, investorCost, totalCost: ownCost + investorCost };
@@ -2278,8 +2874,12 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     if (id) salesById[id] = s;
   });
 
-  const monthSales = (sales || []).filter((s) => inMonth(s.saleDate || s.createdAt));
-  const monthSaleIds = new Set(monthSales.map((s) => s.id || s._id).filter(Boolean));
+  const monthSales = (sales || []).filter((s) =>
+    inMonth(s.saleDate || s.createdAt),
+  );
+  const monthSaleIds = new Set(
+    monthSales.map((s) => s.id || s._id).filter(Boolean),
+  );
 
   let totalSales = 0;
   let soldQty = 0;
@@ -2288,6 +2888,8 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   let investorSoldCost = 0;
   let ownSoldQty = 0;
   let investorSoldQty = 0;
+  let ownSoldBill = 0;
+  let investorSoldBill = 0;
   let monthDue = 0;
   const soldProductMap = {};
   const monthSalesDetail = [];
@@ -2307,8 +2909,8 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
         : Math.max(0, saleTotal - salePaid);
     monthDue += saleRemaining;
 
-    const customerName = sale.customer?.name || sale.customerName || 'Unknown';
-    const invoiceNumber = sale.invoiceNumber || '';
+    const customerName = sale.customer?.name || sale.customerName || "Unknown";
+    const invoiceNumber = sale.invoiceNumber || "";
 
     const saleItemsDetail = [];
     items.forEach((item) => {
@@ -2319,25 +2921,28 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       const meta = getItemFundingMeta(item);
       soldQty += qty;
       soldCost += lineCost;
-      if (meta.funding === 'investor') {
+      if (meta.funding === "investor") {
         investorSoldCost += lineCost;
         investorSoldQty += qty;
+        investorSoldBill += lineBill;
       } else {
         ownSoldCost += lineCost;
         ownSoldQty += qty;
+        ownSoldBill += lineBill;
       }
 
-      const key = item.inventoryId || item.inventory || item.productName || 'unknown';
+      const key =
+        item.inventoryId || item.inventory || item.productName || "unknown";
       if (!soldProductMap[key]) {
         soldProductMap[key] = {
-          productName: item.productName || 'N/A',
-          size: item.size || '',
+          productName: item.productName || "N/A",
+          size: item.size || "",
           qty: 0,
           bill: 0,
           cost: 0,
           costPerUnit,
           funding: meta.funding,
-          investorName: meta.investorName
+          investorName: meta.investorName,
         };
       }
       soldProductMap[key].qty += qty;
@@ -2345,13 +2950,13 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       soldProductMap[key].cost += lineCost;
 
       saleItemsDetail.push({
-        productName: item.productName || 'N/A',
-        size: item.size || '',
+        productName: item.productName || "N/A",
+        size: item.size || "",
         qty,
         bill: Math.round(lineBill),
         cost: Math.round(lineCost),
         funding: meta.funding,
-        investorName: meta.investorName
+        investorName: meta.investorName,
       });
     });
 
@@ -2359,16 +2964,18 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       id: sale.id || sale._id,
       invoiceNumber,
       customerName,
-      contact: sale.customer?.contact || '',
+      contact: sale.customer?.contact || "",
       saleDate: sale.saleDate || sale.createdAt,
       billed: Math.round(saleTotal),
       paid: Math.round(salePaid),
       due: Math.round(saleRemaining),
-      items: saleItemsDetail
+      items: saleItemsDetail,
     });
   });
 
-  const saleIds = new Set((sales || []).map((s) => s.id || s._id).filter(Boolean));
+  const saleIds = new Set(
+    (sales || []).map((s) => s.id || s._id).filter(Boolean),
+  );
   let monthSalesPaid = 0;
   let priorRecovery = 0;
   let priorRecoveryCost = 0;
@@ -2395,39 +3002,51 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   const ensureCostRemaining = (saleId) => {
     if (!costRemainingBySale[saleId]) {
       const costs = getSaleFundingCosts(salesById[saleId]);
-      costRemainingBySale[saleId] = { own: costs.ownCost, investor: costs.investorCost };
+      costRemainingBySale[saleId] = {
+        own: costs.ownCost,
+        investor: costs.investorCost,
+      };
     }
     return costRemainingBySale[saleId];
   };
 
   // Process ALL payments in date order so prior months' payments reduce remaining cost first
-  const sortedPayments = [...(payments || [])].sort((a, b) => paymentTime(a) - paymentTime(b));
+  const sortedPayments = [...(payments || [])].sort(
+    (a, b) => paymentTime(a) - paymentTime(b),
+  );
 
   const pushSplitDetails = (baseEntry, splitParts, isPrior) => {
-    const { own, investor, lines, ownCost = 0, ownProfit = 0, invCost = 0, invProfit = 0 } =
-      splitParts;
+    const {
+      own,
+      investor,
+      lines,
+      ownCost = 0,
+      ownProfit = 0,
+      invCost = 0,
+      invProfit = 0,
+    } = splitParts;
     const ownEntry = {
       ...baseEntry,
       amount: Math.round(own),
       costAmount: Math.round(ownCost),
       profitAmount: Math.round(ownProfit),
-      funding: 'own',
-      productLines: (lines || []).filter((l) => l.funding === 'own')
+      funding: "own",
+      productLines: (lines || []).filter((l) => l.funding === "own"),
     };
     const invEntry = {
       ...baseEntry,
       amount: Math.round(investor),
       costAmount: Math.round(invCost),
       profitAmount: Math.round(invProfit),
-      funding: 'investor',
-      productLines: (lines || []).filter((l) => l.funding === 'investor'),
+      funding: "investor",
+      productLines: (lines || []).filter((l) => l.funding === "investor"),
       investorNames: [
         ...new Set(
           (lines || [])
-            .filter((l) => l.funding === 'investor' && l.investorName)
-            .map((l) => l.investorName)
-        )
-      ]
+            .filter((l) => l.funding === "investor" && l.investorName)
+            .map((l) => l.investorName),
+        ),
+      ],
     };
     if (own > 0.5) {
       if (isPrior) {
@@ -2488,11 +3107,8 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
 
     const saleInThisMonth = p.saleId ? monthSaleIds.has(p.saleId) : false;
     const customerName =
-      p.customerName ||
-      sale?.customer?.name ||
-      sale?.customerName ||
-      'Unknown';
-    const invoiceNumber = p.invoiceNumber || sale?.invoiceNumber || '';
+      p.customerName || sale?.customer?.name || sale?.customerName || "Unknown";
+    const invoiceNumber = p.invoiceNumber || sale?.invoiceNumber || "";
     const entry = {
       id: p.id || p._id,
       amount: Math.round(amount),
@@ -2502,7 +3118,7 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       customerName,
       invoiceNumber,
       saleId: p.saleId || null,
-      note: p.notes || p.method || ''
+      note: p.notes || p.method || "",
     };
 
     const splitParts = {
@@ -2512,7 +3128,7 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       ownCost: ownCostPart,
       ownProfit: ownProfitPart,
       invCost: invCostPart,
-      invProfit: invProfitPart
+      invProfit: invProfitPart,
     };
 
     if (saleInThisMonth || (!p.saleId && !sale)) {
@@ -2521,7 +3137,9 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
         ...entry,
         ownAmount: Math.round(split.own),
         investorAmount: Math.round(split.investor),
-        customerName: saleInThisMonth ? customerName : customerName || 'Direct / unlinked'
+        customerName: saleInThisMonth
+          ? customerName
+          : customerName || "Direct / unlinked",
       });
       pushSplitDetails(entry, splitParts, false);
     } else {
@@ -2532,12 +3150,15 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
         ...entry,
         ownAmount: Math.round(split.own),
         investorAmount: Math.round(split.investor),
-        originalSaleDate: sale?.saleDate || sale?.createdAt || null
+        originalSaleDate: sale?.saleDate || sale?.createdAt || null,
       });
       pushSplitDetails(
-        { ...entry, originalSaleDate: sale?.saleDate || sale?.createdAt || null },
+        {
+          ...entry,
+          originalSaleDate: sale?.saleDate || sale?.createdAt || null,
+        },
         splitParts,
-        true
+        true,
       );
     }
   });
@@ -2549,7 +3170,8 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   (expenses || []).forEach((expense) => {
     if (!inMonth(expense.expenseDate || expense.createdAt)) return;
     const amount = parseFloat(expense.amount) || 0;
-    const isProduct = !!(expense.inventoryId) || expense.expenseScope === 'product';
+    const isProduct =
+      !!expense.inventoryId || expense.expenseScope === "product";
     if (isProduct) {
       productExpenses += amount;
     } else {
@@ -2557,11 +3179,12 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       generalExpensesCount += 1;
       expensesDetail.push({
         id: expense.id || expense._id,
-        title: expense.title || expense.category || expense.description || 'Expense',
-        category: expense.category || '',
+        title:
+          expense.title || expense.category || expense.description || "Expense",
+        category: expense.category || "",
         amount: Math.round(amount),
         expenseDate: expense.expenseDate || expense.createdAt,
-        notes: expense.notes || ''
+        notes: expense.notes || "",
       });
     }
   });
@@ -2575,7 +3198,10 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   const closingStockDetail = [];
   (inventory || []).forEach((inv) => {
     const sizes = inv.sizes || [];
-    const qty = sizes.reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+    const qty = sizes.reduce(
+      (sum, s) => sum + (parseFloat(s.quantity) || 0),
+      0,
+    );
     if (qty <= 0) return;
     const costPerUnit = parseFloat(inv.costPerUnit) || 0;
     const value = Math.round(qty * costPerUnit);
@@ -2591,17 +3217,17 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     }
     closingStockDetail.push({
       id: inv.id || inv._id,
-      productName: inv.productName || 'N/A',
+      productName: inv.productName || "N/A",
       qty: Math.round(qty),
       costPerUnit: Math.round(costPerUnit),
       value,
-      brand: inv.brand?.name || inv.brandName || '',
-      funding: investor ? 'investor' : 'own',
-      investorName: inv.fundingInvestorName || '',
+      brand: inv.brand?.name || inv.brandName || "",
+      funding: investor ? "investor" : "own",
+      investorName: inv.fundingInvestorName || "",
       fundingInvestorAmount: parseFloat(inv.fundingInvestorAmount) || 0,
       sizes: sizes
         .filter((s) => (parseFloat(s.quantity) || 0) > 0)
-        .map((s) => ({ size: s.size, quantity: parseFloat(s.quantity) || 0 }))
+        .map((s) => ({ size: s.size, quantity: parseFloat(s.quantity) || 0 })),
     });
   });
   closingStockDetail.sort((a, b) => b.value - a.value);
@@ -2612,7 +3238,7 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
       qty: Math.round(p.qty),
       bill: Math.round(p.bill),
       cost: Math.round(p.cost),
-      profit: Math.round(p.bill - p.cost)
+      profit: Math.round(p.bill - p.cost),
     }))
     .sort((a, b) => b.bill - a.bill);
 
@@ -2620,15 +3246,15 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   // Unpaid sold pieces abhi loss nahi — baad mein recovery pe aayengi.
   const matchedSoldCost = monthSalesPaidDetail.reduce(
     (sum, row) => sum + (parseFloat(row.costAmount) || 0),
-    0
+    0,
   );
   const ownMatchedSoldCost = ownMonthPaidDetail.reduce(
     (sum, row) => sum + (parseFloat(row.costAmount) || 0),
-    0
+    0,
   );
   const investorMatchedSoldCost = investorMonthPaidDetail.reduce(
     (sum, row) => sum + (parseFloat(row.costAmount) || 0),
-    0
+    0,
   );
   const unpaidSoldCost = Math.max(0, soldCost - matchedSoldCost);
 
@@ -2637,9 +3263,13 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
   const netProfit = tradingProfit + priorRecoveryProfit - generalExpenses;
   const cashAfterExpenses =
     totalPaid - matchedSoldCost - priorRecoveryCost - generalExpenses;
-  // Aapka net — own cash-matched trading + own recovery-profit − expenses
+  // Own vs investor contributions (expenses shared at net level)
   const ownTrading = ownMonthSalesPaid - ownMatchedSoldCost;
-  const ownNetWithRecovery = ownTrading + ownPriorRecoveryProfit - generalExpenses;
+  const investorTrading = investorMonthSalesPaid - investorMatchedSoldCost;
+  const ownProfitBeforeExpenses = ownTrading + ownPriorRecoveryProfit;
+  const investorProfitBeforeExpenses =
+    investorTrading + investorPriorRecoveryProfit;
+  const ownNetWithRecovery = ownProfitBeforeExpenses - generalExpenses;
 
   const sortByPayDate = (list) => {
     list.sort((a, b) => {
@@ -2688,6 +3318,8 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     unpaidSoldCost: Math.round(unpaidSoldCost),
     ownSoldCost: Math.round(ownSoldCost),
     investorSoldCost: Math.round(investorSoldCost),
+    ownSoldBill: Math.round(ownSoldBill),
+    investorSoldBill: Math.round(investorSoldBill),
     ownMatchedSoldCost: Math.round(ownMatchedSoldCost),
     investorMatchedSoldCost: Math.round(investorMatchedSoldCost),
     ownSoldQty: Math.round(ownSoldQty),
@@ -2698,6 +3330,9 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     productExpenses: Math.round(productExpenses),
     tradingProfit: Math.round(tradingProfit),
     ownTrading: Math.round(ownTrading),
+    investorTrading: Math.round(investorTrading),
+    ownProfitBeforeExpenses: Math.round(ownProfitBeforeExpenses),
+    investorProfitBeforeExpenses: Math.round(investorProfitBeforeExpenses),
     ownNetWithRecovery: Math.round(ownNetWithRecovery),
     netProfit: Math.round(netProfit),
     cashAfterExpenses: Math.round(cashAfterExpenses),
@@ -2719,52 +3354,54 @@ const buildMonthlyProfitLossData = (year, month, sales, payments, expenses, inve
     ownPriorRecoveryDetail,
     investorPriorRecoveryDetail,
     expensesDetail,
-    closingStockDetail
+    closingStockDetail,
   };
 };
 
 export const getMonthlyProfitLoss = async (year, month) => {
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, "0");
   const startStr = `${year}-${pad(month)}-01`;
   const lastDay = new Date(year, month, 0).getDate();
   const endStr = `${year}-${pad(month)}-${pad(lastDay)}`;
 
   try {
-    // All payments needed so prior months' payments reduce remaining COGS before this month's recovery
-    const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
+    // Payments from sales.payments (canonical) — not stale payments collection after credit edits
+    const [salesRes, expensesRes, inventoryRes] = await Promise.all([
       getSales(),
-      getPayments(),
       getExpenses({ startDate: startStr, endDate: endStr }),
-      getInventory()
+      getInventory(),
     ]);
+    const sales = salesRes.data || [];
+    const payments = buildCanonicalPaymentsFromSales(sales);
 
     const data = buildMonthlyProfitLossData(
       year,
       month,
-      salesRes.data || [],
-      paymentsRes.data || [],
+      sales,
+      payments,
       expensesRes.data || [],
-      inventoryRes.data || []
+      inventoryRes.data || [],
     );
 
     return { data };
   } catch (error) {
     // Fallback without date filters on expenses
     try {
-      const [salesRes, paymentsRes, expensesRes, inventoryRes] = await Promise.all([
+      const [salesRes, expensesRes, inventoryRes] = await Promise.all([
         getSales(),
-        getPayments(),
         getExpenses(),
-        getInventory()
+        getInventory(),
       ]);
+      const sales = salesRes.data || [];
+      const payments = buildCanonicalPaymentsFromSales(sales);
 
       const data = buildMonthlyProfitLossData(
         year,
         month,
-        salesRes.data || [],
-        paymentsRes.data || [],
+        sales,
+        payments,
         expensesRes.data || [],
-        inventoryRes.data || []
+        inventoryRes.data || [],
       );
 
       return { data };
@@ -2778,14 +3415,20 @@ export const getMonthlyProfitLoss = async (year, month) => {
 
 export const getInvestors = async () => {
   try {
-    const snapshot = await getDocs(query(collection(db, 'investors'), orderBy('name', 'asc')));
+    const snapshot = await getDocs(
+      query(collection(db, "investors"), orderBy("name", "asc")),
+    );
     return { data: snapshot.docs.map(docToObject) };
   } catch (error) {
-    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
-      const snapshot = await getDocs(collection(db, 'investors'));
-      const data = snapshot.docs.map(docToObject).sort((a, b) =>
-        (a.name || '').localeCompare(b.name || '')
-      );
+    if (
+      error.message &&
+      (error.message.includes("index") ||
+        error.message.includes("requires an index"))
+    ) {
+      const snapshot = await getDocs(collection(db, "investors"));
+      const data = snapshot.docs
+        .map(docToObject)
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
       return { data };
     }
     throw error;
@@ -2795,14 +3438,14 @@ export const getInvestors = async () => {
 export const createInvestor = async (investorData) => {
   try {
     const data = {
-      name: (investorData.name || '').trim(),
-      contact: investorData.contact || '',
-      notes: investorData.notes || '',
+      name: (investorData.name || "").trim(),
+      contact: investorData.contact || "",
+      notes: investorData.notes || "",
       isActive: investorData.isActive !== false,
       createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    const docRef = await addDoc(collection(db, 'investors'), data);
+    const docRef = await addDoc(collection(db, "investors"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
     throw error;
@@ -2812,13 +3455,13 @@ export const createInvestor = async (investorData) => {
 export const updateInvestor = async (id, investorData) => {
   try {
     const data = {
-      name: (investorData.name || '').trim(),
-      contact: investorData.contact || '',
-      notes: investorData.notes || '',
+      name: (investorData.name || "").trim(),
+      contact: investorData.contact || "",
+      notes: investorData.notes || "",
       isActive: investorData.isActive !== false,
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
     };
-    await updateDoc(doc(db, 'investors', id), data);
+    await updateDoc(doc(db, "investors", id), data);
     return { data: { id, ...data } };
   } catch (error) {
     throw error;
@@ -2827,7 +3470,7 @@ export const updateInvestor = async (id, investorData) => {
 
 export const deleteInvestor = async (id) => {
   try {
-    await deleteDoc(doc(db, 'investors', id));
+    await deleteDoc(doc(db, "investors", id));
     return { success: true };
   } catch (error) {
     throw error;
@@ -2838,15 +3481,19 @@ export const deleteInvestor = async (id) => {
 export const getInvestorLedger = async (investorId) => {
   try {
     const q = query(
-      collection(db, 'investorLedger'),
-      where('investorId', '==', investorId),
-      orderBy('date', 'desc')
+      collection(db, "investorLedger"),
+      where("investorId", "==", investorId),
+      orderBy("date", "desc"),
     );
     const snapshot = await getDocs(q);
     return { data: snapshot.docs.map(docToObject) };
   } catch (error) {
-    if (error.message && (error.message.includes('index') || error.message.includes('requires an index'))) {
-      const snapshot = await getDocs(collection(db, 'investorLedger'));
+    if (
+      error.message &&
+      (error.message.includes("index") ||
+        error.message.includes("requires an index"))
+    ) {
+      const snapshot = await getDocs(collection(db, "investorLedger"));
       const data = snapshot.docs
         .map(docToObject)
         .filter((e) => e.investorId === investorId)
@@ -2863,20 +3510,25 @@ export const getInvestorLedger = async (investorId) => {
 
 export const addInvestorLedgerEntry = async (entryData) => {
   try {
-    const type = entryData.type === 'payout' ? 'payout' : 'capital_in';
+    const type = entryData.type === "payout" ? "payout" : "capital_in";
     const data = {
       investorId: entryData.investorId,
-      investorName: entryData.investorName || '',
+      investorName: entryData.investorName || "",
       type,
       amount: parseFloat(entryData.amount) || 0,
-      notes: entryData.notes || '',
+      notes: entryData.notes || "",
       date: entryData.date
-        ? Timestamp.fromDate(new Date(entryData.date + (String(entryData.date).includes('T') ? '' : 'T12:00:00')))
+        ? Timestamp.fromDate(
+          new Date(
+            entryData.date +
+            (String(entryData.date).includes("T") ? "" : "T12:00:00"),
+          ),
+        )
         : Timestamp.now(),
       createdAt: Timestamp.now(),
-      addedBy: entryData.addedBy || ''
+      addedBy: entryData.addedBy || "",
     };
-    const docRef = await addDoc(collection(db, 'investorLedger'), data);
+    const docRef = await addDoc(collection(db, "investorLedger"), data);
     return { data: { id: docRef.id, ...data } };
   } catch (error) {
     throw error;
@@ -2885,7 +3537,7 @@ export const addInvestorLedgerEntry = async (entryData) => {
 
 export const deleteInvestorLedgerEntry = async (id) => {
   try {
-    await deleteDoc(doc(db, 'investorLedger', id));
+    await deleteDoc(doc(db, "investorLedger", id));
     return { success: true };
   } catch (error) {
     throw error;
@@ -2894,7 +3546,7 @@ export const deleteInvestorLedgerEntry = async (id) => {
 
 const getSaleLineTotalForInvestor = (item) =>
   parseFloat(item.totalPrice) ||
-  ((parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0));
+  (parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 0);
 
 const getProductSalePaymentStatsForItem = (sales, inventoryItemId) => {
   let soldQty = 0;
@@ -2910,30 +3562,43 @@ const getProductSalePaymentStatsForItem = (sales, inventoryItemId) => {
       items.reduce((sum, line) => sum + getSaleLineTotalForInvestor(line), 0) ||
       0;
     const salePaid = parseFloat(sale.paidAmount) || 0;
-    const saleRemaining =
-      parseFloat(sale.remainingAmount) >= 0
-        ? parseFloat(sale.remainingAmount)
-        : Math.max(0, saleTotal - salePaid);
 
+    let productLineTotal = 0;
+    let productSoldQty = 0;
     items.forEach((item) => {
       const invId = item.inventoryId || item.inventory;
-      if (invId !== inventoryItemId) return;
-      const lineTotal = getSaleLineTotalForInvestor(item);
-      soldQty += parseFloat(item.quantity) || 0;
-      soldAmount += lineTotal;
-      if (saleTotal > 0) {
-        const share = lineTotal / saleTotal;
-        paidAmount += salePaid * share;
-        remainingAmount += saleRemaining * share;
+      if (String(invId) !== String(inventoryItemId)) return;
+      productLineTotal += getSaleLineTotalForInvestor(item);
+      productSoldQty += parseFloat(item.quantity) || 0;
+    });
+    if (productSoldQty <= 0 && productLineTotal <= 0) return;
+
+    let taggedToProduct = 0;
+    let allTagged = 0;
+    (sale.payments || []).forEach((p) => {
+      const againstId = p.againstInventoryId;
+      if (!againstId) return;
+      const amt = parseFloat(p.amount) || 0;
+      allTagged += amt;
+      if (String(againstId) === String(inventoryItemId)) {
+        taggedToProduct += amt;
       }
     });
+    const untaggedPaid = Math.max(0, salePaid - allTagged);
+    const share = saleTotal > 0 ? productLineTotal / saleTotal : 0;
+    const productPaid = taggedToProduct + untaggedPaid * share;
+
+    soldQty += productSoldQty;
+    soldAmount += productLineTotal;
+    paidAmount += productPaid;
+    remainingAmount += Math.max(0, productLineTotal - productPaid);
   });
 
   return {
     soldQty,
     soldAmount: Math.round(soldAmount),
     paidAmount: Math.round(paidAmount),
-    remainingAmount: Math.round(remainingAmount)
+    remainingAmount: Math.round(remainingAmount),
   };
 };
 
@@ -2946,7 +3611,7 @@ export const getInvestorPortfolio = async (investorId) => {
     const [invRes, salesRes, ledgerRes] = await Promise.all([
       getInventory(),
       getSales(),
-      getInvestorLedger(investorId)
+      getInvestorLedger(investorId),
     ]);
 
     const inventory = invRes.data || [];
@@ -2954,7 +3619,9 @@ export const getInvestorPortfolio = async (investorId) => {
     const ledger = ledgerRes.data || [];
 
     const linkedProducts = inventory.filter(
-      (item) => item.fundingInvestorId === investorId && (parseFloat(item.fundingInvestorAmount) || 0) > 0
+      (item) =>
+        item.fundingInvestorId === investorId &&
+        (parseFloat(item.fundingInvestorAmount) || 0) > 0,
     );
 
     let capitalAllocated = 0;
@@ -2986,7 +3653,7 @@ export const getInvestorPortfolio = async (investorId) => {
       const investorSharePct = Math.round(investorShare * 1000) / 10; // 1 decimal
       const recovered = Math.min(
         investorAmt,
-        Math.round(stats.paidAmount * investorShare)
+        Math.round(stats.paidAmount * investorShare),
       );
       const costRecoveredTotal = Math.min(landed, stats.paidAmount);
       const profitAboveCost = Math.max(0, stats.paidAmount - landed);
@@ -3005,7 +3672,7 @@ export const getInvestorPortfolio = async (investorId) => {
 
       return {
         id: itemId,
-        productName: item.productName || 'N/A',
+        productName: item.productName || "N/A",
         basePurchaseCost: Math.round(basePurchase),
         productExpensesTotal: Math.round(expenses),
         totalLandedCost: Math.round(landed),
@@ -3021,15 +3688,15 @@ export const getInvestorPortfolio = async (investorId) => {
         investorRecovered: recovered,
         investorStillInStock: Math.max(0, investorAmt - recovered),
         costRecoveredTotal: Math.round(costRecoveredTotal),
-        profitAboveCost: Math.round(profitAboveCost)
+        profitAboveCost: Math.round(profitAboveCost),
       };
     });
 
     const capitalIn = ledger
-      .filter((e) => e.type === 'capital_in')
+      .filter((e) => e.type === "capital_in")
       .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
     const payouts = ledger
-      .filter((e) => e.type === 'payout')
+      .filter((e) => e.type === "payout")
       .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
 
     return {
@@ -3047,16 +3714,19 @@ export const getInvestorPortfolio = async (investorId) => {
           paidReceived: Math.round(paidReceived),
           customerDue: Math.round(customerDue),
           investorCapitalRecovered: Math.round(investorRecovered),
-          investorCapitalStillIn: Math.max(0, Math.round(capitalAllocated - investorRecovered)),
+          investorCapitalStillIn: Math.max(
+            0,
+            Math.round(capitalAllocated - investorRecovered),
+          ),
           totalProfitAboveCost: Math.round(totalProfitAboveCost),
           // Overall funding % of this investor across linked stock
           overallInvestorSharePct:
             totalLandedLinked > 0
               ? Math.round((capitalAllocated / totalLandedLinked) * 1000) / 10
-              : 0
+              : 0,
         },
-        ledger
-      }
+        ledger,
+      },
     };
   } catch (error) {
     throw error;

@@ -26,6 +26,122 @@ const formatDisplayName = (name) => {
         .join(' ');
 };
 
+const getSaleItemLineTotal = (item) =>
+    parseFloat(item?.totalPrice) ||
+    ((parseFloat(item?.unitPrice) || 0) * (parseFloat(item?.quantity) || 0));
+
+/**
+ * Per-line billed / paid / due for a sale.
+ * Tagged payments go to that line; untagged paid splits by bill share.
+ * excludePayment: optional payment object to ignore (e.g. while editing it).
+ */
+const getSaleLineDueBreakdown = (sale, excludePayment = null) => {
+    const items = sale?.items || [];
+    const saleTotal =
+        parseFloat(sale?.totalAmount) ||
+        items.reduce((sum, line) => sum + getSaleItemLineTotal(line), 0) ||
+        0;
+    const salePaid = parseFloat(sale?.paidAmount) || 0;
+
+    const payments = (sale?.payments || []).filter((p) => {
+        if (!excludePayment) return true;
+        if (excludePayment._paymentKey && p._paymentKey) {
+            return p._paymentKey !== excludePayment._paymentKey;
+        }
+        if (excludePayment.collectionId || excludePayment.paymentId) {
+            const key = excludePayment.collectionId || excludePayment.paymentId;
+            return (p.collectionId || p.paymentId) !== key;
+        }
+        return p !== excludePayment;
+    });
+
+    let allTagged = 0;
+    const taggedByLine = items.map(() => 0);
+    payments.forEach((p) => {
+        if (!p.againstInventoryId) return;
+        const amt = parseFloat(p.amount) || 0;
+        allTagged += amt;
+        if (typeof p.againstLineIndex === 'number' && p.againstLineIndex >= 0 && p.againstLineIndex < items.length) {
+            taggedByLine[p.againstLineIndex] += amt;
+            return;
+        }
+        // Tagged to product but no line index → split across that product's lines
+        const againstId = String(p.againstInventoryId);
+        let productTotal = 0;
+        items.forEach((line) => {
+            if (String(line.inventoryId || line.inventory) === againstId) {
+                productTotal += getSaleItemLineTotal(line);
+            }
+        });
+        if (productTotal <= 0) return;
+        items.forEach((line, idx) => {
+            if (String(line.inventoryId || line.inventory) !== againstId) return;
+            const lt = getSaleItemLineTotal(line);
+            taggedByLine[idx] += amt * (lt / productTotal);
+        });
+    });
+
+    // If we exclude a payment, paidAmount still includes it — subtract excluded amount
+    let adjustedPaid = salePaid;
+    if (excludePayment) {
+        adjustedPaid = Math.max(0, salePaid - (parseFloat(excludePayment.amount) || 0));
+    }
+    const untaggedPaid = Math.max(0, adjustedPaid - allTagged);
+
+    return items.map((item, index) => {
+        const billed = getSaleItemLineTotal(item);
+        const share = saleTotal > 0 ? billed / saleTotal : 0;
+        const paid = taggedByLine[index] + untaggedPaid * share;
+        const due = Math.max(0, billed - paid);
+        return {
+            index,
+            item,
+            billed: Math.round(billed),
+            paid: Math.round(paid),
+            due: Math.round(due)
+        };
+    });
+};
+
+const formatSaleLineLabel = (item, index, dueAmount = null) => {
+    const name = item?.productName || `Line ${index + 1}`;
+    const size = item?.size ? ` · ${item.size}` : '';
+    const qty = parseFloat(item?.quantity) || 0;
+    const duePart =
+        dueAmount != null
+            ? ` · Due Rs. ${Number(dueAmount).toLocaleString()}`
+            : ` · Rs. ${getSaleItemLineTotal(item).toLocaleString()}`;
+    return `${name}${size} · Qty ${qty}${duePart}`;
+};
+
+/** Optional against-product payload from sale line index ('' = whole sale). */
+const resolveAgainstProduct = (sale, lineIndexStr) => {
+    if (lineIndexStr === '' || lineIndexStr == null) {
+        return {
+            againstInventoryId: '',
+            againstProductName: '',
+            againstSize: '',
+            againstLineIndex: ''
+        };
+    }
+    const idx = parseInt(lineIndexStr, 10);
+    const item = sale?.items?.[idx];
+    if (!item || Number.isNaN(idx)) {
+        return {
+            againstInventoryId: '',
+            againstProductName: '',
+            againstSize: '',
+            againstLineIndex: ''
+        };
+    }
+    return {
+        againstInventoryId: String(item.inventoryId || item.inventory || ''),
+        againstProductName: item.productName || '',
+        againstSize: item.size || '',
+        againstLineIndex: idx
+    };
+};
+
 const Sales = () => {
     const [sales, setSales] = useState([]);
     const [customers, setCustomers] = useState([]);
@@ -75,7 +191,8 @@ const Sales = () => {
         method: 'Cash',
         notes: '',
         addedBy: '',
-        paymentDate: new Date().toISOString().split('T')[0]
+        paymentDate: new Date().toISOString().split('T')[0],
+        againstLineIndex: ''
     });
 
     const [editPaymentData, setEditPaymentData] = useState({
@@ -83,7 +200,8 @@ const Sales = () => {
         method: 'Cash',
         notes: '',
         editedBy: '',
-        paymentDate: new Date().toISOString().split('T')[0]
+        paymentDate: new Date().toISOString().split('T')[0],
+        againstLineIndex: ''
     });
 
     const [newCustomerData, setNewCustomerData] = useState({
@@ -215,16 +333,16 @@ const Sales = () => {
         setSaleFormData({
             customer: sale.customerId || sale.customer?.id || sale.customer?._id || '',
             items: sale.items?.map(item => ({
-                inventory: item.inventoryId || item.inventory,
-                productName: item.productName,
-                size: item.size,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
-                inventorySellingPrice: item.inventorySellingPrice,
-                inventoryCostPrice: item.inventoryCostPrice,
-                profitPerUnit: item.profitPerUnit,
-                totalProfit: item.totalProfit,
+                    inventory: item.inventoryId || item.inventory,
+                    productName: item.productName,
+                    size: item.size,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalPrice: item.totalPrice || (item.unitPrice * item.quantity),
+                    inventorySellingPrice: item.inventorySellingPrice,
+                    inventoryCostPrice: item.inventoryCostPrice,
+                    profitPerUnit: item.profitPerUnit,
+                    totalProfit: item.totalProfit,
                 addedToSaleAt: item.addedToSaleAt ?? null
             })) || [],
             paidAmount: sale.paidAmount || '',
@@ -247,7 +365,7 @@ const Sales = () => {
                     updated.size = preferred?.size || '';
                     updated.unitPrice = selectedInventory.sellingPrice ?? '';
                 } else {
-                    updated.size = '';
+                updated.size = '';
                     updated.unitPrice = '';
                 }
             }
@@ -390,6 +508,16 @@ const Sales = () => {
         }
     };
 
+    const getAgainstLineMax = (sale, againstLineIndex, saleMax, excludePayment = null) => {
+        const saleCap = Math.max(0, parseFloat(saleMax) || 0);
+        if (againstLineIndex === '' || againstLineIndex == null) return saleCap;
+        const line = getSaleLineDueBreakdown(sale, excludePayment).find(
+            (l) => String(l.index) === String(againstLineIndex)
+        );
+        if (!line) return saleCap;
+        return Math.min(Math.max(0, line.due), saleCap);
+    };
+
     const handleAddPayment = async (e) => {
         e.preventDefault();
         if (!paymentData.amount) {
@@ -398,12 +526,19 @@ const Sales = () => {
         }
         const amount = parseFloat(paymentData.amount);
         const remaining = parseFloat(selectedSale?.remainingAmount) || 0;
+        const againstMax = getAgainstLineMax(selectedSale, paymentData.againstLineIndex, remaining);
         if (!(amount > 0)) {
             showError('Amount must be greater than 0');
             return;
         }
-        if (amount > remaining + 0.001) {
-            showError(`Amount cannot exceed remaining due (Rs. ${remaining.toLocaleString()})`);
+        if (amount > againstMax + 0.001) {
+            if (paymentData.againstLineIndex !== '' && paymentData.againstLineIndex != null) {
+                showError(
+                    `Amount cannot exceed this product's due (Rs. ${againstMax.toLocaleString()}). Use Whole sale (auto split) for a larger amount.`
+                );
+            } else {
+                showError(`Amount cannot exceed remaining due (Rs. ${remaining.toLocaleString()})`);
+            }
             return;
         }
         if (!paymentData.addedBy) {
@@ -417,6 +552,7 @@ const Sales = () => {
 
         setSaving(true);
         try {
+            const against = resolveAgainstProduct(selectedSale, paymentData.againstLineIndex);
             await addPayment(selectedSale.id || selectedSale._id, {
                 amount,
                 paymentMethod: paymentData.method,
@@ -424,7 +560,8 @@ const Sales = () => {
                 notes: paymentData.notes,
                 addedBy: paymentData.addedBy,
                 paymentDate: paymentData.paymentDate,
-                date: paymentData.paymentDate
+                date: paymentData.paymentDate,
+                ...against
             });
             showSuccess('Payment added successfully!');
             setShowPaymentModal(false);
@@ -433,7 +570,8 @@ const Sales = () => {
                 method: 'Cash',
                 notes: '',
                 addedBy: '',
-                paymentDate: new Date().toISOString().split('T')[0]
+                paymentDate: new Date().toISOString().split('T')[0],
+                againstLineIndex: ''
             });
             await refreshSelectedSale();
         } catch (error) {
@@ -466,12 +604,17 @@ const Sales = () => {
         const originalAmt = parseFloat(payment.amount) || 0;
         setEditingPaymentKey(payment._paymentKey || getPaymentKey(payment, 0));
         setOriginalEditPaymentAmount(originalAmt);
+        const lineIdx =
+            typeof payment.againstLineIndex === 'number'
+                ? String(payment.againstLineIndex)
+                : '';
         setEditPaymentData({
             amount: payment.amount != null ? String(payment.amount) : '',
             method: payment.paymentMethod || 'Cash',
             notes: payment.notes || '',
             editedBy: '',
-            paymentDate: dateStr
+            paymentDate: dateStr,
+            againstLineIndex: lineIdx
         });
         setShowEditPaymentModal(true);
     };
@@ -484,13 +627,32 @@ const Sales = () => {
         }
         const amount = parseFloat(editPaymentData.amount);
         const remaining = parseFloat(selectedSale.remainingAmount) || 0;
-        const maxAllowed = remaining + (originalEditPaymentAmount || 0);
+        const saleMax = remaining + (originalEditPaymentAmount || 0);
+        const paymentsList = selectedSale.payments || [];
+        const editingPay =
+            paymentsList.find(
+                (p, i) =>
+                    (p.paymentId || p.collectionId || `idx-${i}`) === editingPaymentKey ||
+                    p._paymentKey === editingPaymentKey
+            ) || null;
+        const againstMax = getAgainstLineMax(
+            selectedSale,
+            editPaymentData.againstLineIndex,
+            saleMax,
+            editingPay
+        );
         if (!(amount > 0)) {
             showError('Amount must be greater than 0');
             return;
         }
-        if (amount > maxAllowed + 0.001) {
-            showError(`Amount cannot exceed Rs. ${maxAllowed.toLocaleString()} (remaining + this payment)`);
+        if (amount > againstMax + 0.001) {
+            if (editPaymentData.againstLineIndex !== '' && editPaymentData.againstLineIndex != null) {
+                showError(
+                    `Amount cannot exceed this product's due (Rs. ${againstMax.toLocaleString()}). Use Whole sale (auto split) for a larger amount.`
+                );
+            } else {
+                showError(`Amount cannot exceed Rs. ${saleMax.toLocaleString()} (remaining + this payment)`);
+            }
             return;
         }
         if (!editPaymentData.editedBy) {
@@ -503,13 +665,15 @@ const Sales = () => {
         }
         setSaving(true);
         try {
+            const against = resolveAgainstProduct(selectedSale, editPaymentData.againstLineIndex);
             await updateSalePayment(selectedSale.id || selectedSale._id, editingPaymentKey, {
                 amount,
                 paymentMethod: editPaymentData.method,
                 method: editPaymentData.method,
                 notes: editPaymentData.notes,
                 editedBy: editPaymentData.editedBy,
-                date: editPaymentData.paymentDate
+                date: editPaymentData.paymentDate,
+                ...against
             });
             showSuccess('Payment updated successfully!');
             setShowEditPaymentModal(false);
@@ -812,11 +976,11 @@ const Sales = () => {
                 <div class="info-line">
                     <span>Invoice</span>
                     <span>${sale.invoiceNumber}</span>
-                </div>
+                    </div>
                 <div class="info-line">
                     <span>Date</span>
                     <span>${saleDate}</span>
-                </div>
+                    </div>
                 <div class="info-line">
                     <span>Customer</span>
                     <span>${customerName}</span>
@@ -1121,7 +1285,8 @@ const Sales = () => {
             method: 'Cash',
             notes: '',
             addedBy: '',
-            paymentDate: new Date().toISOString().split('T')[0]
+            paymentDate: new Date().toISOString().split('T')[0],
+            againstLineIndex: ''
         });
         setShowPaymentModal(true);
         setOpenMenuId(null);
@@ -1279,23 +1444,23 @@ const Sales = () => {
                         </div>
                         <div className="relative flex-1 lg:max-w-md lg:ml-auto">
                             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint" size={18} />
-                            <input
-                                type="text"
+                        <input
+                            type="text"
                                 placeholder="Search invoices, customers…"
-                                value={searchTerm}
+                            value={searchTerm}
                                 onChange={(e) => {
                                     setSearchTerm(e.target.value);
                                     setCurrentPage(1);
                                 }}
                                 className="w-full pl-10 pr-4 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink placeholder-neutral-400 focus:bg-white focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400 outline-none transition-colors"
-                            />
-                        </div>
+                        />
+                    </div>
                     </div>
                 </div>
 
                 {loading ? (
                     <div className="p-4 sm:p-6">
-                        <ListItemShimmer count={5} />
+                    <ListItemShimmer count={5} />
                     </div>
                 ) : filteredSales.length === 0 ? (
                     <div className="py-14 sm:py-20 px-4 sm:px-6 text-center">
@@ -1309,17 +1474,17 @@ const Sales = () => {
                                 : 'Create your first sale to start tracking credit and payments.'}
                         </p>
                         {!searchTerm && !filterStatus && (
-                            <button
+                                                    <button
                                 type="button"
-                                onClick={() => {
+                                                        onClick={() => {
                                     resetSaleForm();
                                     setShowSaleModal(true);
-                                }}
+                                                        }}
                                 className="btn-secondary mt-5 inline-flex items-center gap-2"
-                            >
+                                                    >
                                 <Plus className="w-4 h-4" />
                                 New sale
-                            </button>
+                                                    </button>
                         )}
                     </div>
                 ) : (
@@ -1337,7 +1502,7 @@ const Sales = () => {
                                 return (
                                     <div key={saleId} className="p-4 space-y-3.5 hover:bg-neutral-50/50">
                                         <div className="flex items-start justify-between gap-3">
-                                            <button
+                                                    <button
                                                 type="button"
                                                 onClick={() => openSaleDetails(sale)}
                                                 className="flex items-center gap-3 min-w-0 text-left"
@@ -1353,7 +1518,7 @@ const Sales = () => {
                                                         {dateParts.day}
                                                     </p>
                                                 </div>
-                                            </button>
+                                                    </button>
                                             <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border shrink-0 ${statusBadgeClass(sale.paymentStatus)}`}>
                                                 {sale.paymentStatus || 'N/A'}
                                             </span>
@@ -1392,15 +1557,15 @@ const Sales = () => {
                                         </div>
 
                                         <div className="flex items-center gap-2">
-                                            <button
+                                                    <button
                                                 type="button"
                                                 onClick={() => openSaleDetails(sale)}
                                                 className="flex-1 min-h-[44px] rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink hover:bg-neutral-50"
                                             >
                                                 View
-                                            </button>
+                                                    </button>
                                             {sale.paymentStatus !== 'Paid' && (
-                                                <button
+                                                    <button
                                                     type="button"
                                                     onClick={() => openAddPayment(sale)}
                                                     className="flex-1 min-h-[44px] rounded-xl bg-ink text-white text-sm font-medium"
@@ -1410,21 +1575,21 @@ const Sales = () => {
                                             )}
                                             <button
                                                 type="button"
-                                                onClick={() => handleEditSale(sale)}
+                                                        onClick={() => handleEditSale(sale)}
                                                 className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-ink-muted"
                                                 aria-label="Edit"
-                                            >
-                                                <Edit2 className="w-4 h-4" />
-                                            </button>
+                                                    >
+                                                        <Edit2 className="w-4 h-4" />
+                                                    </button>
                                             <div className="relative" ref={isMenuOpen ? menuRef : null}>
-                                                <button
+                                                        <button
                                                     type="button"
                                                     onClick={() => setOpenMenuId(isMenuOpen ? null : saleId)}
                                                     className="min-h-[44px] min-w-[44px] rounded-xl border border-neutral-200 flex items-center justify-center text-ink-muted"
                                                     aria-label="More"
                                                 >
                                                     <MoreHorizontal className="w-4 h-4" />
-                                                </button>
+                                                        </button>
                                                 {isMenuOpen && (
                                                     <div className="absolute right-0 bottom-full mb-2 w-52 bg-white border border-neutral-200 rounded-xl shadow-elevated py-1 z-30">
                                                         <button type="button" onClick={() => { handlePrintReceipt(sale); setOpenMenuId(null); }} className="w-full px-3 py-2.5 text-left text-sm text-ink hover:bg-neutral-50 flex items-center gap-2">
@@ -1567,13 +1732,13 @@ const Sales = () => {
                                                                     <div className="my-1 border-t border-neutral-100" />
                                                                     <button type="button" onClick={() => { handleDeleteSale(saleId); setOpenMenuId(null); }} disabled={deleting === saleId} className="w-full px-3 py-2 text-left text-sm text-rose-600 hover:bg-rose-50 flex items-center gap-2 disabled:opacity-50">
                                                                         <Trash2 className="w-3.5 h-3.5" /> Delete sale
-                                                                    </button>
+                                                    </button>
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    </div>
-                                                </td>
-                                            </tr>
+                                                </div>
+                                            </td>
+                                        </tr>
                                         );
                                     })}
                                 </tbody>
@@ -1586,27 +1751,27 @@ const Sales = () => {
                                     Page {currentPage} of {totalPages} · {filteredSales.length} sales
                                 </p>
                                 <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
-                                    <button
+                                <button
                                         type="button"
-                                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                                        disabled={currentPage === 1}
+                                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                    disabled={currentPage === 1}
                                         className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink disabled:opacity-40 hover:bg-neutral-50 min-h-[40px]"
-                                    >
-                                        <ChevronLeft className="w-4 h-4" />
-                                        Previous
-                                    </button>
+                                >
+                                    <ChevronLeft className="w-4 h-4" />
+                                    Previous
+                                </button>
                                     <span className="text-xs text-ink-muted tabular-nums sm:hidden">
                                         {currentPage}/{totalPages}
-                                    </span>
-                                    <button
+                                </span>
+                                <button
                                         type="button"
-                                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                                        disabled={currentPage === totalPages}
+                                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                    disabled={currentPage === totalPages}
                                         className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink disabled:opacity-40 hover:bg-neutral-50 min-h-[40px]"
-                                    >
-                                        Next
-                                        <ChevronRight className="w-4 h-4" />
-                                    </button>
+                                >
+                                    Next
+                                    <ChevronRight className="w-4 h-4" />
+                                </button>
                                 </div>
                             </div>
                         )}
@@ -1657,7 +1822,7 @@ const Sales = () => {
                                 >
                                     <X size={18} />
                                 </button>
-                            </div>
+                        </div>
 
                             <form onSubmit={handleSubmitSale} className="p-4 sm:p-6 space-y-4">
                                 {/* Customer */}
@@ -1702,76 +1867,76 @@ const Sales = () => {
                                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
                                             <div className="lg:col-span-4">
                                                 <label className="text-[11px] font-medium text-ink-muted mb-1 block">Product</label>
-                                                <select
-                                                    value={currentItem.inventory}
-                                                    onChange={(e) => handleCurrentItemChange('inventory', e.target.value)}
+                                        <select
+                                            value={currentItem.inventory}
+                                            onChange={(e) => handleCurrentItemChange('inventory', e.target.value)}
                                                     className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
                                                 >
                                                     <option value="">Select product</option>
                                                     {inventory.map((item) => (
-                                                        <option key={item.id || item._id} value={item.id || item._id}>
+                                                    <option key={item.id || item._id} value={item.id || item._id}>
                                                             {item.productName}
-                                                        </option>
+                                                    </option>
                                                     ))}
-                                                </select>
+                                        </select>
                                             </div>
                                             <div className="lg:col-span-2">
                                                 <label className="text-[11px] font-medium text-ink-muted mb-1 block">Size</label>
-                                                <select
-                                                    value={currentItem.size}
-                                                    onChange={(e) => handleCurrentItemChange('size', e.target.value)}
+                                        <select
+                                            value={currentItem.size}
+                                            onChange={(e) => handleCurrentItemChange('size', e.target.value)}
                                                     className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none disabled:opacity-50"
-                                                    disabled={!currentItem.inventory}
-                                                >
+                                            disabled={!currentItem.inventory}
+                                        >
                                                     <option value="">Size</option>
                                                     {getSelectedInventorySizes().map((size) => (
-                                                        <option key={size.size} value={size.size}>
+                                                <option key={size.size} value={size.size}>
                                                             {size.size} ({size.quantity})
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                </option>
+                                            ))}
+                                        </select>
                                             </div>
                                             <div className="lg:col-span-2">
                                                 <label className="text-[11px] font-medium text-ink-muted mb-1 block">Qty</label>
-                                                <input
-                                                    type="text"
+                                        <input
+                                            type="text"
                                                     inputMode="decimal"
-                                                    value={currentItem.quantity}
-                                                    onChange={(e) => {
-                                                        const value = e.target.value;
-                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                            handleCurrentItemChange('quantity', value);
-                                                        }
-                                                    }}
+                                            value={currentItem.quantity}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                    handleCurrentItemChange('quantity', value);
+                                                }
+                                            }}
                                                     className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink tabular-nums focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
                                                     placeholder="0"
-                                                />
+                                        />
                                             </div>
                                             <div className="lg:col-span-2">
                                                 <label className="text-[11px] font-medium text-ink-muted mb-1 block">Rate</label>
-                                                <input
-                                                    type="text"
+                                        <input
+                                            type="text"
                                                     inputMode="decimal"
-                                                    value={currentItem.unitPrice}
-                                                    onChange={(e) => {
-                                                        const value = e.target.value;
-                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                            handleCurrentItemChange('unitPrice', value);
-                                                        }
-                                                    }}
+                                            value={currentItem.unitPrice}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                    handleCurrentItemChange('unitPrice', value);
+                                                }
+                                            }}
                                                     className="w-full px-3 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink tabular-nums focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
                                                     placeholder="0"
-                                                />
+                                        />
                                             </div>
                                             <div className="lg:col-span-2 flex items-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={handleAddItem}
+                                        <button
+                                            type="button"
+                                            onClick={handleAddItem}
                                                     className="w-full min-h-[42px] rounded-xl bg-ink text-white text-sm font-semibold hover:bg-ink-soft transition-colors"
-                                                >
+                                        >
                                                     Add
-                                                </button>
-                                            </div>
+                                        </button>
+                                    </div>
                                         </div>
                                         {linePreview > 0 && (
                                             <p className="text-xs text-ink-muted tabular-nums">
@@ -1781,7 +1946,7 @@ const Sales = () => {
 
                                         {saleFormData.items.length > 0 ? (
                                             <div className="rounded-xl border border-neutral-200 overflow-hidden">
-                                                <div className="overflow-x-auto">
+                                        <div className="overflow-x-auto">
                                                     <table className="w-full text-sm min-w-[560px]">
                                                         <thead className="bg-neutral-50 border-b border-neutral-100">
                                                             <tr>
@@ -1791,59 +1956,59 @@ const Sales = () => {
                                                                 <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Rate</th>
                                                                 <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Total</th>
                                                                 <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted" />
-                                                            </tr>
-                                                        </thead>
+                                                    </tr>
+                                                </thead>
                                                         <tbody className="divide-y divide-neutral-50">
-                                                            {saleFormData.items.map((item, index) => (
+                                                    {saleFormData.items.map((item, index) => (
                                                                 <tr key={index}>
                                                                     <td className="py-2.5 px-3 font-medium text-ink">{item.productName}</td>
                                                                     <td className="py-2.5 px-3 text-ink-muted">{item.size}</td>
                                                                     <td className="py-2.5 px-3">
-                                                                        <input
-                                                                            type="text"
+                                                                <input
+                                                                    type="text"
                                                                             inputMode="decimal"
-                                                                            value={item.quantity}
-                                                                            onChange={(e) => {
-                                                                                const value = e.target.value;
-                                                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                                                    handleItemChange(index, 'quantity', value);
-                                                                                }
-                                                                            }}
+                                                                    value={item.quantity}
+                                                                    onChange={(e) => {
+                                                                        const value = e.target.value;
+                                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                                            handleItemChange(index, 'quantity', value);
+                                                                        }
+                                                                    }}
                                                                             className="w-16 px-2 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm tabular-nums outline-none focus:ring-2 focus:ring-neutral-900/10"
-                                                                        />
-                                                                    </td>
+                                                                />
+                                                            </td>
                                                                     <td className="py-2.5 px-3">
-                                                                        <input
-                                                                            type="text"
+                                                                <input
+                                                                    type="text"
                                                                             inputMode="decimal"
-                                                                            value={item.unitPrice}
-                                                                            onChange={(e) => {
-                                                                                const value = e.target.value;
-                                                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                                                    handleItemChange(index, 'unitPrice', value);
-                                                                                }
-                                                                            }}
+                                                                    value={item.unitPrice}
+                                                                    onChange={(e) => {
+                                                                        const value = e.target.value;
+                                                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                                            handleItemChange(index, 'unitPrice', value);
+                                                                        }
+                                                                    }}
                                                                             className="w-24 px-2 py-1.5 bg-neutral-50 border border-neutral-200 rounded-lg text-sm tabular-nums outline-none focus:ring-2 focus:ring-neutral-900/10"
-                                                                        />
-                                                                    </td>
+                                                                />
+                                                            </td>
                                                                     <td className="py-2.5 px-3 text-right font-semibold tabular-nums text-ink">
                                                                         {formatMoney(item.totalPrice || 0)}
-                                                                    </td>
+                                                            </td>
                                                                     <td className="py-2.5 px-3 text-right">
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleRemoveItem(index)}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveItem(index)}
                                                                             className="w-8 h-8 rounded-lg text-rose-600 hover:bg-rose-50 inline-flex items-center justify-center"
                                                                             aria-label="Remove item"
-                                                                        >
-                                                                            <Trash2 className="w-4 h-4" />
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
+                                                                >
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                                 <div className="flex items-center justify-between gap-3 px-3 py-3 bg-neutral-50 border-t border-neutral-100">
                                                     <p className="text-xs text-ink-muted">{saleFormData.items.length} line{saleFormData.items.length !== 1 ? 's' : ''}</p>
                                                     <p className="text-sm font-bold text-ink tabular-nums">
@@ -1862,7 +2027,7 @@ const Sales = () => {
                                 {/* Payment */}
                                 <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft p-4 sm:p-5 space-y-4">
                                     <div className="flex flex-wrap items-end justify-between gap-2">
-                                        <div>
+                                    <div>
                                             <h4 className="text-sm font-semibold text-ink">Payment</h4>
                                             <p className="text-xs text-ink-muted mt-0.5">
                                                 Max {formatMoney(saleItemsTotal)} · 0 to full bill
@@ -1882,22 +2047,22 @@ const Sales = () => {
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         <div>
                                             <label className="text-[11px] font-medium text-ink-muted mb-1 block">Paid amount</label>
-                                            <input
-                                                type="text"
+                                        <input
+                                            type="text"
                                                 inputMode="decimal"
-                                                value={saleFormData.paidAmount}
-                                                onChange={(e) => {
-                                                    const value = e.target.value;
-                                                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                        setSaleFormData({ ...saleFormData, paidAmount: value });
-                                                    }
-                                                }}
+                                            value={saleFormData.paidAmount}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                                    setSaleFormData({ ...saleFormData, paidAmount: value });
+                                                }
+                                            }}
                                                 className={`w-full px-3.5 py-2.5 rounded-xl text-sm tabular-nums outline-none border ${paidExceedsTotal
                                                     ? 'bg-rose-50 border-rose-300 text-rose-800 focus:ring-2 focus:ring-rose-200'
                                                     : 'bg-neutral-50 border-neutral-200 text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10'
                                                     }`}
-                                                placeholder="0"
-                                            />
+                                            placeholder="0"
+                                        />
                                             {paidExceedsTotal ? (
                                                 <p className="text-xs text-rose-600 mt-1.5 font-medium">
                                                     Paid bill se zyada nahi ho sakta (max {formatMoney(saleItemsTotal)})
@@ -1907,22 +2072,22 @@ const Sales = () => {
                                                     Due after this: {formatMoney(dueNow)}
                                                 </p>
                                             )}
-                                        </div>
-                                        <div>
-                                            <label className="text-[11px] font-medium text-ink-muted mb-1 block">Sale type</label>
-                                            <select
-                                                value={saleFormData.saleType}
-                                                onChange={(e) => setSaleFormData({ ...saleFormData, saleType: e.target.value })}
-                                                className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
-                                            >
-                                                <option value="Cash">Cash</option>
-                                                <option value="Credit">Credit</option>
-                                            </select>
-                                        </div>
                                     </div>
+                                    <div>
+                                            <label className="text-[11px] font-medium text-ink-muted mb-1 block">Sale type</label>
+                                        <select
+                                            value={saleFormData.saleType}
+                                            onChange={(e) => setSaleFormData({ ...saleFormData, saleType: e.target.value })}
+                                                className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none"
+                                        >
+                                            <option value="Cash">Cash</option>
+                                            <option value="Credit">Credit</option>
+                                        </select>
+                                    </div>
+                                </div>
 
                                     {!editingSale && (
-                                        <div>
+                                <div>
                                             <label className="text-[11px] font-medium text-ink-muted mb-1 block">Added by</label>
                                             <select
                                                 required
@@ -1940,38 +2105,38 @@ const Sales = () => {
 
                                     <div>
                                         <label className="text-[11px] font-medium text-ink-muted mb-1 block">Notes</label>
-                                        <textarea
-                                            value={saleFormData.notes}
-                                            onChange={(e) => setSaleFormData({ ...saleFormData, notes: e.target.value })}
+                                    <textarea
+                                        value={saleFormData.notes}
+                                        onChange={(e) => setSaleFormData({ ...saleFormData, notes: e.target.value })}
                                             className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-ink focus:bg-white focus:ring-2 focus:ring-neutral-900/10 outline-none resize-none"
                                             rows="2"
                                             placeholder="Optional notes…"
-                                        />
-                                    </div>
+                                    />
                                 </div>
+                            </div>
 
                                 <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-1">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setShowSaleModal(false);
-                                            resetSaleForm();
-                                        }}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowSaleModal(false);
+                                        resetSaleForm();
+                                    }}
                                         className="min-h-[44px] px-4 rounded-xl border border-neutral-200 bg-white text-sm font-medium text-ink hover:bg-neutral-50"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
                                         disabled={saving || paidExceedsTotal || saleFormData.items.length === 0}
                                         className="min-h-[44px] px-5 rounded-xl bg-ink text-white text-sm font-semibold hover:bg-ink-soft disabled:opacity-50 inline-flex items-center justify-center gap-2"
                                     >
                                         {saving ? (editingSale ? 'Updating…' : 'Creating…') : (editingSale ? 'Update sale' : 'Create sale')}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
+                                </button>
+                            </div>
+                        </form>
                     </div>
+                </div>
                 );
             })()}
 
@@ -2081,7 +2246,7 @@ const Sales = () => {
                                     <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft px-3.5 py-3">
                                         <p className="text-[11px] font-medium text-ink-muted">Billed</p>
                                         <p className="text-base sm:text-lg font-bold text-ink tabular-nums mt-1 break-words">{formatMoney(totalAmount)}</p>
-                                    </div>
+                        </div>
                                     <div className="bg-white rounded-xl border border-neutral-200/90 shadow-soft px-3.5 py-3">
                                         <p className="text-[11px] font-medium text-ink-muted">Paid</p>
                                         <p className="text-base sm:text-lg font-bold text-emerald-700 tabular-nums mt-1 break-words">{formatMoney(paidAmount)}</p>
@@ -2106,23 +2271,23 @@ const Sales = () => {
                                         />
                                     </div>
                                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                                        <div>
+                                <div>
                                             <p className="text-[11px] text-ink-muted">Customer</p>
                                             <p className="font-semibold text-ink mt-0.5">{customerName}</p>
-                                        </div>
-                                        <div>
+                                </div>
+                                <div>
                                             <p className="text-[11px] text-ink-muted">Date</p>
                                             <p className="font-medium text-ink mt-0.5">{formatDate(selectedSale.saleDate)}</p>
-                                        </div>
-                                        <div>
+                                </div>
+                                <div>
                                             <p className="text-[11px] text-ink-muted">Staff</p>
                                             <p className="font-medium text-ink mt-0.5">{selectedSale.addedBy || '—'}</p>
-                                        </div>
-                                        <div>
+                                </div>
+                                <div>
                                             <p className="text-[11px] text-ink-muted">Type</p>
                                             <p className="font-medium text-ink mt-0.5">{selectedSale.saleType || 'Cash'}</p>
-                                        </div>
-                                    </div>
+                                </div>
+                            </div>
                                 </div>
 
                                 <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
@@ -2130,7 +2295,7 @@ const Sales = () => {
                                         <h4 className="text-sm font-semibold text-ink">Items</h4>
                                         <p className="text-xs text-ink-muted mt-0.5">{selectedSale.items?.length || 0} line{(selectedSale.items?.length || 0) !== 1 ? 's' : ''}</p>
                                     </div>
-                                    <div className="overflow-x-auto">
+                                <div className="overflow-x-auto">
                                         <table className="w-full text-sm min-w-[520px]">
                                             <thead className="bg-neutral-50 border-b border-neutral-100">
                                                 <tr>
@@ -2139,8 +2304,8 @@ const Sales = () => {
                                                     <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Qty</th>
                                                     <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Rate</th>
                                                     <th className="text-right py-2.5 px-4 text-xs font-medium text-ink-muted">Total</th>
-                                                </tr>
-                                            </thead>
+                                            </tr>
+                                        </thead>
                                             <tbody className="divide-y divide-neutral-50">
                                                 {selectedSale.items?.map((item, index) => (
                                                     <tr key={index}>
@@ -2156,17 +2321,17 @@ const Sales = () => {
                                                         <td className="py-3 px-4 text-right font-semibold tabular-nums text-ink">{formatMoney(item.totalPrice)}</td>
                                                     </tr>
                                                 ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                        </tbody>
+                                    </table>
                                 </div>
+                            </div>
 
                                 <div className="bg-white rounded-2xl border border-neutral-200/90 shadow-soft overflow-hidden">
                                     <div className="px-4 sm:px-5 py-3.5 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                        <div>
+                                    <div>
                                             <h4 className="text-sm font-semibold text-ink">Payment history</h4>
                                             <p className="text-xs text-ink-muted mt-0.5">When money was received on this invoice</p>
-                                        </div>
+                                    </div>
                                         <select
                                             value={paymentHistoryFilter}
                                             onChange={(e) => setPaymentHistoryFilter(e.target.value)}
@@ -2177,14 +2342,14 @@ const Sales = () => {
                                             <option value="Partial">Partial sales</option>
                                             <option value="Unpaid">Unpaid sales</option>
                                         </select>
-                                    </div>
+                                </div>
 
                                     <div className="p-4 sm:p-5">
                                         {paymentHistoryFilter === 'Unpaid' && paidAmount === 0 ? (
                                             <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3">
                                                 <p className="text-sm font-semibold text-rose-800">Unpaid sale</p>
                                                 <p className="text-xs text-rose-700 mt-1">No payments yet · bill {formatMoney(totalAmount)}</p>
-                                            </div>
+                                                </div>
                                         ) : paymentsToShow.length === 0 && paymentHistoryFilter !== 'All' ? (
                                             <p className="text-sm text-ink-muted text-center py-8">No payments for this filter</p>
                                         ) : existingPayments.length === 0 ? (
@@ -2201,41 +2366,42 @@ const Sales = () => {
                                                                 <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Method</th>
                                                                 <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Type</th>
                                                                 <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">By</th>
+                                                                <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Against</th>
                                                                 <th className="text-left py-2.5 px-3 text-xs font-medium text-ink-muted">Notes</th>
                                                                 <th className="text-right py-2.5 px-3 text-xs font-medium text-ink-muted">Actions</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-neutral-50">
                                                             {paymentsToShow.map((payment, index) => {
-                                                                let paymentDate;
+                                                                    let paymentDate;
                                                                 if (payment.date?.toDate) paymentDate = payment.date.toDate();
                                                                 else if (payment.date?.seconds) paymentDate = new Date(payment.date.seconds * 1000);
                                                                 else if (payment.date instanceof Date) paymentDate = payment.date;
                                                                 else if (payment.date) paymentDate = new Date(payment.date);
                                                                 else paymentDate = new Date();
 
-                                                                const formattedTime = paymentDate.toLocaleTimeString('en-US', {
-                                                                    hour: '2-digit',
-                                                                    minute: '2-digit',
-                                                                    hour12: true
-                                                                });
+                                                                    const formattedTime = paymentDate.toLocaleTimeString('en-US', {
+                                                                        hour: '2-digit',
+                                                                        minute: '2-digit',
+                                                                        hour12: true
+                                                                    });
 
-                                                                return (
+                                                                    return (
                                                                     <tr key={payment._paymentKey} className="hover:bg-neutral-50/80">
                                                                         <td className="py-3 px-3 text-ink-muted tabular-nums">{index + 1}</td>
-                                                                        <td className="py-3 px-3">
+                                                                            <td className="py-3 px-3">
                                                                             <p className="font-medium text-ink">{formatDate(paymentDate)}</p>
                                                                             <p className="text-[11px] text-ink-muted mt-0.5">{formattedTime}</p>
                                                                         </td>
                                                                         <td className="py-3 px-3 text-right font-semibold text-emerald-700 tabular-nums">
                                                                             {formatMoney(payment.amount)}
-                                                                        </td>
-                                                                        <td className="py-3 px-3">
+                                                                            </td>
+                                                                            <td className="py-3 px-3">
                                                                             <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-medium bg-neutral-100 text-ink border border-neutral-200">
                                                                                 {payment.paymentMethod || 'Cash'}
-                                                                            </span>
-                                                                        </td>
-                                                                        <td className="py-3 px-3">
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="py-3 px-3">
                                                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold border ${payment.paymentType === 'Initial Sale'
                                                                                 ? 'bg-sky-50 text-sky-800 border-sky-100'
                                                                                 : payment.paymentType === 'Recovery'
@@ -2243,14 +2409,28 @@ const Sales = () => {
                                                                                     : 'bg-neutral-50 text-ink-muted border-neutral-200'
                                                                                 }`}>
                                                                                 {payment.paymentType || 'Payment'}
-                                                                            </span>
-                                                                        </td>
+                                                                                </span>
+                                                                            </td>
                                                                         <td className="py-3 px-3 text-xs text-ink-muted">
                                                                             {payment.editedBy ? (
                                                                                 <span>Edited · <strong className="text-ink">{payment.editedBy}</strong></span>
                                                                             ) : payment.addedBy ? (
                                                                                 <span>Added · <strong className="text-ink">{payment.addedBy}</strong></span>
                                                                             ) : '—'}
+                                                                        </td>
+                                                                        <td className="py-3 px-3 text-xs text-ink-muted max-w-[160px]">
+                                                                            {payment.againstProductName ? (
+                                                                                <span className="inline-flex flex-col gap-0.5">
+                                                                                    <span className="font-medium text-ink truncate" title={payment.againstProductName}>
+                                                                                        {payment.againstProductName}
+                                                                                    </span>
+                                                                                    {payment.againstSize ? (
+                                                                                        <span className="text-[11px] text-ink-muted">{payment.againstSize}</span>
+                                                                                    ) : null}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="text-ink-muted">Whole sale</span>
+                                                                            )}
                                                                         </td>
                                                                         <td className="py-3 px-3 text-xs text-ink-muted max-w-[140px] truncate">
                                                                             {payment.notes || '—'}
@@ -2275,10 +2455,10 @@ const Sales = () => {
                                                                                     <Trash2 className="w-3.5 h-3.5" />
                                                                                 </button>
                                                                             </div>
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
                                                         </tbody>
                                                         <tfoot className="bg-neutral-50 border-t border-neutral-100">
                                                             <tr>
@@ -2288,13 +2468,13 @@ const Sales = () => {
                                                                 <td className="py-3 px-3 text-right font-bold text-emerald-700 tabular-nums">
                                                                     {formatMoney(totalFromPayments)}
                                                                 </td>
-                                                                <td colSpan="5" />
+                                                                <td colSpan="6" />
                                                             </tr>
                                                         </tfoot>
                                                     </table>
-                                                </div>
+                                            </div>
 
-                                                {Math.abs(totalFromPayments - paidAmount) > 0.01 && (
+                                            {Math.abs(totalFromPayments - paidAmount) > 0.01 && (
                                                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                                         <div>
                                                             <p className="text-sm font-semibold text-amber-900">Payment mismatch</p>
@@ -2332,25 +2512,31 @@ const Sales = () => {
                                                         </button>
                                                     </div>
                                                 )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                                </div>
+                                            )}
+                                        </div>
                             </div>
                         </div>
                     </div>
+                </div>
                 );
             })()}
 
             {/* Payment Modal */}
             {showPaymentModal && selectedSale && (() => {
                 const remainingDue = parseFloat(selectedSale.remainingAmount) || 0;
+                const lineDues = getSaleLineDueBreakdown(selectedSale);
+                const totalLineDue = lineDues.reduce((s, l) => s + (l.due || 0), 0);
+                const againstMax = getAgainstLineMax(selectedSale, paymentData.againstLineIndex, remainingDue);
+                const productSelected = paymentData.againstLineIndex !== '' && paymentData.againstLineIndex != null;
                 const enteredAmount = parseFloat(paymentData.amount);
                 const hasAmount = paymentData.amount !== '' && !Number.isNaN(enteredAmount);
-                const amountTooHigh = hasAmount && enteredAmount > remainingDue + 0.001;
+                const amountTooHigh = hasAmount && enteredAmount > againstMax + 0.001;
                 const amountInvalid = hasAmount && enteredAmount <= 0;
                 const amountError = amountTooHigh
-                    ? `Amount cannot exceed remaining due (Rs. ${remainingDue.toLocaleString()})`
+                    ? productSelected
+                        ? `Max for this product: Rs. ${againstMax.toLocaleString()}. Use Whole sale (auto split) for more.`
+                        : `Amount cannot exceed remaining due (Rs. ${remainingDue.toLocaleString()})`
                     : amountInvalid
                         ? 'Amount must be greater than 0'
                         : '';
@@ -2384,21 +2570,26 @@ const Sales = () => {
                             <form onSubmit={handleAddPayment} className="p-5 space-y-4">
                                 <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 flex items-center justify-between gap-3">
                                     <div>
-                                        <p className="text-[11px] font-medium text-amber-800/80">Remaining due</p>
-                                        <p className="text-lg font-bold text-amber-900 tabular-nums mt-0.5">
-                                            {formatMoney(remainingDue)}
+                                        <p className="text-[11px] font-medium text-amber-800/80">
+                                            {productSelected ? 'Product due' : 'Remaining due'}
                                         </p>
-                                    </div>
+                                        <p className="text-lg font-bold text-amber-900 tabular-nums mt-0.5">
+                                            {formatMoney(againstMax)}
+                                        </p>
+                        </div>
                                     <button
                                         type="button"
-                                        onClick={() => setPaymentData({ ...paymentData, amount: String(remainingDue) })}
+                                        onClick={() => setPaymentData({
+                                            ...paymentData,
+                                            amount: againstMax > 0 ? String(againstMax) : ''
+                                        })}
                                         className="text-xs font-semibold text-amber-900 bg-white border border-amber-200 px-2.5 py-1.5 rounded-lg hover:bg-amber-50"
                                     >
                                         Pay full
                                     </button>
                                 </div>
 
-                                <div>
+                            <div>
                                     <label className="block text-sm font-medium text-ink mb-1">Staff *</label>
                                     <select
                                         required
@@ -2427,20 +2618,50 @@ const Sales = () => {
                                     </p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-ink mb-1">Amount *</label>
-                                    <input
-                                        type="text"
-                                        inputMode="decimal"
-                                        required
-                                        value={paymentData.amount}
+                                    <label className="block text-sm font-medium text-ink mb-1">
+                                        Against product <span className="font-normal text-ink-muted">(optional)</span>
+                                    </label>
+                                    <select
+                                        value={paymentData.againstLineIndex}
                                         onChange={(e) => {
-                                            const value = e.target.value;
-                                            if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                                setPaymentData({ ...paymentData, amount: value });
-                                            }
+                                            const nextIndex = e.target.value;
+                                            const nextMax = getAgainstLineMax(selectedSale, nextIndex, remainingDue);
+                                            setPaymentData({
+                                                ...paymentData,
+                                                againstLineIndex: nextIndex,
+                                                amount: nextMax > 0 ? String(nextMax) : ''
+                                            });
                                         }}
+                                        className="input-field"
+                                    >
+                                        <option value="">
+                                            Whole sale (auto split) · Due Rs. {totalLineDue.toLocaleString()}
+                                        </option>
+                                        {lineDues.map(({ item, index, due }) => (
+                                            <option key={`${item.inventoryId || item.inventory || 'line'}-${index}`} value={String(index)}>
+                                                {formatSaleLineLabel(item, index, due)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-ink-muted mt-1">
+                                        Selecting a product fills Amount with its due (cannot exceed that due)
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">Amount *</label>
+                                <input
+                                    type="text"
+                                        inputMode="decimal"
+                                    required
+                                    value={paymentData.amount}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                            setPaymentData({ ...paymentData, amount: value });
+                                        }
+                                    }}
                                         className={`input-field tabular-nums ${amountError ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20' : ''}`}
-                                        placeholder="0"
+                                    placeholder="0"
                                         aria-invalid={!!amountError}
                                     />
                                     {amountError ? (
@@ -2450,65 +2671,84 @@ const Sales = () => {
                                         </p>
                                     ) : (
                                         <p className="text-xs text-ink-muted mt-1.5">
-                                            Max allowed: {formatMoney(remainingDue)}
+                                            Max allowed: {formatMoney(againstMax)}
+                                            {productSelected ? ' for this product' : ''}
                                         </p>
                                     )}
-                                </div>
-                                <div>
+                            </div>
+                            <div>
                                     <label className="block text-sm font-medium text-ink mb-1">Payment method</label>
-                                    <select
-                                        value={paymentData.method}
-                                        onChange={(e) => setPaymentData({ ...paymentData, method: e.target.value })}
-                                        className="input-field"
-                                    >
-                                        <option value="Cash">Cash</option>
+                                <select
+                                    value={paymentData.method}
+                                    onChange={(e) => setPaymentData({ ...paymentData, method: e.target.value })}
+                                    className="input-field"
+                                >
+                                    <option value="Cash">Cash</option>
                                         <option value="Bank Transfer">Bank transfer</option>
-                                        <option value="Card">Card</option>
-                                        <option value="Other">Other</option>
-                                    </select>
-                                </div>
-                                <div>
+                                    <option value="Card">Card</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div>
                                     <label className="block text-sm font-medium text-ink mb-1">Notes</label>
-                                    <textarea
-                                        value={paymentData.notes}
-                                        onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
-                                        className="input-field"
+                                <textarea
+                                    value={paymentData.notes}
+                                    onChange={(e) => setPaymentData({ ...paymentData, notes: e.target.value })}
+                                    className="input-field"
                                         rows="2"
                                         placeholder="Optional notes..."
-                                    />
-                                </div>
+                                />
+                            </div>
                                 <div className="flex justify-end gap-2.5 pt-1">
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowPaymentModal(false)}
-                                        className="btn-secondary"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPaymentModal(false)}
+                                    className="btn-secondary"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
                                         disabled={!canSubmit}
                                         className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-                                    >
+                                >
                                         {saving ? 'Adding...' : 'Add payment'}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
+                                </button>
+                            </div>
+                        </form>
                     </div>
+                </div>
                 );
             })()}
 
             {/* Edit Payment Modal */}
             {showEditPaymentModal && selectedSale && (() => {
                 const remainingDue = parseFloat(selectedSale.remainingAmount) || 0;
-                const maxAllowed = remainingDue + (originalEditPaymentAmount || 0);
+                const saleMax = remainingDue + (originalEditPaymentAmount || 0);
+                const paymentsList = selectedSale.payments || [];
+                const editingPay =
+                    paymentsList.find(
+                        (p, i) =>
+                            (p.paymentId || p.collectionId || `idx-${i}`) === editingPaymentKey ||
+                            p._paymentKey === editingPaymentKey
+                    ) || null;
+                const lineDues = getSaleLineDueBreakdown(selectedSale, editingPay);
+                const totalLineDue = lineDues.reduce((s, l) => s + (l.due || 0), 0);
+                const againstMax = getAgainstLineMax(
+                    selectedSale,
+                    editPaymentData.againstLineIndex,
+                    saleMax,
+                    editingPay
+                );
+                const productSelected = editPaymentData.againstLineIndex !== '' && editPaymentData.againstLineIndex != null;
                 const enteredAmount = parseFloat(editPaymentData.amount);
                 const hasAmount = editPaymentData.amount !== '' && !Number.isNaN(enteredAmount);
-                const amountTooHigh = hasAmount && enteredAmount > maxAllowed + 0.001;
+                const amountTooHigh = hasAmount && enteredAmount > againstMax + 0.001;
                 const amountInvalid = hasAmount && enteredAmount <= 0;
                 const amountError = amountTooHigh
-                    ? `Amount cannot exceed Rs. ${maxAllowed.toLocaleString()}`
+                    ? productSelected
+                        ? `Max for this product: Rs. ${againstMax.toLocaleString()}. Use Whole sale (auto split) for more.`
+                        : `Amount cannot exceed Rs. ${saleMax.toLocaleString()}`
                     : amountInvalid
                         ? 'Amount must be greater than 0'
                         : '';
@@ -2530,7 +2770,8 @@ const Sales = () => {
                                 <div>
                                     <h3 className="text-lg font-bold text-ink tracking-tight">Edit payment</h3>
                                     <p className="text-xs text-ink-muted mt-0.5">
-                                        Max {formatMoney(maxAllowed)} (due + this payment)
+                                        Max {formatMoney(againstMax)}
+                                        {productSelected ? ' for this product' : ' (due + this payment)'}
                                     </p>
                                 </div>
                                 <button
@@ -2572,6 +2813,41 @@ const Sales = () => {
                                     />
                                 </div>
                                 <div>
+                                    <label className="block text-sm font-medium text-ink mb-1">
+                                        Against product <span className="font-normal text-ink-muted">(optional)</span>
+                                    </label>
+                                    <select
+                                        value={editPaymentData.againstLineIndex}
+                                        onChange={(e) => {
+                                            const nextIndex = e.target.value;
+                                            const nextMax = getAgainstLineMax(
+                                                selectedSale,
+                                                nextIndex,
+                                                saleMax,
+                                                editingPay
+                                            );
+                                            setEditPaymentData({
+                                                ...editPaymentData,
+                                                againstLineIndex: nextIndex,
+                                                amount: nextMax > 0 ? String(nextMax) : ''
+                                            });
+                                        }}
+                                        className="input-field"
+                                    >
+                                        <option value="">
+                                            Whole sale (auto split) · Due Rs. {totalLineDue.toLocaleString()}
+                                        </option>
+                                        {lineDues.map(({ item, index, due }) => (
+                                            <option key={`edit-${item.inventoryId || item.inventory || 'line'}-${index}`} value={String(index)}>
+                                                {formatSaleLineLabel(item, index, due)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-ink-muted mt-1">
+                                        Selecting a product fills Amount with its due (cannot exceed that due)
+                                    </p>
+                                </div>
+                                <div>
                                     <label className="block text-sm font-medium text-ink mb-1">Amount *</label>
                                     <input
                                         type="text"
@@ -2595,7 +2871,8 @@ const Sales = () => {
                                         </p>
                                     ) : (
                                         <p className="text-xs text-ink-muted mt-1.5">
-                                            Remaining due {formatMoney(remainingDue)} · max {formatMoney(maxAllowed)}
+                                            Max allowed: {formatMoney(againstMax)}
+                                            {productSelected ? ' for this product' : ''}
                                         </p>
                                     )}
                                 </div>
